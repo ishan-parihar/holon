@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "holon:retro-result",
+  "title": "Holon retro result",
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "cause": {
+      "type": "string",
+      "minLength": 1,
+      "description": "the root cause, not the symptom"
+    },
+    "actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "intent": {
+            "type": "string",
+            "minLength": 1
+          },
+          "acceptance": {
+            "type": "string"
+          },
+          "dept": {
+            "type": "string"
+          },
+          "task_class": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 4
+          }
+        },
+        "required": [
+          "title",
+          "intent"
+        ]
+      },
+      "description": "each becomes new work in the department, planned and approved like any other"
+    },
+    "learnings": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "decision",
+                  "constraint",
+                  "preference",
+                  "lesson",
+                  "open_question",
+                  "glossary",
+                  "artifact"
+                ]
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            },
+            "required": [
+              "content"
+            ]
+          }
+        ]
+      },
+      "description": "lessons (your memory) and facts (the project's)"
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "decision",
+                  "constraint",
+                  "preference",
+                  "lesson",
+                  "open_question",
+                  "glossary",
+                  "artifact"
+                ]
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            },
+            "required": [
+              "content"
+            ]
+          }
+        ]
+      },
+      "description": "decisions future work must respect"
+    },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "intent": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "title",
+              "intent"
+            ]
+          }
+        ]
+      },
+      "description": "improvements, routed to the steward"
+    }
+  },
+  "required": [
+    "summary",
+    "cause"
+  ]
+}

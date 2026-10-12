@@ -80,7 +80,7 @@ def validate(g: dict) -> dict:
     missing = set(ROLES) - covered - ({"executor"} if g.get("delegates_execution") else set())
     if missing:
         raise GenomeError(f"profile {g['name']} leaves roles unfilled: {sorted(missing)}")
-    pipeline = {**PIPELINE_DEFAULTS, **(g.get("pipeline") or {})}
+    pipeline = dict(g.get("pipeline") or {})  # only what the profile sets; the rest comes from holon.toml
     for k, v in pipeline.items():
         if k not in PIPELINE_DEFAULTS or v not in ("auto", "always", "never"):
             raise GenomeError(f"[pipeline] {k} = {v!r}: keys {sorted(PIPELINE_DEFAULTS)}, values auto | always | never")

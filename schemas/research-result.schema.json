@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "holon:research-result",
+  "title": "Holon research result",
+  "type": "object",
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "description": "what the terrain looks like, in one paragraph"
+    },
+    "terrain": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "minLength": 1
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "fact",
+              "decision",
+              "constraint",
+              "preference",
+              "lesson",
+              "open_question",
+              "glossary",
+              "artifact"
+            ]
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ]
+          }
+        },
+        "required": [
+          "content",
+          "source"
+        ]
+      },
+      "description": "one item per fact a planner needs, each with its source"
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "learnings": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "decision",
+                  "constraint",
+                  "preference",
+                  "lesson",
+                  "open_question",
+                  "glossary",
+                  "artifact"
+                ]
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            },
+            "required": [
+              "content"
+            ]
+          }
+        ]
+      },
+      "description": "lessons (your memory) and facts (the project's)"
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "decision",
+                  "constraint",
+                  "preference",
+                  "lesson",
+                  "open_question",
+                  "glossary",
+                  "artifact"
+                ]
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            },
+            "required": [
+              "content"
+            ]
+          }
+        ]
+      },
+      "description": "decisions future work must respect"
+    },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "intent": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "title",
+              "intent"
+            ]
+          }
+        ]
+      },
+      "description": "improvements, routed to the steward"
+    }
+  },
+  "required": [
+    "summary",
+    "terrain"
+  ]
+}

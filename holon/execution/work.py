@@ -323,8 +323,10 @@ class Work:
             raise ValueError(f"unknown stage {stage}")
         sid, ts = new_id("task"), now()
         n = len(self.stages(work["id"], stage)) + 1
-        if assignee is None and stage in ("plan", "research"):
-            assignee = work["assignee"]
+        if assignee is None and work["assignee"] and self._performs(work["assignee"], stage):
+            assignee = work["assignee"]  # the work's assignee takes every stage their roles perform
+        elif assignee and not self._performs(assignee, stage):
+            assignee = None  # e.g. a planner named as executor: leave it to the department
         self.conn.execute(
             "INSERT INTO tasks (id, root_id, parent_id, depth, stage, dept_id, assignee, approver, requested_by, source,"
             " title, intent, acceptance, task_class, project_ref, workdir, priority, risk, status, attempt,"
@@ -339,6 +341,10 @@ class Work:
             self.conn.execute(f"UPDATE tasks SET {', '.join(f'{k}=?' for k in cols)} WHERE id=?", (*cols.values(), sid))
         self._event("task", sid, None, "ready", f"{stage} stage of {work['id']}")
         return self.get(sid)
+
+    def _performs(self, employee_id: str, stage: str) -> bool:
+        r = self.conn.execute("SELECT roles FROM employees WHERE id=?", (employee_id,)).fetchone()
+        return bool(r) and vocab.STAGE_ROLE[stage] in json.loads(r["roles"] or "[]")
 
     def _output(self, node_id: str, run_id: str | None, kind: str, body: dict, summary: str | None = None,
                 documentation: str | None = None) -> str:

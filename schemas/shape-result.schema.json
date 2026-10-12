@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "holon:shape-result",
+  "title": "Holon shape result",
+  "type": "object",
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "accept",
+        "redirect",
+        "cancel"
+      ]
+    },
+    "note": {
+      "type": "string",
+      "minLength": 1,
+      "description": "why, for the planner and the requester"
+    },
+    "title": {
+      "type": "string"
+    },
+    "intent": {
+      "type": "string"
+    },
+    "acceptance": {
+      "type": "string"
+    },
+    "task_class": {
+      "type": "string"
+    },
+    "risk": {
+      "type": "string",
+      "enum": [
+        "low",
+        "normal",
+        "high",
+        "irreversible"
+      ]
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4
+    },
+    "assignee": {
+      "type": "string"
+    },
+    "dept": {
+      "type": "string"
+    },
+    "research": {
+      "type": "boolean"
+    },
+    "learnings": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "decision",
+                  "constraint",
+                  "preference",
+                  "lesson",
+                  "open_question",
+                  "glossary",
+                  "artifact"
+                ]
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            },
+            "required": [
+              "content"
+            ]
+          }
+        ]
+      },
+      "description": "lessons (your memory) and facts (the project's)"
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "decision",
+                  "constraint",
+                  "preference",
+                  "lesson",
+                  "open_question",
+                  "glossary",
+                  "artifact"
+                ]
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            },
+            "required": [
+              "content"
+            ]
+          }
+        ]
+      },
+      "description": "decisions future work must respect"
+    },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "intent": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "title",
+              "intent"
+            ]
+          }
+        ]
+      },
+      "description": "improvements, routed to the steward"
+    }
+  },
+  "required": [
+    "decision",
+    "note"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "decision": {
+            "const": "redirect"
+          }
+        },
+        "required": [
+          "decision"
+        ]
+      },
+      "then": {
+        "required": [
+          "dept"
+        ]
+      }
+    }
+  ]
+}

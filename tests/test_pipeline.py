@@ -1,63 +1,80 @@
-"""The organization's pipeline end to end, in pull mode (no harness involved)."""
+"""The work graph end to end, in pull mode (no harness involved)."""
 
 import unittest
 
 from holon.execution.work import TransitionError, Work
-from tests.helpers import KernelCase
+from tests.helpers import JD, KernelCase
 
 
 class DelegationChain(KernelCase):
-    def test_department_task_hod_plans_assignee_executes_peer_verifies(self):
+    def test_planner_plans_assignee_executes_peer_verifies(self):
         t = self.add(dept="eng", project_ref="proj:alpha", task_class="demo")
+        self.assertEqual(self.pipeline_of(t), [("plan", "ready")])
         with self.assertRaises(TransitionError):
-            self.k.claim("plan", self.dev1)  # no plan duty
-        pat = self.k.org.hire(name="Pat", title="Planner", dept="eng", job_description="JD", duties=["plan"],
-                              driver="fake", reason="test", status="active")["id"]
-        self.assertIsNone(self.k.claim("plan", pat), "a non-head may not plan unassigned department work")
-        self.assertIsNone(self.k.claim("plan", self.ceo), "the CEO plans only un-triaged work")
+            self.k.claim("plan", self.dev1)  # executors have no planner role
+        self.assertIsNone(self.k.claim("plan", self.ceo), "department work belongs to the department")
         c = self.k.claim("plan", self.hod)
-        self.assertIn("Your role", (c.brief_dir / "context.md").read_text())
-        self.assertIn("Head of Engineering", (c.brief_dir / "context.md").read_text())
-        out = self.k.submit(c.run["id"], self.plan_env(assignee=self.dev1))
-        plan = out["plan"]
-        self.assertEqual(plan["approver"], "chair", "novel class + no delegated authority -> Chair")
-        self.assertGreaterEqual(plan["grade"], 2)
-        self.k.approve(plan["id"], note="keep it to one file")
+        ctx = (c.brief_dir / "context.md").read_text()
+        self.assertIn("Your role", ctx)
+        self.assertIn("Head of Engineering", ctx)
+        self.assertTrue((c.brief_dir / "identity.md").read_text().startswith("# You are Bo"))
+        approval = self.k.submit(c.run["id"], self.plan_env(assignee=self.dev1))["approval"]
+        self.assertEqual(approval["approver"], "chair", "novel class + no delegated authority -> Chair")
+        self.assertGreaterEqual(approval["grade"], 2)
+        self.k.approve(approval["id"], note="keep it to one file")
 
         self.assertIsNone(self.k.claim("execute", self.dev2), "assigned to dev1, not dev2")
         c = self.k.claim("execute", self.dev1)
-        ctx = (c.brief_dir / "context.md").read_text()
-        self.assertIn("keep it to one file", ctx)
+        self.assertIn("keep it to one file", (c.brief_dir / "context.md").read_text())
         out = self.k.submit(c.run["id"], self.exec_env())
-        self.assertEqual(out["task"]["status"], "verifying")
+        self.assertEqual(self.pipeline_of(t)[-1], ("verify", "ready"))
         self.assertEqual(out["memory"]["personal_scope"], f"emp:{self.dev1}")
         self.assertTrue(self.k.memory.live_items([f"emp:{self.dev1}"], kinds=["lesson"]))
 
         c = self.k.claim("verify", self.dev2)
         out = self.k.submit(c.run["id"], {"verdict": "pass", "note": "file present"})
-        self.assertEqual(out["task"]["status"], "done")
-        self.assertEqual(self.k.work.latest_result(t["id"])["verified_by"], f"emp:{self.dev2}")
-
-        review = self.k.org.review(self.dev1)
-        self.assertEqual(review["execution"]["verified_ok"], 1)
+        self.assertEqual(out["work"]["status"], "done")
+        self.assertEqual(self.k.work.last_execute_output(t["id"])["verified_by"], f"emp:{self.dev2}")
+        self.assertEqual(self.k.org.review(self.dev1)["execution"]["verified_ok"], 1)
         self.assertEqual(self.k.org.review(self.hod)["planning"]["approved_first_try"], 1)
 
-    def test_ceo_triages_and_splits_across_departments(self):
+    def test_any_planner_in_the_department_may_plan_unassigned_work(self):
+        pat = self.k.org.hire(name="Pat", title="Planner", dept="eng", job_description=JD, roles=["planner"],
+                              driver="fake", reason="test", status="active")["id"]
+        self.add(dept="eng")
+        self.assertIsNotNone(self.k.claim("plan", pat))
+
+    def test_ceo_splits_across_departments_with_order(self):
         self.k.org.create_dept("ops", "Operations")
         parent = self.add("Launch v2", dept=None)
         c = self.k.claim("plan", self.ceo)
-        self.assertEqual(c.task["id"], parent["id"])
+        self.assertEqual(c.node["parent_id"], parent["id"])
         out = self.k.submit(c.run["id"], {"kind": "decompose", "rationale": "two departments", "children": [
             {"title": "build", "intent": "build v2", "dept": "eng"},
-            {"title": "deploy", "intent": "deploy v2", "dept": "ops"}]})
-        self.assertGreaterEqual(out["plan"]["grade"], 2)
-        out = self.k.approve(out["plan"]["id"])
-        self.assertEqual(out["task"]["status"], "waiting_on_subtasks")
-        depts = {self.k.work.get_task(c)["dept_id"] for c in out["children"]}
-        self.assertEqual(depts, {self.k.org.dept("eng")["id"], self.k.org.dept("ops")["id"]})
+            {"title": "deploy", "intent": "deploy v2", "dept": "ops", "after": [0]}]})
+        self.assertGreaterEqual(out["approval"]["grade"], 2)
+        out = self.k.approve(out["approval"]["id"])
+        self.assertEqual(out["work"]["status"], "waiting")
+        build, deploy = (self.k.work.get(i) for i in out["children"])
+        self.assertEqual((build["status"], deploy["status"]), ("open", "blocked"))
+        self.assertEqual(build["root_id"], parent["id"])
+        self.assertEqual(build["depth"], 1)
         c = self.k.claim("plan", self.hod)
-        self.assertEqual(c.task["title"], "build")
-        self.assertIn("Parent tasks", (c.brief_dir / "context.md").read_text())
+        self.assertEqual(c.node["parent_id"], build["id"])
+        self.assertIn("Parent work", (c.brief_dir / "context.md").read_text())
+        self.k.work.cancel(build["id"], "no longer needed")
+        self.assertEqual(self.status(deploy), "cancelled", "work waiting on a cancelled dependency is cancelled")
+        self.assertEqual(self.status(parent), "cancelled")
+
+    def test_dependency_releases_blocked_work(self):
+        first = self.add("first", dept="eng")
+        second = self.add("second", dept="eng", needs=[first["id"]])
+        self.assertEqual((self.status(second), self.pipeline_of(second)), ("blocked", []))
+        self.plan_and_approve(first, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        self.k.submit(c.run["id"], self.exec_env())
+        self.k.verify(first["id"], "pass", "ok")
+        self.assertEqual((self.status(second), self.pipeline_of(second)), ("open", [("plan", "ready")]))
 
     def test_unknown_department_in_split_is_a_contract_breach(self):
         self.add("x", dept=None)
@@ -65,6 +82,7 @@ class DelegationChain(KernelCase):
         out = self.k.submit(c.run["id"], {"kind": "decompose", "rationale": "r", "children": [
             {"title": "a", "intent": "a", "dept": "nope"}, {"title": "b", "intent": "b"}]})
         self.assertIn("no department nope", out["breach"][0])
+        self.assertEqual(out["node"]["status"], "ready", "the stage returns to the board")
 
     def test_executor_cannot_verify_own_work(self):
         t = self.add(dept="eng", task_class="demo")
@@ -74,87 +92,150 @@ class DelegationChain(KernelCase):
         self.assertIsNone(self.k.claim("verify", self.dev2), "the executor is excluded from verifying")
         with self.assertRaises(TransitionError):
             Work(self.k.wconn, actor=f"emp:{self.dev2}").verify(t["id"], "pass", "looks good to me")
+        self.assertIsNotNone(self.k.claim("verify", self.hod))
 
 
-class GradedApproval(KernelCase):
-    config = "[grading]\nnovelty_min_verified = 0\n[authority]\naudit_sample_permille = 1000\npromote_after = 2\n"
+class Rework(KernelCase):
+    def _executed(self, **plan_over):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, **plan_over)
+        c = self.k.claim("execute", self.dev1)
+        self.k.submit(c.run["id"], self.exec_env())
+        return t
 
-    def test_minor_work_routes_to_ceo_major_work_to_chair(self):
-        minor = self.add("tidy", dept="eng", task_class="ops", risk="low")
-        c = self.k.claim("plan", self.hod, task_id=minor["id"])
-        p = self.k.submit(c.run["id"], self.plan_env(grade="G1", writes=[]))["plan"]
-        self.assertEqual((p["grade"], p["approver"]), (1, f"emp:{self.ceo}"))
-        self.assertEqual(self.k.work.awaiting_approval("chair"), [])
+    def test_failed_verification_adds_an_attempt_then_fails(self):
+        t = self._executed(writes=[])
+        self.k.verify(t["id"], "fail", "file is empty")
+        self.assertEqual(self.pipeline_of(t)[-1], ("execute", "ready"))
+        c = self.k.claim("execute", self.dev1)
+        self.assertEqual(c.node["attempt"], 2)
+        self.assertIn("file is empty", (c.brief_dir / "context.md").read_text())
+        self.k.submit(c.run["id"], self.exec_env())
+        self.k.verify(t["id"], "fail", "still empty")
+        self.assertEqual(self.status(t), "failed")
+        self.assertEqual(self.k.work.retry(t["id"])["status"], "open")
+        self.assertEqual(self.pipeline_of(t)[-1], ("execute", "ready"))
 
-        major = self.add("migrate prod", dept="eng", task_class="ops", risk="high")
-        c = self.k.claim("plan", self.hod, task_id=major["id"])
-        p2 = self.k.submit(c.run["id"], self.plan_env(grade="G1", writes=[]))["plan"]
-        self.assertEqual((p2["grade"], p2["approver"]), (3, "chair"), "risk=high floors at G3; planner can't lower it")
+    def test_rejection_queues_a_new_plan_with_the_note(self):
+        t = self.add(dept="eng", task_class="demo")
+        approval = self.plan(t)
+        self.k.reject(approval["id"], "use the existing template instead")
+        self.assertTrue(any("existing template" in i["content"] for i in self.k.memory.live_items([f"emp:{self.hod}"])))
+        self.assertEqual(self.pipeline_of(t)[-1], ("plan", "ready"))
+        c = self.k.claim("plan", self.hod, task_id=t["id"])
+        self.assertIn("existing template", (c.brief_dir / "context.md").read_text())
 
-        effects = self.add("email client", dept="eng", task_class="ops", risk="low")
-        c = self.k.claim("plan", self.hod, task_id=effects["id"])
-        p3 = self.k.submit(c.run["id"], self.plan_env(grade="G0", writes=[], external_effects=["send email"]))["plan"]
-        self.assertEqual(p3["grade"], 2)
+    def test_stale_plan_is_replanned(self):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t)
+        (self.workdir / "hello.txt").write_text("someone else wrote this first")
+        self.assertIsNone(self.k.claim("execute", self.dev1))
+        last = self.k.work.stages(t["id"])[-1]
+        self.assertEqual((last["stage"], last["status"], last["blocked_reason"]), ("plan", "ready", "stale_plan"))
 
-    def test_ceo_review_duty_decides_and_is_audited(self):
-        t = self.add("tidy", dept="eng", task_class="ops", risk="low")
-        c = self.k.claim("plan", self.hod)
-        p = self.k.submit(c.run["id"], self.plan_env(grade="G1", writes=[]))["plan"]
-        self.assertEqual(self.k.work.awaiting_approval("chair"), [], "minor work does not reach the Chair")
-        with self.assertRaises(TransitionError):
-            Work(self.k.wconn, actor=f"emp:{self.dev1}").approve(p["id"])  # not the routed approver
-        c = self.k.claim("review", self.ceo)
-        self.assertIn("Plan to review", (c.brief_dir / "context.md").read_text())
-        out = self.k.submit(c.run["id"], {"decision": "approve", "note": "small and reversible"})
-        self.assertEqual(out["decider"], f"emp:{self.ceo}")
-        self.assertTrue(out.get("audit_sampled"))
-        self.assertEqual(self.k.work.get_task(t["id"])["status"], "approved")
-        judged = self.k.judge_sample(p["id"], "disagree", "this needed my eyes")
-        self.assertEqual((judged["authority_change"]["from"], judged["authority_change"]["to"]), (1, 0))
-
-    def test_nobody_approves_their_own_plan(self):
-        self.k.org.set_authority(f"emp:{self.hod}", "*", 2, "test")
-        self.add("tidy", dept="eng", task_class="ops", risk="low")
-        c = self.k.claim("plan", self.hod)
-        p = self.k.submit(c.run["id"], self.plan_env(grade="G1", writes=[]))["plan"]
-        self.assertEqual(p["approver"], f"emp:{self.ceo}", "the HOD authored it, so it skips to the CEO")
-
-    def _clean_streak(self):
-        for i in range(2):
-            t = self.add(f"tidy {i}", dept="eng", task_class="ops", risk="low")
-            c = self.k.claim("plan", self.hod, task_id=t["id"])
-            p = self.k.submit(c.run["id"], self.plan_env(grade="G1", writes=[], assignee=self.dev1))["plan"]
-            c = self.k.claim("review", self.ceo)
-            self.k.submit(c.run["id"], {"decision": "approve", "note": "fine"})
+    def test_executor_failure_retries(self):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        for expected in ("open", "failed"):
             c = self.k.claim("execute", self.dev1)
-            self.k.submit(c.run["id"], self.exec_env())
-            c = self.k.claim("verify", self.dev2)
-            out = self.k.submit(c.run["id"], {"verdict": "pass", "note": "ok"})
-            self.assertEqual(p["approver"], f"emp:{self.ceo}")
-        return out
+            out = self.k.submit(c.run["id"], self.exec_env(outcome="failure", summary="boom"))
+            self.assertEqual(out["work"]["status"], expected)
 
-    def test_earned_promotion_needs_the_chair_by_default(self):
-        out = self._clean_streak()
-        change = out["authority_change"]
-        self.assertEqual((change["to"], change["applied"], change["approver"]), (2, False, "chair"))
-        self.assertEqual(self.k.org.authority_of(f"emp:{self.ceo}", "ops"), 1, "not widened until approved")
-        proposal = self.k.work.awaiting_approval("chair")[0]
-        self.assertEqual(proposal["id"], change["proposal"])
-        self.k.approve(proposal["id"], "earned")
-        self.assertEqual(self.k.org.authority_of(f"emp:{self.ceo}", "ops"), 2)
-        self.assertEqual(self.k.work.get_task(proposal["task_id"])["status"], "done")
-
-    def test_chair_regrade_reroutes(self):
-        self.add("tidy", dept="eng", task_class="ops", risk="low")
+    def test_expired_lease_is_recovered_and_late_result_rejected(self):
+        t = self.add(dept="eng")
         c = self.k.claim("plan", self.hod)
-        p = self.k.submit(c.run["id"], self.plan_env(grade="G1", writes=[]))["plan"]
-        p = self.k.regrade(p["id"], 3, "touches billing")
-        self.assertEqual((p["grade"], p["approver"]), (3, "chair"))
+        self.k.wconn.execute("UPDATE runs SET lease_until='2000-01-01T00:00:00.000000Z' WHERE id=?", (c.run["id"],))
+        self.assertEqual(len(self.k.work.sweep_leases()), 1)
+        self.assertEqual(self.pipeline_of(t), [("plan", "ready")])
+        with self.assertRaises(TransitionError):
+            self.k.submit(c.run["id"], self.plan_env())
+
+    def test_execute_contract_breach_becomes_partial_for_the_verifier(self):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        out = self.k.submit(c.run["id"], {"outcome": "great"})
+        self.assertTrue(out["breach"])
+        self.assertEqual(self.k.work.last_execute_output(t["id"])["body"]["outcome"], "partial")
+        self.assertEqual(self.pipeline_of(t)[-1], ("verify", "ready"))
+
+    def test_needs_input_round_trip(self):
+        t = self.add(dept="eng")
+        c = self.k.claim("plan", self.hod)
+        self.k.submit(c.run["id"], {"kind": "needs_input", "question": "English or Hindi?"})
+        self.assertEqual(self.status(t), "needs_input")
+        self.k.answer(t["id"], "Hindi")
+        c = self.k.claim("plan", self.hod)
+        self.assertIn("Hindi", (c.brief_dir / "context.md").read_text())
+
+    def test_roles_and_status_enforced(self):
+        self.add(dept="eng")
+        with self.assertRaises(TransitionError):
+            self.k.claim("approve", self.dev1)
+        self.k.org.set_status(self.hod, "paused", "vacation")
+        with self.assertRaises(TransitionError):
+            self.k.claim("plan", self.hod)
+
+    def test_fire_reassigns_open_work_and_approvals(self):
+        t = self.add(dept="eng", assignee=self.dev1)
+        self.k.org.set_authority(f"emp:{self.ceo}", "*", 4, "test")
+        approval = self.plan(self.add("other", dept="eng"))
+        self.assertEqual(approval["approver"], f"emp:{self.ceo}")
+        heir = self.k.org.hire(name="Fa", title="CEO", dept="executive", job_description=JD, roles=["planner"],
+                               driver="fake", reason="new CEO", status="active")["id"]
+        self.k.org.fire(self.ceo, "left", successor=heir)
+        self.assertEqual(self.k.work.get(approval["id"])["approver"], f"emp:{heir}")
+        self.k.org.fire(self.dev1, "left", successor=self.dev2)
+        self.assertEqual(self.k.work.get(t["id"])["assignee"], self.dev2)
+
+
+class OptionalStages(KernelCase):
+    pipeline = '[pipeline]\nretro = "never"\n'
+
+    def setUp(self):
+        super().setUp()
+        o = self.k.org
+        self.k.org.create_dept("ops", "Operations", "Run things")
+        self.lead = o.hire(name="Lu", title="Head of Ops", dept="ops", job_description=JD, slot="lead",
+                           driver="fake", reason="r", status="active")["id"]
+        self.maker = o.hire(name="Mo", title="Ops engineer", dept="ops", job_description=JD, slot="maker",
+                            driver="fake", reason="r", status="active")["id"]
+        self.checker = o.hire(name="Ce", title="Ops checker", dept="ops", job_description=JD, slot="checker",
+                              driver="fake", reason="r", status="active")["id"]
+
+    def test_novel_work_is_researched_then_shaped_then_planned(self):
+        t = self.add("Rotate keys", dept="ops", task_class="key-rotation")
+        self.assertEqual(self.pipeline_of(t), [("research", "ready")])
+        c = self.k.claim(None, self.checker)
+        self.assertEqual(c.node["stage"], "research")
+        self.k.submit(c.run["id"], {"summary": "keys live in vault", "terrain": [
+            {"content": "Keys are stored in the vault at /kv/app", "source": "vault ls"}]})
+        self.assertTrue(any(i["provenance"].startswith("terrain:") for i in self.k.memory.live_items(["dept:ops"])))
+        c = self.k.claim(None, self.lead)
+        self.assertEqual(c.node["stage"], "shape")
+        self.assertIn("Keys are stored in the vault", (c.brief_dir / "context.md").read_text())
+        self.k.submit(c.run["id"], {"decision": "accept", "note": "ok", "acceptance": "old keys revoked",
+                                    "assignee": self.maker})
+        self.assertEqual(self.k.work.get(t["id"])["acceptance"], "old keys revoked")
+        c = self.k.claim(None, self.maker)
+        self.assertEqual(c.node["stage"], "plan")
+        self.assertIn("From the shape stage", (c.brief_dir / "context.md").read_text())
+
+    def test_shape_redirects_and_cancels(self):
+        t = self.add("Wrong place", dept="ops", task_class="known", risk="low")
+        self.k.wconn.execute("UPDATE tasks SET status='cancelled' WHERE parent_id=? AND stage='research'", (t["id"],))
+        self.k.work._add_stage(self.k.work.get(t["id"]), "shape", [])
+        c = self.k.claim("shape", self.lead)
+        self.k.submit(c.run["id"], {"decision": "redirect", "note": "engineering owns this", "dept": "eng"})
+        self.assertEqual(self.k.work.get(t["id"])["dept_id"], self.k.org.dept("eng")["id"])
+        c = self.k.claim("shape", self.hod)
+        self.k.submit(c.run["id"], {"decision": "cancel", "note": "duplicate of an existing task"})
+        self.assertEqual(self.status(t), "cancelled")
 
 
 class CollectiveMemory(KernelCase):
-    def _run_lesson(self, executor, lesson, dept="eng"):
-        t = self.add(f"job for {executor}", dept=dept, task_class="demo")
+    def _run_lesson(self, executor, lesson):
+        t = self.add(f"job for {executor}", dept="eng", task_class="demo")
         self.plan_and_approve(t, assignee=executor, writes=[])
         c = self.k.claim("execute", executor)
         return self.k.submit(c.run["id"], self.exec_env(learnings=[lesson]))
@@ -164,11 +245,16 @@ class CollectiveMemory(KernelCase):
         self.assertEqual(out["memory"]["promotions"], [])
         out = self._run_lesson(self.dev2, "always run the migration dry run before applying")
         self.assertEqual(out["memory"]["promotions"][0]["to"], "dept:eng")
-        self.assertTrue(self.k.memory.live_items(["dept:eng"], kinds=["lesson"]))
+
+    def test_planner_and_verifier_learn_too(self):
+        t = self.add(dept="eng", task_class="demo")
+        c = self.k.claim("plan", self.hod, task_id=t["id"])
+        self.k.submit(c.run["id"], self.plan_env(learnings=["plans here need a rollback line"]))
+        self.assertTrue(any("rollback line" in i["content"] for i in self.k.memory.live_items([f"emp:{self.hod}"])))
 
     def test_successor_inherits_memory(self):
         self.k.memory.add_item(f"emp:{self.dev1}", "lesson", "The staging DB password rotates on Mondays", "test")
-        heir = self.k.org.hire(name="Ed", title="Engineer", dept="eng", job_description="JD", duties=["execute"],
+        heir = self.k.org.hire(name="Ed", title="Engineer", dept="eng", job_description=JD, roles=["executor"],
                                driver="fake", reason="replacement", status="active")["id"]
         self.k.org.fire(self.dev1, "role change", successor=heir)
         t = self.add("rotate", dept="eng", task_class="demo", assignee=heir)
@@ -178,19 +264,9 @@ class CollectiveMemory(KernelCase):
         self.assertIn("inherited the role and memory", ctx)
         self.assertIn("staging DB password", ctx)
 
-    def test_review_notes_reach_the_author(self):
-        t = self.add(dept="eng", task_class="demo")
-        c = self.k.claim("plan", self.hod)
-        p = self.k.submit(c.run["id"], self.plan_env())["plan"]
-        self.k.reject(p["id"], "use the existing template instead")
-        self.assertTrue(any("existing template" in i["content"]
-                            for i in self.k.memory.live_items([f"emp:{self.hod}"])))
-        c = self.k.claim("plan", self.hod, task_id=t["id"])
-        self.assertIn("existing template", (c.brief_dir / "context.md").read_text())
-
 
 class Communication(KernelCase):
-    def test_request_creates_task_in_other_department(self):
+    def test_request_creates_work_in_other_department(self):
         self.k.org.create_dept("marketing", "Marketing")
         t = self.k.request(f"emp:{self.dev1}", "marketing", "Need launch copy", "Three tweets for v2")
         self.assertEqual(t["dept_id"], self.k.org.dept("marketing")["id"])
@@ -200,73 +276,7 @@ class Communication(KernelCase):
     def test_inbox_includes_department_channel(self):
         self.k.work.post_message("chair", "dept:eng", "standup moved", kind="channel")
         self.k.work.post_message(f"emp:{self.dev2}", f"emp:{self.dev1}", "can you review?")
-        bodies = {m["body"] for m in self.k.inbox(f"emp:{self.dev1}")}
-        self.assertEqual(bodies, {"standup moved", "can you review?"})
-
-
-class Robustness(KernelCase):
-    def _approved(self, **plan_over):
-        t = self.add(dept="eng", task_class="demo")
-        plan = self.plan_and_approve(t, **plan_over)
-        return t, plan
-
-    def test_stale_plan_goes_back_to_planning(self):
-        t, plan = self._approved()
-        self.assertIsNotNone(plan["writes_fingerprint"])
-        (self.workdir / "hello.txt").write_text("someone else wrote this first")
-        self.assertIsNone(self.k.claim("execute", self.dev1))
-        task = self.k.work.get_task(t["id"])
-        self.assertEqual((task["status"], task["blocked_reason"]), ("inbox", "stale_plan"))
-
-    def test_failure_retries_then_fails_then_chair_retry(self):
-        t, _ = self._approved(writes=[])
-        for expected in ("approved", "failed"):
-            c = self.k.claim("execute", self.dev1)
-            self.assertEqual(self.k.submit(c.run["id"], self.exec_env(outcome="failure", summary="boom"))["task"]["status"],
-                             expected)
-        self.assertEqual(self.k.work.retry(t["id"])["status"], "approved")
-
-    def test_expired_lease_is_recovered_and_late_result_rejected(self):
-        t = self.add(dept="eng")
-        c = self.k.claim("plan", self.hod)
-        self.k.wconn.execute("UPDATE runs SET lease_until='2000-01-01T00:00:00.000000Z' WHERE id=?", (c.run["id"],))
-        self.assertEqual(len(self.k.work.sweep_leases()), 1)
-        self.assertEqual(self.k.work.get_task(t["id"])["status"], "inbox")
-        with self.assertRaises(TransitionError):
-            self.k.submit(c.run["id"], self.plan_env())
-
-    def test_execute_contract_breach_becomes_partial(self):
-        t, _ = self._approved(writes=[])
-        c = self.k.claim("execute", self.dev1)
-        out = self.k.submit(c.run["id"], {"outcome": "great"})
-        self.assertTrue(out["breach"])
-        self.assertEqual(self.k.work.latest_result(t["id"])["outcome"], "partial")
-
-    def test_needs_input_round_trip(self):
-        t = self.add(dept="eng")
-        c = self.k.claim("plan", self.hod)
-        self.k.submit(c.run["id"], {"kind": "needs_input", "question": "English or Hindi?"})
-        self.k.answer(t["id"], "Hindi")
-        c = self.k.claim("plan", self.hod)
-        self.assertIn("Hindi", (c.brief_dir / "context.md").read_text())
-
-    def test_duty_and_status_enforced(self):
-        self.add(dept="eng")
-        with self.assertRaises(TransitionError):
-            self.k.claim("review", self.dev1)  # dev1 has no review duty
-        self.k.org.set_status(self.hod, "paused", "vacation")
-        with self.assertRaises(TransitionError):
-            self.k.claim("plan", self.hod)
-
-    def test_fire_reassigns_open_work_and_head(self):
-        t = self.add(dept="eng", assignee=self.dev1)
-        heir = self.k.org.hire(name="Fa", title="HOD", dept="eng", job_description="JD", duties=["plan", "review"],
-                               driver="fake", reason="new head", status="active")["id"]
-        self.k.org.fire(self.hod, "left", successor=heir)
-        self.assertEqual(self.k.org.dept("eng")["head_id"], heir)
-        self.k.org.fire(self.dev1, "left", successor=self.dev2)
-        self.assertEqual(self.k.work.get_task(t["id"])["assignee"], self.dev2)
-        self.assertEqual(self.k.org.employee(self.dev1)["status"], "retired")
+        self.assertEqual({m["body"] for m in self.k.inbox(f"emp:{self.dev1}")}, {"standup moved", "can you review?"})
 
 
 if __name__ == "__main__":

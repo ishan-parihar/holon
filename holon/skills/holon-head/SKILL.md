@@ -15,7 +15,7 @@ work is done by the right employee, safely, and that the department gets better 
 
 | Duty | When | How |
 |---|---|---|
-| **review** (gate) | a plan was routed to you | `briefs/review.md`, via `$holon claim --duty review --as <id>` |
+| **approve** (gate) | a plan was routed to you | `briefs/approve.md`, via `$holon claim --stage approve --as <id>` |
 | **shape** | new work arrives without clear acceptance criteria, owner, or class | `references/shaping.md` |
 | **staff** | a slot is empty, overloaded, or someone underperforms | `references/staffing.md` |
 | **department review** | weekly, or when the steward raises a trigger | `references/department-review.md` |

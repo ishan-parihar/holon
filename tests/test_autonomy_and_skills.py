@@ -19,7 +19,7 @@ def streak(case, n=2):
         t = case.add(f"tidy {i}", dept="eng", task_class="ops", risk="low")
         c = case.k.claim("plan", case.hod, task_id=t["id"])
         case.k.submit(c.run["id"], case.plan_env(grade="G1", writes=[], assignee=case.dev1))
-        c = case.k.claim("review", case.ceo)
+        c = case.k.claim("approve", case.ceo)
         case.k.submit(c.run["id"], {"decision": "approve", "note": "fine"})
         c = case.k.claim("execute", case.dev1)
         case.k.submit(c.run["id"], case.exec_env())
@@ -75,7 +75,7 @@ class DelegatedWidening(KernelCase):
         narrowed = self.k.set_authority(f"emp:{self.ceo}", "*", 0, "incident", requested_by="kernel")
         self.assertTrue(narrowed["applied"], "narrowing never waits")
         self.k.reject(ceo["proposal"], "not yet")
-        self.assertEqual(self.k.work.get_task(self.k.work.get_plan(ceo["proposal"])["task_id"])["status"], "cancelled")
+        self.assertEqual(self.k.work.work_of(ceo["proposal"])["status"], "cancelled")
 
 
 class VerifySampling(KernelCase):
@@ -95,8 +95,8 @@ class VerifySampling(KernelCase):
             self.k.verify(t["id"], "pass", "ok")
         t, c, out = self._g0(9)
         self.assertTrue(out["verification_skipped"])
-        self.assertEqual(self.k.work.get_task(t["id"])["status"], "done")
-        res = self.k.work.result_for_run(c.run["id"])
+        self.assertEqual(self.status(t), "done")
+        res = self.k.work.last_execute_output(t["id"])
         self.assertEqual((res["verified"], res["verified_by"]), (None, "sampling"))
         self.assertEqual(self.k.work.executor_streak(self.dev1, "routine"), 2, "unverified work earns no trust")
 
@@ -125,10 +125,10 @@ class Genome(KernelCase):
         lead = self.k.org.hire(name="L", title="Head of Ops", dept="ops", job_description=JD, driver="fake",
                                reason="r", slot="lead")
         self.assertTrue(lead["is_head"])
-        self.assertEqual((lead["roles"], lead["duties"]), (["head", "steward"], ["review"]))
+        self.assertEqual((lead["roles"], lead["stages"]), (["head", "steward"], ["shape", "approve", "retro"]))
         maker = self.k.org.hire(name="M", title="Ops engineer", dept="ops", job_description=JD, driver="fake",
                                 reason="r", slot="maker")
-        self.assertEqual(maker["duties"], ["execute", "plan"])
+        self.assertEqual(maker["stages"], ["plan", "execute"])
         self.assertIn("independent", self.k.org.staffing("ops")["warnings"][0])
         self.k.org.hire(name="C", title="Ops checker", dept="ops", job_description=JD, driver="fake",
                         reason="r", slot="checker")
@@ -139,8 +139,13 @@ class Genome(KernelCase):
             self.k.org.hire(name="X", title="X", dept="ops", job_description=JD, driver="fake", reason="r",
                             slot="nope")
 
-    def test_legacy_employees_have_inferred_roles(self):
-        self.assertEqual(self.k.org.employee(self.hod)["roles"], ["head", "planner", "verifier"])
+    def test_profiles_keep_only_their_own_pipeline_keys(self):
+        g = genome.validate({"name": "x", "pipeline": {"research": "always"}, "slots": [
+            {"name": "a", "roles": ["head", "steward", "researcher"]}, {"name": "b", "roles": ["planner", "executor"]},
+            {"name": "c", "roles": ["verifier"]}]})
+        self.assertEqual(g["pipeline"], {"research": "always"})
+        with self.assertRaises(genome.GenomeError):
+            genome.validate({**g, "pipeline": {"research": "sometimes"}})
         self.assertEqual(self.k.org.dept("executive")["profile"], "executive")
 
 

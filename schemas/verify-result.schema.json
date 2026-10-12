@@ -1,13 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Holon verifier result",
+  "$id": "holon:verify-result",
+  "title": "Holon verify result",
   "type": "object",
-  "required": [
-    "verdict",
-    "note"
-  ],
   "properties": {
     "verdict": {
+      "type": "string",
       "enum": [
         "pass",
         "fail"
@@ -15,7 +13,131 @@
     },
     "note": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "which criteria were checked, how, and what you found"
+    },
+    "learnings": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "decision",
+                  "constraint",
+                  "preference",
+                  "lesson",
+                  "open_question",
+                  "glossary",
+                  "artifact"
+                ]
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            },
+            "required": [
+              "content"
+            ]
+          }
+        ]
+      },
+      "description": "lessons (your memory) and facts (the project's)"
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "content": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "fact",
+                  "decision",
+                  "constraint",
+                  "preference",
+                  "lesson",
+                  "open_question",
+                  "glossary",
+                  "artifact"
+                ]
+              },
+              "confidence": {
+                "type": "string",
+                "enum": [
+                  "low",
+                  "medium",
+                  "high"
+                ]
+              }
+            },
+            "required": [
+              "content"
+            ]
+          }
+        ]
+      },
+      "description": "decisions future work must respect"
+    },
+    "proposals": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "intent": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "title",
+              "intent"
+            ]
+          }
+        ]
+      },
+      "description": "improvements, routed to the steward"
     }
-  }
+  },
+  "required": [
+    "verdict",
+    "note"
+  ]
 }

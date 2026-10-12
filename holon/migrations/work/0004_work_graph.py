@@ -260,7 +260,11 @@ def _convert(conn):
             " recurring, due, created_at, updated_at, ext_id, sync_dirty")
     marks = ",".join("?" * len(cols.split(",")))
 
+    defaults = {"attempt": 1, "max_attempts": 2, "recurring": 0, "sync_dirty": 1, "priority": 3, "risk": "normal",
+                "requested_by": "chair"}
+
     def insert(**v):
+        v = {**defaults, **{k: x for k, x in v.items() if x is not None}}
         row = [v.get(c.strip()) for c in cols.split(",")]
         conn.execute(f"INSERT INTO tasks_g ({cols}) VALUES ({marks})", row)
 

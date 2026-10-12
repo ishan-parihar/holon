@@ -1,22 +1,28 @@
-"""Core primitives, envelopes, memory, context, and the agnosticism guarantees."""
+"""Core primitives: ids, cron, the result contract, migrations (incl. converting pre-graph instances),
+memory, context, grading, and the agnosticism guarantees."""
 
 import ast
+import json
 import sqlite3
 import sys
+import tempfile
 import unittest
 from datetime import datetime, timezone
+from importlib import resources
 from pathlib import Path
 
 from holon.capabilities.context import compile_context
-from holon.core.db import migrate
+from holon.core import contract, vocab
+from holon.core.contract import EnvelopeError
+from holon.core.db import connect, migrate
 from holon.core.ids import new_id, ulid
 from holon.execution.cron import Cron, CronError
-from holon.execution.envelopes import (EnvelopeError, extract_last_json, validate_executor, validate_planner,
-                                      validate_reviewer)
+from holon.execution.drivers import extract_last_json
 from holon.execution.grading import grade_plan
 from tests.helpers import KernelCase
 
 PKG = Path(__file__).resolve().parents[1] / "holon"
+REPO = PKG.parent
 
 
 class Ids(unittest.TestCase):
@@ -41,33 +47,49 @@ class CronTests(unittest.TestCase):
                 Cron(bad)
 
 
-class Envelopes(unittest.TestCase):
-    def test_planner_shapes(self):
-        validate_planner({"kind": "plan", "findings": "t", "steps": ["a"]})
-        validate_planner({"kind": "needs_input", "question": "q?"})
-        validate_planner({"kind": "decompose", "rationale": "r",
-                          "children": [{"title": "a", "intent": "x"}, {"title": "b", "intent": "y"}]})
-        for bad in ({"kind": "plan"}, {"kind": "decompose", "rationale": "r", "children": [{"title": "a"}]},
-                    {"kind": "nope"}, [], {"kind": "plan", "findings": "t", "steps": [], "writes": "x"}):
-            with self.assertRaises(EnvelopeError):
-                validate_planner(bad)
+class Contract(unittest.TestCase):
+    def test_every_stage_has_a_spec(self):
+        self.assertEqual(set(contract.SPECS), set(vocab.STAGES))
 
-    def test_executor_shape(self):
-        validate_executor({"outcome": "success", "summary": "s", "documentation": "d",
-                           "learnings": ["x", {"content": "y", "kind": "fact"}]})
+    def test_plan_variants(self):
+        contract.validate("plan", {"kind": "plan", "findings": "t", "steps": ["a"]})
+        contract.validate("plan", {"kind": "needs_input", "question": "q?"})
+        contract.validate("plan", {"kind": "decompose", "rationale": "r", "children": [
+            {"title": "a", "intent": "x"}, {"title": "b", "intent": "y", "after": [0]}]})
+        for bad in ({"kind": "plan"}, {"kind": "decompose", "rationale": "r", "children": [{"title": "a"}]},
+                    {"kind": "nope"}, [], {"kind": "plan", "findings": "t", "steps": [], "writes": "x"},
+                    {"kind": "plan", "findings": "t", "steps": ["a"], "grade": "G9"}):
+            with self.assertRaises(EnvelopeError):
+                contract.validate("plan", bad)
+
+    def test_execute_and_common_fields(self):
+        contract.validate("execute", {"outcome": "success", "summary": "s", "documentation": "d",
+                                      "learnings": ["x", {"content": "y", "kind": "fact"}],
+                                      "proposals": ["p", {"title": "t", "intent": "i"}]})
         with self.assertRaises(EnvelopeError) as cm:
-            validate_executor({"outcome": "meh", "summary": "", "learnings": [{"kind": "bogus"}]})
+            contract.validate("execute", {"outcome": "meh", "summary": "", "learnings": [{"kind": "bogus"}]})
         self.assertGreaterEqual(len(cm.exception.problems), 3)
 
-    def test_reviewer_and_grade(self):
-        validate_reviewer({"decision": "approve"})
-        validate_reviewer({"decision": "reject", "note": "why"})
-        for bad in ({"decision": "reject"}, {"decision": "maybe", "note": "x"}):
-            with self.assertRaises(EnvelopeError):
-                validate_reviewer(bad)
-        validate_planner({"kind": "plan", "findings": "t", "steps": ["a"], "grade": "G3"})
+    def test_conditional_requirements(self):
+        contract.validate("approve", {"decision": "approve"})
+        contract.validate("approve", {"decision": "reject", "note": "why"})
         with self.assertRaises(EnvelopeError):
-            validate_planner({"kind": "plan", "findings": "t", "steps": ["a"], "grade": "G9"})
+            contract.validate("approve", {"decision": "reject"})
+        contract.validate("shape", {"decision": "redirect", "note": "theirs", "dept": "ops"})
+        with self.assertRaises(EnvelopeError):
+            contract.validate("shape", {"decision": "redirect", "note": "theirs"})
+
+    def test_research_and_retro(self):
+        contract.validate("research", {"summary": "s", "terrain": [{"content": "c", "source": "ls"}]})
+        with self.assertRaises(EnvelopeError):
+            contract.validate("research", {"summary": "s", "terrain": [{"content": "c"}]})
+        contract.validate("retro", {"summary": "s", "cause": "c", "actions": [{"title": "t", "intent": "i"}]})
+
+    def test_published_schemas_match_the_contract(self):
+        for stage in vocab.STAGES:
+            published = REPO / "schemas" / f"{stage}-result.schema.json"
+            self.assertTrue(published.exists(), f"missing {published}; run holon contract schemas --write schemas")
+            self.assertEqual(published.read_text(), contract.schema_text(stage), f"{published} drifted")
 
     def test_extract_last_json(self):
         self.assertEqual(extract_last_json('noise {"a": 1} more {"b": {"c": 2}} tail'), {"b": {"c": 2}})
@@ -78,9 +100,61 @@ class Migrations(unittest.TestCase):
     def test_idempotent(self):
         conn = sqlite3.connect(":memory:", isolation_level=None)
         conn.row_factory = sqlite3.Row
-        first = migrate(conn, "work")
-        self.assertTrue(first)
+        self.assertTrue(migrate(conn, "work"))
         self.assertEqual(migrate(conn, "work"), [])
+        self.assertFalse(conn.execute("SELECT 1 FROM schema_migrations WHERE checksum IS NULL").fetchone())
+
+    def test_pre_graph_instance_converts(self):
+        """An instance created before the work graph (migrations 0001-0003) keeps every task, plan and result."""
+        d = Path(tempfile.mkdtemp())
+        conn = connect(d / "work.db")
+        conn.execute("CREATE TABLE schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT)")
+        pkg = resources.files("holon.migrations").joinpath("work")
+        for name in ("0001_init.sql", "0002_search.fts.sql", "0003_roles_and_profiles.sql"):
+            conn.executescript(pkg.joinpath(name).read_text())
+            conn.execute("INSERT INTO schema_migrations VALUES (?, 'x')", (name,))
+        ts = "2026-10-12T00:00:00.000000Z"
+        x = conn.execute
+        x("INSERT INTO departments (id, slug, name, created_at, head_id) VALUES ('d1','eng','Eng',?, 'e1')", (ts,))
+        x("INSERT INTO employees (id,name,title,dept_id,job_description,duties,driver,status,hired_at,hired_reason) "
+          "VALUES ('e1','Bo','HOD','d1','jd','[\"plan\",\"review\"]','x','active',?,'r')", (ts,))
+        x("INSERT INTO employees (id,name,title,dept_id,job_description,duties,driver,status,hired_at,hired_reason) "
+          "VALUES ('e2','Cy','Dev','d1','jd','[\"execute\"]','x','active',?,'r')", (ts,))
+
+        def task(tid, status):
+            x("INSERT INTO tasks (id, dept_id, title, intent, source, status, created_at, updated_at) "
+              "VALUES (?, 'd1', ?, 'do it', 'chair', ?, ?, ?)", (tid, tid, status, ts, ts))
+
+        def plan(pid, tid, status, approver="chair"):
+            x("INSERT INTO plans (id, task_id, version, author, findings, steps, writes, grade, approver, status,"
+              " created_at) VALUES (?,?,1,'e1','f','[\"s\"]','[]',2,?,?,?)", (pid, tid, approver, status, ts))
+
+        task("t_inbox", "inbox")
+        task("t_wait", "awaiting_approval")
+        plan("pln_wait", "t_wait", "awaiting_approval")
+        task("t_done", "done")
+        plan("pln_done", "t_done", "approved")
+        x("INSERT INTO runs (id, task_id, plan_id, kind, employee_id, started_at, status) "
+          "VALUES ('run_x', 't_done', 'pln_done', 'execute', 'e2', ?, 'succeeded')", (ts,))
+        x("INSERT INTO results (run_id, outcome, summary, documentation, verified, verified_by, created_at) "
+          "VALUES ('run_x', 'success', 'did it', '# doc', 1, 'emp:e1', ?)", (ts,))
+        x("INSERT INTO schedules (id, kind, cron, employee_id, created_at) VALUES ('sch1','plan','* * * * *','e1',?)",
+          (ts,))
+        applied = migrate(conn, "work")
+        self.assertIn("0004_work_graph.py", applied)
+        get = lambda q, *a: conn.execute(q, a).fetchone()  # noqa: E731
+        self.assertEqual(get("SELECT status FROM tasks WHERE id='t_inbox'")[0], "open")
+        self.assertEqual(get("SELECT stage, status FROM tasks WHERE parent_id='t_inbox'")[:], ("plan", "ready"))
+        self.assertEqual(get("SELECT stage, status, outcome FROM tasks WHERE id='pln_wait'")[:], ("plan", "done", "plan"))
+        self.assertEqual(get("SELECT status, approver FROM tasks WHERE parent_id='t_wait' AND stage='approve'")[:],
+                         ("ready", "chair"))
+        self.assertEqual(get("SELECT status FROM tasks WHERE id='t_done'")[0], "done")
+        self.assertEqual(get("SELECT o.verified FROM outputs o JOIN tasks t ON t.id=o.task_id "
+                             "WHERE t.parent_id='t_done' AND o.kind='execute'")[0], 1)
+        self.assertEqual(json.loads(get("SELECT roles FROM employees WHERE id='e1'")[0]), ["head", "planner"])
+        self.assertEqual(get("SELECT kind, stage FROM schedules WHERE id='sch1'")[:], ("wake", "plan"))
+        self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+        conn.close()
 
 
 class MemoryBehaviour(KernelCase):
@@ -95,7 +169,6 @@ class MemoryBehaviour(KernelCase):
         self.assertEqual([i["id"] for i in m.live_items(["proj:x"])], [c["id"]])
 
     def test_context_budget_lineage_and_logbook(self):
-        # a trajectory.db + logbook.db shaped like the live ones, read-only to the kernel
         self.home.trajectory_db.parent.mkdir(parents=True, exist_ok=True)
         tc = sqlite3.connect(self.home.trajectory_db)
         tc.executescript("""CREATE TABLE nodes (id TEXT PRIMARY KEY, parent_id TEXT, item_type TEXT, name TEXT,
@@ -113,18 +186,19 @@ class MemoryBehaviour(KernelCase):
         lc.close()
         t = self.add("Kernel review", intent="Review the kernel design", project_ref="traj:p1")
         self.k.memory.add_item("traj:p1", "constraint", "Never import harness code", "human", pinned=True)
-        md, meta = compile_context(self.home, self.k.work, self.k.memory, t["id"], "plan")
+        stage = self.k.work.stages(t["id"])[0]
+        md, meta = compile_context(self.home, self.k.work, self.k.memory, stage["id"])
         self.assertIn("Ship holon", md)
         self.assertIn("Never import harness code", md)
         self.assertIn("Kernel thoughts", md)
         self.assertEqual(meta["degraded"], [])
-        small, meta = compile_context(self.home, self.k.work, self.k.memory, t["id"], "plan", budget=600)
-        self.assertLessEqual(len(small), 600 + 400)  # body within budget; gap report appended
+        small, meta = compile_context(self.home, self.k.work, self.k.memory, stage["id"], budget=600)
+        self.assertLessEqual(len(small), 600 + 400)
         self.assertTrue(meta["degraded"])
 
     def test_missing_sources_degrade_not_fail(self):
         t = self.add(project_ref="traj:nowhere")
-        md, meta = compile_context(self.home, self.k.work, self.k.memory, t["id"], "plan", run_id="run_x")
+        md, meta = compile_context(self.home, self.k.work, self.k.memory, t["id"], run_id="run_x")
         self.assertIn("trajectory.db absent", meta["degraded"])
         self.assertIn("Context gaps", md)
         row = self.k.mconn.execute("SELECT degraded FROM context_log WHERE run_id='run_x'").fetchone()
@@ -136,20 +210,20 @@ class Grading(KernelCase):
 
     def test_floor_signals(self):
         t = self.add(dept="eng", task_class="ops", risk="low")
-        self.assertEqual(grade_plan(self.k.wconn, t, {"kind": "plan", "writes": ["a.txt"]}, self.k.config)["grade"], 2,
-                         "no proposal -> default G2")
-        self.assertEqual(grade_plan(self.k.wconn, t, {"kind": "plan", "grade": 0}, self.k.config)["grade"], 0)
-        g = grade_plan(self.k.wconn, t, {"kind": "plan", "grade": 0, "writes": ["/etc/hosts"]}, self.k.config)
-        self.assertEqual(g["grade"], 2)
-        g = grade_plan(self.k.wconn, t, {"kind": "plan", "grade": 0, "writes": ["/srv/billing/x.py"]}, self.k.config)
-        self.assertEqual(g["grade"], 3)
-        self.assertTrue(any("sensitive" in r for r in g["reasons"]))
+        g = lambda env, w=t: grade_plan(self.k.wconn, w, env, self.k.config)  # noqa: E731
+        self.assertEqual(g({"kind": "plan", "writes": ["a.txt"]})["grade"], 2, "no proposal -> default G2")
+        self.assertEqual(g({"kind": "plan", "grade": 0})["grade"], 0)
+        self.assertEqual(g({"kind": "plan", "grade": 0, "writes": ["/etc/hosts"]})["grade"], 2)
+        r = g({"kind": "plan", "grade": 0, "writes": ["/srv/billing/x.py"]})
+        self.assertEqual(r["grade"], 3)
+        self.assertTrue(any("sensitive" in x for x in r["reasons"]))
         irreversible = self.add(dept="eng", task_class="ops", risk="irreversible")
-        self.assertEqual(grade_plan(self.k.wconn, irreversible, {"kind": "plan", "grade": 0}, self.k.config)["grade"], 4)
+        self.assertEqual(g({"kind": "plan", "grade": 0}, irreversible)["grade"], 4)
 
 
 class Agnosticism(unittest.TestCase):
-    """The kernel's defining guarantees: stdlib only, and no harness named in code."""
+    """The kernel's defining guarantees: stdlib only, and no harness named anywhere in the distribution's
+    kernel (code, skills, genome)."""
 
     def test_only_stdlib_imports(self):
         stdlib = set(sys.stdlib_module_names)
@@ -167,9 +241,9 @@ class Agnosticism(unittest.TestCase):
                         offenders.append(f"{f.relative_to(PKG)}: {n}")
         self.assertEqual(offenders, [])
 
-    def test_no_harness_named_in_kernel_code(self):
+    def test_no_harness_named_in_kernel(self):
         offenders = []
-        for f in PKG.rglob("*.py"):
+        for f in [*PKG.rglob("*.py"), *PKG.rglob("*.md"), *(PKG / "genome").glob("*.toml")]:
             text = f.read_text().lower()
             for word in ("hermes", "zeroclaw", "operant", "~/.hermes", "claude"):
                 if word in text:

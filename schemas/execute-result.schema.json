@@ -1,14 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Holon executor result",
+  "$id": "holon:execute-result",
+  "title": "Holon execute result",
   "type": "object",
-  "required": [
-    "outcome",
-    "summary",
-    "documentation"
-  ],
   "properties": {
     "outcome": {
+      "type": "string",
       "enum": [
         "success",
         "partial",
@@ -26,7 +23,19 @@
       "maxLength": 200000
     },
     "artifacts": {
-      "type": "array"
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_intent": {
+      "type": "string"
     },
     "learnings": {
       "type": "array",
@@ -38,15 +47,13 @@
           },
           {
             "type": "object",
-            "required": [
-              "content"
-            ],
             "properties": {
               "content": {
                 "type": "string",
                 "minLength": 1
               },
               "kind": {
+                "type": "string",
                 "enum": [
                   "fact",
                   "decision",
@@ -59,16 +66,21 @@
                 ]
               },
               "confidence": {
+                "type": "string",
                 "enum": [
                   "low",
                   "medium",
                   "high"
                 ]
               }
-            }
+            },
+            "required": [
+              "content"
+            ]
           }
         ]
-      }
+      },
+      "description": "lessons (your memory) and facts (the project's)"
     },
     "decisions": {
       "type": "array",
@@ -80,15 +92,13 @@
           },
           {
             "type": "object",
-            "required": [
-              "content"
-            ],
             "properties": {
               "content": {
                 "type": "string",
                 "minLength": 1
               },
               "kind": {
+                "type": "string",
                 "enum": [
                   "fact",
                   "decision",
@@ -101,25 +111,55 @@
                 ]
               },
               "confidence": {
+                "type": "string",
                 "enum": [
                   "low",
                   "medium",
                   "high"
                 ]
               }
-            }
+            },
+            "required": [
+              "content"
+            ]
           }
         ]
-      }
-    },
-    "blockers": {
-      "type": "array"
+      },
+      "description": "decisions future work must respect"
     },
     "proposals": {
-      "type": "array"
-    },
-    "next_intent": {
-      "type": "string"
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "string",
+            "minLength": 1
+          },
+          {
+            "type": "object",
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "intent": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "title",
+              "intent"
+            ]
+          }
+        ]
+      },
+      "description": "improvements, routed to the steward"
     }
-  }
+  },
+  "required": [
+    "outcome",
+    "summary",
+    "documentation"
+  ]
 }
