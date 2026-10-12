@@ -21,6 +21,7 @@ from pathlib import Path
 
 from holon.capabilities.context import DEFAULT_BUDGET_CHARS, compile_context, identity_card
 from holon.capabilities.memory import Memory
+from holon.capabilities import skills as skills_mod
 from holon.capabilities.skills import Library
 from holon.core import contract, vocab
 from holon.core.contract import EnvelopeError
@@ -231,6 +232,8 @@ class Kernel:
 
     def verify(self, ref: str, verdict: str, note: str, run_id: str | None = None) -> dict:
         out = self.work.verify(ref, verdict, note, run_id)
+        if out["work"]["status"] == "done":
+            out["skill_changes"] = self.apply_skill_changes(out["work"])
         plan = self.work.approved_plan(out["work"]["id"])
         change = None
         decider = plan["approval"]["decided_by"] if plan else None
@@ -362,6 +365,8 @@ class Kernel:
                 raise EnvelopeError(["no result.json and no JSON output"])
             env = contract.validate(stage, envelope)
             self._check_org_refs(env)
+            if stage == "execute":
+                self._check_skill_changes(self.work.work_of(run["task_id"]), env)
         except EnvelopeError as e:
             return self._contract_breach(run, e.problems, driver_output, exit_code)
         node = self.work.get(run["task_id"])
@@ -396,6 +401,8 @@ class Kernel:
                 out["verification_skipped"] = bool(skipped)
                 if skipped:
                     out["work"] = skipped
+                    if skipped["status"] == "done":
+                        out["skill_changes"] = self.apply_skill_changes(skipped)
         elif stage == "verify":
             out = self.verify(node["id"], env["verdict"], env["note"], run_id=run_id)
         else:
@@ -445,6 +452,98 @@ class Kernel:
         return self.work.skip_verification(
             work["id"], f"verification sampled out: trusted G0 work ({streak} consecutive verified passes; "
                         f"{pol['verify_sample_rate']:.0%} of such results are verified)")
+
+    def _check_skill_changes(self, work: dict, env: dict) -> None:
+        """An executor may change only the department skill files its approved plan named."""
+        changes = env.get("skill_changes") or []
+        if not changes:
+            return
+        plan = self.work.approved_plan(work["id"])
+        named = set(((plan or {}).get("output") or {"body": {}})["body"].get("writes") or [])
+        problems = []
+        if not work.get("dept_id"):
+            problems.append("skill_changes need work that belongs to a department")
+        for i, c in enumerate(changes):
+            f = Path(c["file"])
+            if not skills_mod.NAME_RE.match(c["skill"]) or f.is_absolute() or ".." in f.parts or f.suffix != ".md":
+                problems.append(f"skill_changes[{i}]: {c['skill']}/{c['file']} is not a skill markdown file")
+            elif f"skill:{c['skill']}/{c['file']}" not in named:
+                problems.append(f"skill_changes[{i}]: the approved plan does not list skill:{c['skill']}/{c['file']}")
+        if problems:
+            raise EnvelopeError(problems)
+
+    def apply_skill_changes(self, work: dict) -> list[dict]:
+        """Write a verified work's skill changes into its department's layer, keep them only if the library
+        still checks clean, then refresh every registered harness export."""
+        ex = self.work.latest(work["id"], "execute", "done")
+        body = ((self.work.output(ex["id"]) if ex else None) or {"body": {}})["body"]
+        changes = body.get("skill_changes") or []
+        slug = self._dept_slug(work.get("dept_id"))
+        if not changes or not slug:
+            return []
+        layer = self.skills.instance / f"@{slug}"
+        before = {}
+        for c in changes:
+            p = layer / c["skill"] / c["file"]
+            before[p] = p.read_text() if p.exists() else None
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(c["content"])
+        problems = [x for x in self.skills.check(slug) if any(x.startswith(c["skill"] + " ") for c in changes)]
+        if problems:  # leave the library as it was
+            for p, old in before.items():
+                if old is None:
+                    p.unlink()
+                else:
+                    p.write_text(old)
+        applied = not problems
+        with write_txn(self.wconn):
+            for c in changes:
+                self.work._event("skill", f"@{slug}/{c['skill']}/{c['file']}", None,
+                                 "changed" if applied else "rejected",
+                                 (c["why"] if applied else "; ".join(problems))[:500], actor="kernel")
+        exported = self.refresh_skill_exports() if applied else []
+        return [{"skill": c["skill"], "file": c["file"], "applied": applied, "problems": problems,
+                 "exported_to": exported} for c in changes]
+
+    # ── skill exports: harnesses that load skills from disk get a copy; the kernel keeps them current ──
+    def _exports_file(self) -> Path:
+        return self.home.root / "config" / "skill-exports.json"
+
+    def skill_exports(self) -> list[dict]:
+        f = self._exports_file()
+        return json.loads(f.read_text()) if f.exists() else []
+
+    def export_skills(self, dest: Path, variables: dict, names: list[str] | None = None,
+                      dept: str | None = None) -> list[Path]:
+        """Export skills to a harness directory and remember it, so later skill changes reach it too."""
+        out = self.skills.export(dest, variables, names, dept)
+        entry = {"dir": str(dest.resolve()), "names": names, "dept": dept, "variables": variables}
+        regs = [r for r in self.skill_exports() if r["dir"] != entry["dir"]] + [entry]
+        self._exports_file().parent.mkdir(parents=True, exist_ok=True)
+        self._exports_file().write_text(json.dumps(regs, indent=2))
+        return out
+
+    def refresh_skill_exports(self) -> list[str]:
+        done = []
+        for r in self.skill_exports():
+            if Path(r["dir"]).is_dir():
+                self.skills.export(Path(r["dir"]), r["variables"], r["names"], r["dept"])
+                done.append(r["dir"])
+        return done
+
+    def stale_skill_exports(self) -> list[str]:
+        """Registered exports whose files no longer match what the library renders."""
+        stale = []
+        for r in self.skill_exports():
+            d = Path(r["dir"])
+            for name in r["names"] or self.skills.names(r["dept"]):
+                m = self.skills.meta(name, r["dept"])
+                for f in ["SKILL.md"] + m["files"]:
+                    p = d / name / f
+                    if not p.exists() or p.read_text() != self.skills.render(self.skills.read(name, f, r["dept"]),
+                                                                            r["variables"]):
+                        stale.append(f"{d}: {name}/{f}")
+        return stale
 
     def _check_org_refs(self, env: dict) -> None:
         problems = []

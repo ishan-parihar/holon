@@ -85,5 +85,8 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | VPS first wave | a slow model outlived its stage lease, so the stage could be reclaimed mid-run | `test_a_running_harness_keeps_its_lease_and_a_hung_one_is_killed` |
 | VPS survey | two wakes due in one tick could both pass the concurrency check | `test_the_concurrency_cap_is_checked_inside_the_claim` |
 | VPS survey | a harness sandbox built for an older `[scope]` kept its old reach | `test_doctor_catches_a_sandbox_built_for_another_scope` |
+| System red team | the skill-evolution loop could not finish on a sandboxed harness | `test_a_verified_change_lands_in_the_department_layer_and_every_export` |
+| System red team | verification was only an LLM's judgment; nothing a command could decide was checked | `test_a_failing_check_is_rework_without_spending_a_verifier` |
+| System red team | doctor ran only when a person ran it | `test_a_doctor_error_becomes_one_incident_and_the_check_waits_its_interval` |
 | Red-team R1 | the Chair key reached a harness's environment | `test_the_chair_key_never_reaches_a_harness` |
 | Red-team R1 | a harness name leaked into the kernel | `test_no_harness_named_in_kernel` |

@@ -90,6 +90,11 @@ SPECS: dict[str, dict[str, dict[str, F]]] = {
         "outcome": F("str", required=True, enum=vocab.OUTCOMES["execute"]),
         "summary": F("text", required=True), "documentation": F("text", required=True, max_chars=MAX_DOC_CHARS),
         "artifacts": STR_LIST, "blockers": STR_LIST, "next_intent": TEXT,
+        "skill_changes": F("list", items=F("object", fields={
+            "skill": F("str", required=True), "file": F("str", required=True),
+            "content": F("text", required=True, max_chars=MAX_DOC_CHARS), "why": F("text", required=True)}),
+            doc="department skill files to write; the approved plan must list each as `skill:<skill>/<file>`, "
+                "and the kernel applies them when the work is verified"),
     }},
     "verify": {"": {
         "verdict": F("str", required=True, enum=vocab.OUTCOMES["verify"]),

@@ -751,7 +751,8 @@ def cmd_skill_check(args, k):
 def cmd_skill_export(args, k):
     # exported skills serve every instance and run: `$HOLON` is the kernel command each run exports, and
     # pull-mode sessions fall back to `holon` on PATH with HOLON_HOME set
-    out = k.skills.export(Path(args.to).expanduser(), {"holon": EXPORTED_HOLON}, args.name or None, args.dept)
+    # registered: when a verified skill change lands, the kernel refreshes this directory too
+    out = k.export_skills(Path(args.to).expanduser(), {"holon": EXPORTED_HOLON}, args.name or None, args.dept)
     _out(args, [str(p) for p in out], "\n".join(f"exported {p}" for p in out))
 
 

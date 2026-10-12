@@ -118,6 +118,10 @@ def run(k) -> list[dict]:
                                             f"({d.scope_fingerprint} ≠ {k.scope_fingerprint()}): re-run its installer")
     except drivers.DriverError as e:
         add("error", "drivers", str(e))
+    stale = k.stale_skill_exports()
+    if stale:
+        add("warning", "skills.export_stale", f"{len(stale)} exported skill files differ from the library "
+                                              f"(e.g. {stale[0]}): `holon skill export` again, or let a skill change land")
     if k.config["planner"].get("trust_harness_read_only"):
         add("warning", "config.read_only", "[planner] trust_harness_read_only = true: the kernel's read-only "
                                            "guard is skipped for harnesses that claim to enforce it")

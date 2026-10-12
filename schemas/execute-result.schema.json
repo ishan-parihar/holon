@@ -37,6 +37,36 @@
     "next_intent": {
       "type": "string"
     },
+    "skill_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "skill": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200000
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "skill",
+          "file",
+          "content",
+          "why"
+        ]
+      },
+      "description": "department skill files to write; the approved plan must list each as `skill:<skill>/<file>`, and the kernel applies them when the work is verified"
+    },
     "learnings": {
       "type": "array",
       "items": {

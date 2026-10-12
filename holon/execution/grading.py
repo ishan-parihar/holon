@@ -47,6 +47,9 @@ def grade_plan(conn: sqlite3.Connection, task: dict, env: dict, cfg: dict | None
     workdir = Path(task["workdir"]).expanduser().resolve() if task.get("workdir") else None
     roots = [Path(r).expanduser().resolve() for r in reach or []]
     for w in env.get("writes") or []:
+        if isinstance(w, str) and w.startswith("skill:"):
+            bump(2, f"changes how the department works ({w}): floor G2")
+            continue
         if not isinstance(w, str) or "://" in w:
             continue
         p = Path(w).expanduser()

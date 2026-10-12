@@ -43,7 +43,7 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
 | Probation | a new hire's period, ended by a confirmation their head decides | `execution.service.Kernel.triggers` |
 | Collective intelligence | lessons promoted from employees to departments to the company | `capabilities.memory.Memory.promote_recurring` |
 | Self-healing | leases, retries, stale-plan detection, incident work when runs keep dying or failing | `holon tick` |
-| Self-evolving | retros whose actions become work that changes skills, staffing and the genome | `execution.work.Work.submit_retro` |
+| Self-evolving | retros whose actions become work that changes skills, staffing and the genome | `execution.work.Work.submit_retro`, `execution.service.Kernel.apply_skill_changes` |
 | Integrity | artifact rubric, live-state checks, and machine checks on every result | `holon lint`, `holon doctor`, `execution.service.Kernel.run_checks` |
 
 ## The feedback loops

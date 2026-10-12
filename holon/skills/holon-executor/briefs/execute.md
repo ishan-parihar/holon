@@ -29,5 +29,8 @@ You are executing work **$work_id** according to its approved plan.
  "next_intent": "the single next step, if this work continues"}
 ```
 
-`documentation` is the result the Chair reads. No file-write tool? Call the `holon_submit` tool
+When the approved plan lists `skill:<skill>/<file>` in its writes, put the new file in
+`"skill_changes": [{"skill": "...", "file": "SKILL.md", "content": "<the whole file>", "why": "..."}]`
+instead of editing skill files: the kernel writes it into your department's layer once the work is
+verified. `documentation` is the result the Chair reads. No file-write tool? Call the `holon_submit` tool
 with it, or end your final message with that JSON object.

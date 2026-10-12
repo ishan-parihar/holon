@@ -55,6 +55,12 @@ file through three layers, first match wins: `$HOLON_HOME/skills/@<dept>/<skill>
 `$HOLON_HOME/skills/<skill>/`, then the standard library, so tailoring one file for one department
 leaves the rest untouched and reaches that department's next brief.
 
+Skills evolve through work, on any harness (agents never write the skills directory): a plan names
+`skill:<skill>/<file>` in its writes (floor G2), the executor returns the new file in the execute
+result's `skill_changes`, and when the work is verified the kernel writes it into the department's
+layer, keeps it only if `skill check` stays clean, and re-exports every directory registered by
+`holon skill export`. `holon doctor` warns (`skills.export_stale`) when an export drifts.
+
 `holon skill list | show | path | invoke | fork | new | check | export` manage them; `invoke`
 records each use for the steward's metrics. `SKILL.md` frontmatter: `name`, `description` (with a
 "Use when" trigger), `kind` (protocol, role, operation), `roles`, `version`. Lint's DEPTH pack is
