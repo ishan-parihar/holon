@@ -28,8 +28,9 @@ to parse output. `references/organization.md` explains how the organization fits
 3. **Load your role skill** for that stage: `$holon skill invoke holon-<role>`. It says what good
    work looks like for your role; the brief says what to return.
 4. **Hand in exactly one JSON result.** Write it to the `result.json` path in the brief (pull mode:
-   then `$holon submit <run_id>`). With no file-write tool, make the JSON object the last thing in
-   your final message.
+   then `$holon submit <run_id>`). If your harness lists Holon tools (`holon_whoami`,
+   `holon_submit`, …), you may call `holon_submit` with the result instead; with neither, make the
+   JSON object the last thing in your final message.
 
 ## Always
 

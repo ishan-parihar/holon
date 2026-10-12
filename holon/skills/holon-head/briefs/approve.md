@@ -22,4 +22,4 @@ verification, or that the Chair disagrees with on audit, cost you authority.
  "learnings": [], "proposals": []}
 ```
 
-No file-write tool? End your final message with that JSON object, nothing after it.
+No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.

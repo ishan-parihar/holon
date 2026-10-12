@@ -875,6 +875,13 @@ def cmd_adapter_test(args, k):
     return 0 if report["passed"] == len(report["clauses"]) else 1
 
 
+@command("mcp", "any", "serve the organization as MCP tools over stdio (for MCP-capable harnesses)", mutates=False)
+def cmd_mcp(args, k):
+    from holon import mcp
+    k.close()  # each tool call opens its own kernel, authenticated per call
+    mcp.serve()
+
+
 @command("help", "any", "this command registry (--json: the manifest agents read)", mutates=False)
 def cmd_help(args, k):
     m = manifest()
@@ -927,7 +934,8 @@ def main(argv: list[str] | None = None) -> int:
             print("holon: authentication is not configured (open mode); run `holon init` to create the Chair key",
                   file=sys.stderr)
         if not _allowed(cmd, principal):
-            print(f"holon: `{' '.join(cmd.path)}` needs a {cmd.actor} (you are {principal.kind})", file=sys.stderr)
+            print(f"holon: `{' '.join(cmd.path)}` is for the {cmd.actor} actor class (you are {principal.kind})",
+                  file=sys.stderr)
             return FORBIDDEN
         args.principal = principal
         k.actor = k.work.actor = k.org.actor = k.schedules.work.actor = principal.actor

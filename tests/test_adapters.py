@@ -47,6 +47,30 @@ class Shipped(KernelCase):
         self.assertIn(str(self.home.root / "execution" / "runtime" / "work.db"), observer["forbidden_paths"])
         self.assertEqual(cfg["agents"]["holon-observe"]["skill_bundles"], ["holon"])
         self.assertEqual(cfg["providers"]["models"]["openai"]["holon"]["model"], "free-stack")
+        server = next(m for m in cfg["mcp"]["servers"] if m["name"] == "holon")
+        self.assertEqual((server["transport"], server["args"]), ("stdio", ["mcp"]))
+        self.assertTrue(server["command"].endswith("bin/holon"))
+        self.assertEqual(cfg["mcp_bundles"]["holon"]["servers"], ["holon"])
+        for alias in ("holon-observe", "holon-act"):
+            self.assertEqual(cfg["agents"][alias]["mcp_bundles"], ["holon"])
+
+    def test_zeroclaw_installer_wires_chair_notifications(self):
+        zc = self.tmp / "zeroclaw"
+        zc.mkdir()
+        (zc / "config.toml").write_text('[providers.models.openai.main]\nuri = "http://x"\n\n'
+                                        '[agents.assistant]\nmodel_provider = "openai.main"\n')
+        sys.path.insert(0, str(ADAPTERS / "zeroclaw"))
+        try:
+            import install
+        finally:
+            sys.path.pop(0)
+        print(install.set_notify(self.home.root, None, "telegram", "12345", force=False))
+        cfg = tomllib.loads(self.home.config_file.read_text())
+        self.assertEqual(cfg["notify"]["command"],
+                         "zeroclaw channel send {message} --channel-id telegram --recipient 12345")
+        self.assertIn("already has", install.set_notify(self.home.root, None, "telegram", "999", force=False))
+        install.set_notify(self.home.root, None, "telegram", "999", force=True)
+        self.assertIn("--recipient 999", tomllib.loads(self.home.config_file.read_text())["notify"]["command"])
 
 
 class Conformance(KernelCase):

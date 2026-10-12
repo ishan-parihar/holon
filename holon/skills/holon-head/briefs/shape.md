@@ -25,4 +25,4 @@ Read-only: you change the work's fields through your result, nothing else.
  "priority": 2, "assignee": "emp_… (optional)", "dept": "slug (redirect only)", "research": false}
 ```
 
-No file-write tool? End your final message with that JSON object, nothing after it.
+No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.

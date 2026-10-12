@@ -11,6 +11,18 @@ max_tool_iterations = 40
 # Holon's skills library, exported (rendered for this instance) by `holon skill export`.
 directory = "@SKILLS_DIR@"
 
+[[mcp.servers]]
+# The organization as native tools (holon_whoami, holon_submit, holon_memory_search, …). ZeroClaw
+# spawns it per session with the agent's environment, so the run token authenticates every call.
+name = "holon"
+transport = "stdio"
+command = "@HOLON_BIN@"
+args = ["mcp"]
+tool_timeout_secs = 120
+
+[mcp_bundles.holon]
+servers = ["holon"]
+
 [risk_profiles.holon-observer]
 # research, shape, plan, approve, verify, retro: look, never touch. No write tools; the shell is
 # limited to commands that cannot write (no git, no sqlite3, no interpreters).
@@ -36,6 +48,7 @@ allowed_commands = ["holon", "git", "npm", "cargo", "ls", "cat", "grep", "find",
 [agents.holon-observe]
 model_provider = "@MODEL_PROVIDER@"
 runtime_profile = "holon"
+mcp_bundles = ["holon"]
 risk_profile = "holon-observer"
 skill_bundles = ["holon"]
 enabled = true
@@ -43,6 +56,7 @@ enabled = true
 [agents.holon-act]
 model_provider = "@MODEL_PROVIDER@"
 runtime_profile = "holon"
+mcp_bundles = ["holon"]
 risk_profile = "holon-worker"
 skill_bundles = ["holon"]
 enabled = true

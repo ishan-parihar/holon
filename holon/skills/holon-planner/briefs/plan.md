@@ -34,4 +34,4 @@ approver whose authority covers that grade, so make it reviewable in under two m
 or `{"kind": "decompose", "rationale": "...", "grade": "G2", "children": [{"title": "...", "intent": "...", "acceptance": "...", "dept": "ops", "after": [0]}]}`
 or `{"kind": "needs_input", "question": "..."}`
 
-No file-write tool? End your final message with that JSON object, nothing after it.
+No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.

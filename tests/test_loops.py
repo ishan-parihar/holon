@@ -108,3 +108,19 @@ class Loops(KernelCase):
         for v in m.values():
             if isinstance(v, dict) and "value" in v:
                 self.assertIn(v["counter"], m)
+
+
+class Notifications(KernelCase):
+    def test_the_chair_hears_once_about_what_newly_needs_them(self):
+        out = self.tmp / "sent.txt"
+        self.k.config["notify"] = {"command": f"printf '%s\\n---\\n' {{message}} >> {out}"}
+        self.assertIsNone(self.k.tick()["notified"], "nothing new yet")
+        self.plan(self.add("Rotate keys", dept="eng"))
+        n = self.k.tick()["notified"]
+        self.assertEqual((n["items"], n["sent"]), (1, True))
+        self.assertIn("approve? Rotate keys", out.read_text())
+        self.assertIsNone(self.k.tick()["notified"], "each item is announced once")
+        self.k.config["notify"] = {"command": "exit 3"}
+        self.plan(self.add("Second", dept="eng"))
+        self.assertFalse(self.k.tick()["notified"]["sent"])
+        self.assertTrue(any(e["entity"] == "notify" and e["to_status"] == "failed" for e in self.k.work.events()))

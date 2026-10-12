@@ -125,6 +125,16 @@ names it. Every adapter has the same five parts:
 | Posture map | observe stages get a harness setting that cannot write; execute gets the approved plan's reach |
 | Conformance | `holon adapter test <driver>` passes every clause: driver, plan, approve, execute, verify |
 
-Shipped adapters: `zeroclaw` (posture aliases, its own skill bundle, observe profile without
-write tools), `hermes` (skills as a Hermes category, posture toolsets) and `claude-code` (plan
-mode for observe stages). `generic-shell` in the kernel is a template for anything else.
+Shipped adapters: `zeroclaw` (posture aliases, its own skill bundle, the Holon MCP server, Chair
+notifications through its channels, observe profile without write tools), `hermes` (skills as a
+Hermes category, posture toolsets) and `claude-code` (plan mode for observe stages). `generic-shell`
+in the kernel is a template for anything else.
+
+## 8. Native tools (MCP)
+
+`holon mcp` serves the organization over the Model Context Protocol (stdio, JSON-RPC 2.0). A
+harness that mounts it gives employees native tools instead of shell commands: `holon_whoami`,
+`holon_submit` (the result envelope as a structured argument, so observe stages need no file
+write), and the employee commands of the registry (`holon_memory_search`, `holon_msg_send`,
+`holon_run_heartbeat`, …). The server inherits the harness's environment, so `HOLON_RUN_TOKEN` or
+`HOLON_KEY` authenticates every call exactly as on the CLI; chair-only commands are never exposed.

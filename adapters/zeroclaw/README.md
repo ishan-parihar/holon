@@ -9,8 +9,19 @@ is the only place that knows ZeroClaw exists. It implements the adapter shape in
 | Driver | `driver.toml`: `zeroclaw agent -a holon-{posture} -m {briefing}` (identity card + stage brief) |
 | Identity | carried in every message (`{briefing}`), so it works whatever ZeroClaw does with workspace identity files |
 | Skills | `holon skill export` → `$HOLON_HOME/adapters/zeroclaw/skills`, loaded as the `holon` skill bundle |
+| Native tools | the Holon MCP server (`bin/holon mcp`, stdio) in the `holon` MCP bundle of both aliases: `holon_whoami`, `holon_submit`, `holon_memory_search`, … authenticated by the run token ZeroClaw passes to it |
+| Chair notifications | `--notify-channel telegram --notify-recipient <chat id>` points Holon's `[notify]` hook at `zeroclaw channel send` |
 | Posture map | `holon-observe` (no write tools, read-only shell) for every stage but execute; `holon-act` for execute |
 | Conformance | `holon adapter test zeroclaw` |
+
+## Why these native surfaces, and not a WASM plugin
+
+ZeroClaw plugins are sandboxed WebAssembly components, loaded only by binaries built with the
+`plugins-wasm` feature (release binaries are not), and a sandboxed component cannot reach Holon's
+kernel or its databases anyway. What a stock ZeroClaw offers natively, and this adapter uses:
+skill bundles (`[skill_bundles.holon]`), MCP servers scoped per agent (`[mcp_bundles.holon]`), agent
+aliases with risk and runtime profiles, and channel sends. ZeroClaw cron jobs run as agent turns
+(each one a model call), so Holon's heartbeat stays a plain timer (`adapters/systemd`).
 
 ## Safety model
 
@@ -26,7 +37,8 @@ is the only place that knows ZeroClaw exists. It implements the adapter shape in
 
 ```sh
 python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/src/repo --dry-run
-python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/src/repo [--model free-stack]
+python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/src/repo --model free-stack \
+    --notify-channel telegram --notify-recipient <your chat id>
 holon adapter test zeroclaw          # conformance: a few real runs in a scratch organization
 holon hr hire … --driver zeroclaw     # employees now run on ZeroClaw
 ```

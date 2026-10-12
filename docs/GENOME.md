@@ -98,6 +98,7 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[cadence]` | `dept_retro_min_proposals` | 1 | proposals needed before a department retro is due |
 | `[cadence]` | `probation_days` | 14 | days before a new hire's confirmation goes to their head |
 | `[budget]` | `max_running_per_dept` | 0 (no cap) | runs a department may have in flight; `[budget.dept.<slug>]` overrides |
+| `[notify]` | `command` | "" (off) | run on each heartbeat that finds something new for the Chair; `{message}` is the text (an adapter fills this in, e.g. a chat CLI) |
 | `[budget]` | `max_runs_per_dept_per_day` | 0 (no cap) | runs a department may start in 24 hours; its stages wait on the board beyond it |
 
 ## 7. Operations

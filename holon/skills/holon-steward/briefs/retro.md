@@ -26,4 +26,4 @@ cause and turn it into changes.
  "actions": [{"title": "…", "intent": "the change and how we will know it worked", "acceptance": "…", "task_class": "improvement"}]}
 ```
 
-No file-write tool? End your final message with that JSON object, nothing after it.
+No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.

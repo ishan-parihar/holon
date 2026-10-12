@@ -54,6 +54,23 @@ def toml_list(items: list[str]) -> str:
     return ", ".join(f'"{x}"' for x in items)
 
 
+def set_notify(home: Path, config_dir: Path | None, channel: str, recipient: str, force: bool) -> str:
+    """Point Holon's [notify] hook at `zeroclaw channel send` (holon.toml; kept unless --force)."""
+    toml = home / "holon.toml"
+    text = toml.read_text() if toml.exists() else ""
+    cd = f"--config-dir {config_dir} " if config_dir else ""
+    line = f'command = "zeroclaw {cd}channel send {{message}} --channel-id {channel} --recipient {recipient}"'
+    if "[notify]" in text and not force:
+        return f"{toml} already has [notify] (use --force to replace it)"
+    if "[notify]" in text:
+        start = text.index("[notify]")
+        end = text.find("\n[", start + 1)
+        text = text[:start] + text[end + 1:] if end != -1 else text[:start]
+    toml.write_text(text.rstrip() + f"\n\n[notify]\n{line}\n")
+    tomllib.loads(toml.read_text())
+    return f"the Chair is told through {channel} ({toml})"
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--holon-home", default=str(Path("~/holon").expanduser()))
@@ -63,6 +80,8 @@ def main() -> int:
                                     "model (e.g. an aroute combo such as free-stack)")
     ap.add_argument("--fallback-model", action="append", default=[], help="fallback models for --model (repeat)")
     ap.add_argument("--allow", action="append", default=[], help="a directory employees work in (repeat)")
+    ap.add_argument("--notify-channel", help="ZeroClaw channel that tells the Chair what needs them (e.g. telegram)")
+    ap.add_argument("--notify-recipient", help="the Chair's id on that channel (e.g. a Telegram chat id)")
     ap.add_argument("--force", action="store_true", help="replace an existing Holon block")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
@@ -105,7 +124,7 @@ def main() -> int:
         .replace("@PROVIDER_BLOCK@", provider_block).replace("@MODEL_PROVIDER@", provider) \
         .replace("@ALLOWED_ROOTS@", toml_list(roots)) \
         .replace("@FORBIDDEN_PATHS@", toml_list(SYSTEM_FORBIDDEN + instance_state)) \
-        .replace("@SKILLS_DIR@", str(skills_dir))
+        .replace("@SKILLS_DIR@", str(skills_dir)).replace("@HOLON_BIN@", str(REPO / "bin" / "holon"))
 
     legacy = [x for x in ("holon-plan", "holon-execute", "holon-verify", "holon-review") if x in agents]
     present = BEGIN in text
@@ -137,6 +156,10 @@ def main() -> int:
             print("config: the write produced invalid TOML; backup restored", file=sys.stderr)
             return 1
         print(f"config: Holon block written (backup: {backup})")
+
+    if a.notify_channel and a.notify_recipient:
+        print("notify: " + set_notify(home, config_dir if a.config_dir else None, a.notify_channel,
+                                      a.notify_recipient, a.force))
 
     drivers_dir = home / "config" / "drivers"
     drivers_dir.mkdir(parents=True, exist_ok=True)

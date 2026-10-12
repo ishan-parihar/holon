@@ -29,5 +29,5 @@ You are executing work **$work_id** according to its approved plan.
  "next_intent": "the single next step, if this work continues"}
 ```
 
-`documentation` is the result the Chair reads. No file-write tool? End your final message with
-that JSON object, nothing after it.
+`documentation` is the result the Chair reads. No file-write tool? Call the `holon_submit` tool
+with it, or end your final message with that JSON object.

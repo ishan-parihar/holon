@@ -44,6 +44,7 @@ DEFAULT_CONFIG = {
     "healing": {"incident_dept": "it", "lease_expiries_for_incident": 2, "schedule_failures_for_incident": 3},
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
     "budget": {"max_running_per_dept": 0, "max_runs_per_dept_per_day": 0},   # 0 = no cap
+    "notify": {"command": ""},   # e.g. a chat CLI with {message}; empty = no notifications
 }
 CONFIG_KEYS = {s: set(v) for s, v in DEFAULT_CONFIG.items() if s not in ("grading", "autonomy", "pipeline")}
 CONFIG_KEYS["budget"].add("dept")  # [budget.dept.<slug>] overrides
@@ -541,6 +542,7 @@ class Kernel:
         """Idempotent heartbeat; call it from any timer (systemd, cron, a harness scheduler)."""
         swept = self.work.sweep_leases()
         triggered = self.triggers(swept)
+        notified = self.notify()
         fired = []
         for s in self.schedules.take_due():
             if s["kind"] == "recurring":
@@ -558,7 +560,7 @@ class Kernel:
             else:
                 self._spawn_dispatch(s["employee_id"], s["stage"], s["id"])
                 fired.append({"schedule": s["id"], "spawned": True})
-        return {"swept": swept, "triggered": triggered, "fired": fired}
+        return {"swept": swept, "triggered": triggered, "fired": fired, "notified": notified}
 
     def _spawn_dispatch(self, employee_id: str, stage: str | None, schedule_id: str) -> None:
         log = self.home.runtime_dir / "dispatch.log"
@@ -594,6 +596,57 @@ class Kernel:
                     (cap.get("max_runs_per_dept_per_day") and use["runs_last_24h"] >= cap["max_runs_per_dept_per_day"]):
                 out.append(d["id"])
         return out
+
+    # ── telling the Chair: one message per heartbeat about what newly needs them ──
+    def pending_for_chair(self, since_seq: int) -> list[str]:
+        lines = []
+        for e in self.wconn.execute(
+                "SELECT e.seq, t.id, t.stage, t.status, t.title, t.task_class, t.approver, t.blocked_reason "
+                "FROM events e JOIN tasks t ON t.id=e.entity_id WHERE e.entity='task' AND e.seq>? ORDER BY e.seq",
+                (since_seq,)).fetchall():
+            if e["stage"] == "approve" and e["status"] == "ready" and e["approver"] == CHAIR:
+                lines.append(f"approve? {e['title'].removeprefix('approve: ')} (holon plan show {e['id']})")
+            elif e["stage"] is None and e["status"] == "needs_input":
+                lines.append(f"question on {e['title']}: {(e['blocked_reason'] or '')[:200]} (holon task show {e['id']})")
+            elif e["stage"] is None and e["status"] == "failed":
+                lines.append(f"failed: {e['title']} (holon task show {e['id']})")
+            elif e["stage"] is None and e["status"] == "open" and e["task_class"] == "incident":
+                lines.append(f"incident: {e['title']}")
+        n = self.wconn.execute("SELECT count(*) FROM audit_samples WHERE verdict IS NULL AND sampled_at>?",
+                               (self._setting("notify_ts") or "",)).fetchone()[0]
+        if n:
+            lines.append(f"{n} delegated approvals sampled for your review (holon audit samples)")
+        return list(dict.fromkeys(lines))
+
+    def _setting(self, key: str) -> str | None:
+        r = self.wconn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return r[0] if r else None
+
+    def notify(self) -> dict | None:
+        """Run [notify] command with {message} once per heartbeat that found something new for the Chair."""
+        command = (self.config.get("notify") or {}).get("command")
+        if not command:
+            return None
+        last = int(self._setting("notify_seq") or 0)
+        top = self.wconn.execute("SELECT coalesce(max(seq), 0) FROM events").fetchone()[0]
+        lines = self.pending_for_chair(last)
+        with write_txn(self.wconn):
+            self.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('notify_seq', ?)", (str(top),))
+            self.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('notify_ts', ?)", (now(),))
+        if not lines:
+            return None
+        message = "Holon needs you:\n" + "\n".join(f"- {line}" for line in lines[:20])
+        import shlex
+        try:
+            p = subprocess.run(command.replace("{message}", shlex.quote(message)), shell=True, capture_output=True,
+                               text=True, timeout=60)
+            ok, detail = p.returncode == 0, (p.stderr or p.stdout)[-300:]
+        except (OSError, subprocess.TimeoutExpired) as e:
+            ok, detail = False, str(e)
+        with write_txn(self.wconn):
+            self.work._event("notify", "chair", None, "sent" if ok else "failed",
+                             f"{len(lines)} items" + ("" if ok else f": {detail}"), actor="kernel")
+        return {"items": len(lines), "sent": ok}
 
     # ── feedback loops (R5): sensors that post work when something needs attention ──
     def triggers(self, swept: list[dict] | None = None) -> list[dict]:

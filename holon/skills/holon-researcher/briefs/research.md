@@ -25,4 +25,4 @@ on what you write, and so will every later task in this area: write it to last.
  "learnings": ["lessons for your own memory"], "proposals": ["improvements to the department or the OS"]}
 ```
 
-Every terrain item is saved to the department's knowledge base. No file-write tool? End your final message with that JSON object, nothing after it.
+Every terrain item is saved to the department's knowledge base. No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.
