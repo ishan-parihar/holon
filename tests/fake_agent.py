@@ -5,6 +5,7 @@
   stdout          prints the envelope on stdout instead of writing result.json
   fail            executor reports outcome=failure
   self-submit     the agent submits its own result with its run token (pull-in-push)
+  cron-writes     something else writes data/log.jsonl in the workdir while the agent observes
   wrapped         prints a harness summary {"text": <reply>, "usage": {...}} (jcode, Claude Code style)
 """
 
@@ -29,6 +30,9 @@ if mode == "garbage":
     sys.exit(0)
 if "dirty-planner" in modes and os.environ["HOLON_POSTURE"] == "observe":
     (workdir / "scribble.txt").write_text("an observer should not write")
+if "cron-writes" in modes:  # another process sharing the tree, not the agent
+    (workdir / "data").mkdir(exist_ok=True)
+    (workdir / "data" / "log.jsonl").write_text('{"tick": 1}\n')
 if "pycache" in modes:  # running the tests while observing leaves a cache behind
     (workdir / "__pycache__").mkdir(exist_ok=True)
     (workdir / "__pycache__" / "x.cpython-314.pyc").write_bytes(b"cache")

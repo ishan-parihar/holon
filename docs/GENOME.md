@@ -93,6 +93,7 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[context]` | `budget_chars` | 24000 | size of a stage's context bundle |
 | `[planner]` | `enforce_read_only` | true | fail observe-stage runs that change the working directory |
 | `[planner]` | `trust_harness_read_only` | false | skip that check for drivers declaring `read_only_enforced` |
+| `[planner]` | `guard_ignore` | [] | paths (globs relative to the workdir, `dir/**` for a tree) that other processes write, which the read-only check skips; commits by another process never count |
 | `[grading]` | `novelty_min_verified`, `default_proposed`, `sensitive_paths` | 3, 2, [] | grade floors (see the planner skill's grading reference) |
 | `[autonomy]` | `mode` and the keys above; `[autonomy.dept.<slug>]` per department | supervised | §5 |
 | `[pipeline]` | `research`, `shape`, `retro` | auto | §3 |
@@ -101,7 +102,7 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[healing]` | `lease_expiries_for_incident` | 2 | expired runs of one stage before an incident opens |
 | `[healing]` | `schedule_failures_for_incident` | 3 | consecutive schedule failures before an incident opens |
 | `[healing]` | `doctor_every_min` | 30 | how often the heartbeat runs `holon doctor`; each failing check opens an incident (0 = never) |
-| `[healing]` | `run_failures_for_incident` | 3 | runs of one stage that ended without a valid result before an incident opens |
+| `[healing]` | `run_failures_for_incident` | 3 | runs of one stage that ended without a valid result before an incident opens; past it the stage waits 10 min before the next try, doubling per failure (at most a day) |
 | `[cadence]` | `dept_retro_days` | 7 | how often a department retro may run over pending proposals |
 | `[cadence]` | `dept_retro_min_proposals` | 1 | proposals needed before a department retro is due |
 | `[cadence]` | `probation_days` | 14 | days before a new hire's confirmation goes to their head |

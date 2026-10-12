@@ -64,6 +64,28 @@ class PushMode(KernelCase):
         self.add(dept="eng")
         self.assertNotIn("breach", self.k.dispatch(self.hod, "plan"))
 
+    def test_a_shared_tree_others_commit_to_or_write_ignored_paths_in_is_not_a_breach(self):
+        import subprocess
+        from holon.execution import staleness
+        git = lambda *a: subprocess.run(["git", "-C", str(self.workdir), *a], capture_output=True, check=True)  # noqa: E731
+        git("init", "-q")
+        (self.workdir / "notes.md").write_text("draft\n")
+        before = staleness.snapshot(self.workdir)
+        git("-c", "user.name=t", "-c", "user.email=t@t", "add", "-A")
+        git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "auto")  # an auto-committer at work
+        self.assertEqual(staleness.changes(before, staleness.snapshot(self.workdir)), [])
+        self.home.config_file.write_text(self.pipeline + '[planner]\nguard_ignore = ["data/**"]\n')
+        from holon.execution.service import Kernel
+        self.k.close()
+        self.k = Kernel(self.home)
+        self.install_fake_driver("fake", mode="cron-writes")
+        self.add(dept="eng")
+        self.assertFalse(self.k.dispatch(self.hod, "plan").get("breach"))
+        self.install_fake_driver("fake", mode="dirty-planner")
+        self.add("second", dept="eng")
+        out = self.k.dispatch(self.hod, "plan")
+        self.assertIn("scribble.txt", out["breach"][0], "a breach names what changed")
+
     def test_a_breach_after_the_agent_submitted_itself_is_recorded_not_fatal(self):
         self.install_fake_driver("fake", mode="dirty-planner+self-submit")
         t = self.add(dept="eng")

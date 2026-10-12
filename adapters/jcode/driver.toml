@@ -1,0 +1,16 @@
+# Holon driver for jcode. Installed to $HOLON_HOME/config/drivers/jcode.toml by install.py, which pins
+# the jcode binary and JCODE_HOME (an isolated jcode home per instance: provider profile, the Holon MCP
+# server, the exported skills, and jcode's own memory, swarm, ambient mode and updates turned off).
+# Observe stages run without jcode's editing tools; the shell stays, so the kernel's read-only guard
+# stays on (read_only_enforced = false).
+name = "jcode"
+command = "jcode run --json --quiet --no-update --no-selfdev -C {workdir} --provider-profile holon {read_only}{act_args} {briefing}"
+cwd = "{workdir}"
+timeout_s = 3600
+result = "stdout-json"     # a holon_submit call, else result.json, else the JSON object in jcode's reply
+read_only = "--disabled-tools write,edit,multiedit,patch,apply_patch,replace,bg,selfdev,swarm"
+act_args = "--disabled-tools selfdev,swarm"
+read_only_enforced = false
+
+[env]
+JCODE_NO_TELEMETRY = "1"

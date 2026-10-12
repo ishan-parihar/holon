@@ -32,12 +32,12 @@ from holon.execution import autonomy, briefs, drivers, genome, grading, security
 from holon.execution.briefs import kernel_env
 from holon.execution.org import Org, approver_ref
 from holon.execution.schedules import Schedules
-from holon.execution.staleness import _hash_dir
+from holon.execution import staleness
 from holon.execution.work import Claimant, Rules, TransitionError, Work
 
 DEFAULT_CONFIG = {
     "context": {"budget_chars": DEFAULT_BUDGET_CHARS},
-    "planner": {"enforce_read_only": True, "trust_harness_read_only": False},
+    "planner": {"enforce_read_only": True, "trust_harness_read_only": False, "guard_ignore": []},
     "grading": {},
     "autonomy": {},
     "pipeline": {},
@@ -333,7 +333,8 @@ class Kernel:
                 raise TransitionError(f"{emp['name']} ({employee_id}) has no role that performs the '{stage}' stage")
         token, token_hash = security.new_token()
         got = self.work.claim(who, stages, driver or (emp["driver"] if emp else None), task_id, token_hash,
-                              exclude_depts=self.over_budget(), max_running=max_running)
+                              exclude_depts=self.over_budget(), max_running=max_running,
+                              exclude_tasks=self.backed_off())
         if got is None:
             return None
         node, run = got
@@ -632,7 +633,9 @@ class Kernel:
         guard = (vocab.POSTURE[claimed.run["kind"]] == "observe" and workdir and Path(workdir).is_dir()
                  and self.config["planner"]["enforce_read_only"] and not trusted
                  and not claimed.brief_dir.resolve().is_relative_to(Path(workdir).resolve()))
-        before = _hash_dir(Path(workdir)) if guard else None
+        ignore = list(self.config["planner"].get("guard_ignore") or [])
+        before = staleness.snapshot(Path(workdir), ignore) if guard else None
+
         def alive() -> None:  # the harness is still working: keep its lease (a dead dispatcher stops renewing)
             try:
                 self.work.heartbeat(claimed.run["id"])
@@ -641,8 +644,9 @@ class Kernel:
         out = drivers.run(self.home, drv, brief, claimed.token, alive=alive)
         if out.get("usage"):
             self.work.set_run_usage(claimed.run["id"], **out["usage"])
-        changed = guard and _hash_dir(Path(workdir)) != before
-        breach = f"{claimed.run['kind']} run modified the working directory (must be read-only)"
+        changed = staleness.changes(before, staleness.snapshot(Path(workdir), ignore)) if guard else []
+        breach = (f"{claimed.run['kind']} run modified the working directory (must be read-only): "
+                  + ", ".join(changed[:5]) + (f" and {len(changed) - 5} more" if len(changed) > 5 else ""))
         if self.work.get_run(claimed.run["id"])["status"] != "running":  # the agent submitted itself (pull-in-push)
             if changed:  # too late to discard the result: record it where audits and retros see it
                 with write_txn(self.wconn):
@@ -760,6 +764,21 @@ class Kernel:
             "SELECT sum(r.status='running'), sum(r.started_at>?) FROM runs r JOIN tasks t ON t.id=r.task_id "
             "WHERE t.dept_id=?", (since, dept_id)).fetchone()
         return {"running": running or 0, "runs_last_24h": today or 0}
+
+    def backed_off(self) -> list[str]:
+        """Stages whose runs keep failing wait before the next try: 10 min after reaching the incident
+        threshold, doubling with every further failure, at most a day. Retrying a broken harness at
+        every wake fixes nothing; the incident does."""
+        n0 = int(self.config["healing"]["run_failures_for_incident"])
+        out = []
+        for r in self.wconn.execute(
+                "SELECT r.task_id, count(*) AS n, max(r.ended_at) AS last FROM runs r JOIN tasks t ON t.id=r.task_id "
+                "WHERE r.status='failed' AND t.status='ready' GROUP BY r.task_id HAVING n>=?", (n0,)).fetchall():
+            wait = min(timedelta(minutes=10) * 2 ** (r["n"] - n0), timedelta(days=1))
+            if r["last"] and datetime.strptime(r["last"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc) \
+                    + wait > datetime.now(timezone.utc):
+                out.append(r["task_id"])
+        return out
 
     def over_budget(self) -> list[str]:
         """Departments at a cap: their stages wait on the board until the department is under it again."""

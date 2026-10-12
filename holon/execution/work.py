@@ -358,7 +358,8 @@ class Work:
     # ── claiming ──────────────────────────────────────────────────────────
     def claim(self, who: Claimant, stages: tuple[str, ...] | list[str] | None = None, driver: str | None = None,
               task_id: str | None = None, token_hash: str | None = None,
-              exclude_depts: list[str] | None = None, max_running: int | None = None) -> tuple[dict, dict] | None:
+              exclude_depts: list[str] | None = None, max_running: int | None = None,
+              exclude_tasks: list[str] | None = None) -> tuple[dict, dict] | None:
         """Atomically claim the next ready stage this employee may do. A stale execute stage (its plan's
         written paths changed since approval) is cancelled and a fresh plan stage queued instead.
         `max_running`: refuse if the employee already has that many runs in flight (checked atomically)."""
@@ -389,6 +390,9 @@ class Work:
                 if exclude_depts:
                     q += f" AND coalesce(t.dept_id, '') NOT IN ({','.join('?' * len(exclude_depts))})"
                     args += list(exclude_depts)
+                if exclude_tasks:
+                    q += f" AND t.id NOT IN ({','.join('?' * len(exclude_tasks))})"
+                    args += list(exclude_tasks)
                 row = self.conn.execute(q + " ORDER BY t.priority, t.created_at, t.rowid LIMIT 1", args).fetchone()
                 if row is None:
                     return None

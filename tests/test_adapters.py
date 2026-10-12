@@ -20,7 +20,7 @@ ADAPTERS = Path(__file__).resolve().parents[1] / "adapters"
 class Shipped(KernelCase):
     def test_every_adapter_driver_loads_and_reaches_the_brief(self):
         found = sorted(ADAPTERS.glob("*/driver.toml"))
-        self.assertEqual({p.parent.name for p in found}, {"zeroclaw", "hermes", "claude-code"})
+        self.assertEqual({p.parent.name for p in found}, {"zeroclaw", "hermes", "claude-code", "jcode"})
         for p in found:
             d = Driver.from_toml(p.read_text(), str(p))
             self.assertEqual(d.stages, list(vocab.STAGES), p)

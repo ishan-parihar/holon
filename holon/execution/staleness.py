@@ -8,6 +8,7 @@ are skipped; with no hashable paths the check is fail-open (fingerprint = None).
 
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import os
 import subprocess
@@ -32,6 +33,42 @@ def _hash_file(p: Path) -> str:
     if st.st_size > MAX_FILE_BYTES:
         return f"big:{st.st_size}:{st.st_mtime_ns}"
     return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def _ignored(rel: str, patterns: list[str]) -> bool:
+    for pat in patterns:
+        if fnmatch.fnmatch(rel, pat):
+            return True
+        if pat.endswith("/**") and (rel == pat[:-3] or rel.startswith(pat[:-2])):
+            return True
+    return False
+
+
+def snapshot(root: Path, ignore: list[str] | None = None) -> dict[str, tuple[int, int]]:
+    """(mtime, size) of every file under root, without .git, tool caches and the `ignore` globs (relative
+    paths). The read-only guard compares two of these: unlike a git-state hash, a commit made by another
+    process (an auto-committer) changes no working file, so it is not mistaken for the agent's write."""
+    snap: dict[str, tuple[int, int]] = {}
+    ignore = ignore or []
+    for cur, dirs, files in os.walk(root):
+        rel = os.path.relpath(cur, root)
+        rel = "" if rel == "." else rel + "/"
+        dirs[:] = [d for d in dirs if d != ".git" and d not in CACHE_DIRS and not _ignored(rel + d, ignore)]
+        for name in files:
+            r = rel + name
+            if _ignored(r, ignore):
+                continue
+            try:
+                st = os.lstat(os.path.join(cur, name))
+            except OSError:
+                continue
+            snap[r] = (st.st_mtime_ns, st.st_size)
+    return snap
+
+
+def changes(before: dict, after: dict) -> list[str]:
+    """Paths created, deleted or modified between two snapshots."""
+    return sorted((set(before) ^ set(after)) | {k for k in set(before) & set(after) if before[k] != after[k]})
 
 
 def _hash_dir(p: Path) -> str:

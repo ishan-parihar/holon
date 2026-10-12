@@ -93,6 +93,9 @@ class Loops(KernelCase):
         self.assertEqual(len(incident), 1)
         self.assertIn("keep failing", incident[0]["title"])
         self.assertFalse([x for x in self.k.tick()["triggered"] if "incident" in x], "one incident, not one per tick")
+        self.assertIsNone(self.k.dispatch(self.maker, "plan", t["id"]), "it waits before the next try")
+        self.k.wconn.execute("UPDATE runs SET ended_at='2000-01-01T00:00:00.000000Z'")
+        self.assertIsNotNone(self.k.dispatch(self.maker, "plan", t["id"]), "and is tried again after its back-off")
 
     def test_probation_ends_with_a_decision_by_the_head(self):
         newbie = self.k.org.hire(name="Nu", title="Ops engineer", dept="ops", job_description=JD, roles=["executor"],
