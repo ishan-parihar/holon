@@ -358,14 +358,19 @@ class Work:
     # ── claiming ──────────────────────────────────────────────────────────
     def claim(self, who: Claimant, stages: tuple[str, ...] | list[str] | None = None, driver: str | None = None,
               task_id: str | None = None, token_hash: str | None = None,
-              exclude_depts: list[str] | None = None) -> tuple[dict, dict] | None:
+              exclude_depts: list[str] | None = None, max_running: int | None = None) -> tuple[dict, dict] | None:
         """Atomically claim the next ready stage this employee may do. A stale execute stage (its plan's
-        written paths changed since approval) is cancelled and a fresh plan stage queued instead."""
+        written paths changed since approval) is cancelled and a fresh plan stage queued instead.
+        `max_running`: refuse if the employee already has that many runs in flight (checked atomically)."""
         stages = [s for s in (stages or who.stages) if s in who.stages]
         if not stages:
             return None
         while True:
             with write_txn(self.conn):
+                if max_running is not None and who.id and self.conn.execute(
+                        "SELECT count(*) FROM runs WHERE employee_id=? AND status='running'",
+                        (who.id,)).fetchone()[0] >= max_running:
+                    return None
                 q = f"SELECT t.* FROM tasks t WHERE t.status='ready' AND t.stage IN ({','.join('?' * len(stages))})"
                 args: list = list(stages)
                 if who.id:

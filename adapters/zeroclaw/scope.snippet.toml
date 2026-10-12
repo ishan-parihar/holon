@@ -1,0 +1,41 @@
+# ── scope @SCOPE@ ──
+[risk_profiles.holon-@SCOPE@-observer]
+# research, shape, plan, approve, verify, retro: look, never touch. No write tools; the shell is
+# limited to commands that cannot write (no git, no sqlite3, no interpreters), plus the
+# commands [scope] grants this department.
+level = "full"
+block_high_risk_commands = true
+auto_approve = ["*"]
+excluded_tools = ["file_write", "file_edit", "file_upload", "file_upload_bundle", "file_download", "skill_manage"]
+allowed_roots = [@ALLOWED_ROOTS@]
+forbidden_paths = [@FORBIDDEN_PATHS@]
+allowed_commands = [@OBSERVER_COMMANDS@]
+
+[risk_profiles.holon-@SCOPE@-worker]
+# execute: does the approved plan. Same roots and forbidden paths; broader commands, plus the
+# department's [scope] commands and act_commands.
+# skill_manage is excluded: an employee's learning belongs in Holon memory, not harness-local skills.
+level = "full"
+block_high_risk_commands = true
+auto_approve = ["*"]
+excluded_tools = ["skill_manage"]
+allowed_roots = [@ALLOWED_ROOTS@]
+forbidden_paths = [@FORBIDDEN_PATHS@]
+allowed_commands = [@WORKER_COMMANDS@]
+
+[agents.holon-@SCOPE@-observe]
+model_provider = "@MODEL_PROVIDER@"
+runtime_profile = "holon"
+mcp_bundles = ["holon"]
+risk_profile = "holon-@SCOPE@-observer"
+skill_bundles = ["holon"]
+enabled = true
+
+[agents.holon-@SCOPE@-act]
+model_provider = "@MODEL_PROVIDER@"
+runtime_profile = "holon"
+mcp_bundles = ["holon"]
+risk_profile = "holon-@SCOPE@-worker"
+skill_bundles = ["holon"]
+enabled = true
+

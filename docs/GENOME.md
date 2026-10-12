@@ -100,6 +100,9 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[budget]` | `max_running_per_dept` | 0 (no cap) | runs a department may have in flight; `[budget.dept.<slug>]` overrides |
 | `[notify]` | `command` | "" (off) | run on each heartbeat that finds something new for the Chair; `{message}` is the text (an adapter fills this in, e.g. a chat CLI) |
 | `[budget]` | `max_runs_per_dept_per_day` | 0 (no cap) | runs a department may start in 24 hours; its stages wait on the board beyond it |
+| `[scope]` | `roots` | [] | paths every employee may work in beyond its work's workdir; `[scope.dept.<slug>]` adds a department's own (§8) |
+| `[scope]` | `commands` | [] | extra shell commands every stage may use (a sandboxing harness grants them) |
+| `[scope]` | `act_commands` | [] | extra commands for the execute stage only |
 
 ## 7. Operations
 
@@ -107,3 +110,28 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 backup), with a checksum manifest; `holon restore PATH --force` puts it back after verifying the
 checksums. Neither touches secrets: the Chair key lives outside the instance. Take a backup before
 upgrading the kernel, since migrations are forward-only.
+
+## 8. Scope: what a department may reach
+
+An employee works in its work's `workdir` and its run directory. `[scope]` widens that for
+everyone; `[scope.dept.<slug>]` widens it for one department (lists add, never replace):
+
+```toml
+[scope.dept.it]
+roots = ["~/.hermes"]                 # IT inventories and cleans the whole tree
+act_commands = ["systemctl"]          # pause and resume sync services while executing
+[scope.dept.charter]
+commands = ["arch"]                   # planners and verifiers run the validator
+```
+
+The kernel uses scope three ways, so it holds on any harness:
+- **briefs**: a "Your reach" section lists the roots and commands (`brief.json` carries `scope`);
+- **grading**: plan writes inside the reach count as in bounds; a department with roots whose plan
+  writes beyond them is floored at G3 (the Chair decides, or widens the scope);
+- **drivers**: `{scope}` is the department's slug if it has a section, else `org`. A harness that
+  sandboxes builds one sandbox per scope (ZeroClaw: agents `holon-<scope>-observe|act`).
+
+An installer that builds sandboxes records `scope_fingerprint` (`holon scope` prints it) in the
+driver. `holon doctor` errors with `scope.drift` when `[scope]` changed after the install: re-run
+the installer, or new scopes have no sandbox and narrowed ones keep their old reach.
+

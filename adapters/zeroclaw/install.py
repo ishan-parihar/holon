@@ -5,19 +5,23 @@
 
 1. exports Holon's skills library to $HOLON_HOME/adapters/zeroclaw/skills (`holon skill export`),
    which ZeroClaw loads as the `holon` skill bundle; re-run after tailoring skills
-2. backs up the ZeroClaw config, writes the Holon block (two posture aliases, two risk profiles, a
-   runtime profile, the skill bundle) between markers, re-parses it, and restores the backup if invalid
-3. installs the driver to $HOLON_HOME/config/drivers/zeroclaw.toml
-4. checks that ZeroClaw sees both aliases
+2. backs up the ZeroClaw config, writes the Holon block between markers (per scope from `holon scope`:
+   two posture aliases holon-<scope>-observe|act and their risk profiles; shared: a runtime profile,
+   the skill bundle, the MCP server), re-parses it, and restores the backup if invalid
+3. installs the driver to $HOLON_HOME/config/drivers/zeroclaw.toml, stamped with the scope fingerprint
+   (`holon doctor` reports scope.drift when [scope] changes later: re-run this installer)
+4. checks that ZeroClaw sees every alias
 
-Agents may read and write only the run directories and the --allow paths; the instance's
-databases, configuration, skills and genome are forbidden paths, and ~/.config (the Chair key) too.
+Agents may read and write only the run directories, the --allow paths and their department's [scope]
+roots; the instance's databases, configuration, skills and genome are forbidden paths, and ~/.config
+(the Chair key) too.
 Uninstall: restore the printed backup (or delete the marked block) and remove the driver file.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import subprocess
@@ -30,7 +34,12 @@ HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
 BEGIN = "# ── Holon (agentic OS) employees"
 END = "# ── end Holon ──"
-ALIASES = ("holon-observe", "holon-act")
+OBSERVER_COMMANDS = ["holon", "ls", "cat", "grep", "find", "head", "tail", "wc", "stat", "du", "df", "date", "pwd",
+                     "sort", "uniq", "cut", "tr", "jq", "uname", "uptime", "free", "hostname"]
+WORKER_COMMANDS = ["holon", "git", "npm", "cargo", "ls", "cat", "grep", "find", "echo", "pwd", "wc", "head", "tail",
+                   "date", "df", "du", "uname", "uptime", "hostname", "python", "python3", "pip", "node", "free",
+                   "timeout", "sort", "awk", "sleep", "mkdir", "bash", "sh", "env", "cut", "tr", "uniq", "tee", "cp",
+                   "mv", "ln", "sed", "jq", "stat", "touch", "rm"]
 SYSTEM_FORBIDDEN = ["/etc", "/root", "/usr", "/sbin", "/boot", "/dev", "/sys", "/var/run", "~/.ssh", "~/.gnupg",
                     "~/.aws", "~/.config", "/proc/kcore"]
 
@@ -53,6 +62,23 @@ def strip_block(text: str) -> str:
 
 def toml_list(items: list[str]) -> str:
     return ", ".join(f'"{x}"' for x in items)
+
+
+def scopes(home: Path) -> dict:
+    """The instance's scopes and their fingerprint, from the kernel (`holon scope --json`)."""
+    rc, out = sh([sys.executable, "-m", "holon", "--home", str(home), "--json", "scope"], cwd=str(REPO))
+    if rc != 0:
+        raise SystemExit(f"holon scope failed: {out[-300:]}")
+    return json.loads(out)
+
+
+def scope_block(scope: dict, base_roots: list[str], forbidden: list[str]) -> str:
+    dedupe = lambda xs: list(dict.fromkeys(xs))  # noqa: E731
+    return (HERE / "scope.snippet.toml").read_text().replace("@SCOPE@", scope["name"]) \
+        .replace("@ALLOWED_ROOTS@", toml_list(dedupe(base_roots + scope["roots"]))) \
+        .replace("@FORBIDDEN_PATHS@", toml_list(forbidden)) \
+        .replace("@OBSERVER_COMMANDS@", toml_list(dedupe(OBSERVER_COMMANDS + scope["commands"]))) \
+        .replace("@WORKER_COMMANDS@", toml_list(dedupe(WORKER_COMMANDS + scope["commands"] + scope["act_commands"])))
 
 
 def set_notify(home: Path, config_dir: Path | None, channel: str, recipient: str, force: bool) -> str:
@@ -121,10 +147,12 @@ def main() -> int:
                 lines.append(f'{key} = "{v}"' if isinstance(v, str) else f"{key} = {v}")
         provider_block = "\n".join(lines) + "\n\n"
         provider = f"{kind}.holon"
+    sc = scopes(home)
+    aliases = [f"holon-{s['name']}-{p}" for s in sc["scopes"] for p in ("observe", "act")]
+    per_scope = "".join(scope_block(s, roots, SYSTEM_FORBIDDEN + instance_state) for s in sc["scopes"])
     block = (HERE / "config.snippet.toml").read_text() \
-        .replace("@PROVIDER_BLOCK@", provider_block).replace("@MODEL_PROVIDER@", provider) \
-        .replace("@ALLOWED_ROOTS@", toml_list(roots)) \
-        .replace("@FORBIDDEN_PATHS@", toml_list(SYSTEM_FORBIDDEN + instance_state)) \
+        .replace("@PROVIDER_BLOCK@", provider_block).replace("@SCOPES@", per_scope) \
+        .replace("@MODEL_PROVIDER@", provider) \
         .replace("@SKILLS_DIR@", str(skills_dir)).replace("@HOLON_BIN@", str(REPO / "bin" / "holon"))
 
     legacy = [x for x in ("holon-plan", "holon-execute", "holon-verify", "holon-review") if x in agents]
@@ -136,7 +164,8 @@ def main() -> int:
     else:
         new_text = strip_block(text).rstrip() + "\n" + block
         tomllib.loads(new_text)  # never write invalid TOML
-    print(f"config: {cfg_path} provider={provider}\n  allowed_roots={roots}\n  skills={skills_dir}")
+    print(f"config: {cfg_path} provider={provider}\n  allowed_roots={roots} (+ each scope's roots)\n"
+          f"  scopes={[s['name'] for s in sc['scopes']]} fingerprint={sc['fingerprint']}\n  skills={skills_dir}")
     if a.dry_run:
         shown = re.sub(r'^((?:api_key|token|secret)\s*=\s*)".*"$', r'\1"<redacted>"', block, flags=re.M)
         print("dry run: no changes written\n" + (shown if new_text else ""))
@@ -165,7 +194,8 @@ def main() -> int:
 
     drivers_dir = home / "config" / "drivers"
     drivers_dir.mkdir(parents=True, exist_ok=True)
-    driver = (HERE / "driver.toml").read_text()
+    driver = (HERE / "driver.toml").read_text().replace('scope_fingerprint = ""',
+                                                       f'scope_fingerprint = "{sc["fingerprint"]}"')
     if a.config_dir:
         driver = driver.replace("zeroclaw agent", f"zeroclaw --config-dir {config_dir} agent")
     (drivers_dir / "zeroclaw.toml").write_text(driver)
@@ -173,8 +203,8 @@ def main() -> int:
 
     base = ["zeroclaw"] + (["--config-dir", str(config_dir)] if a.config_dir else [])
     rc, out = sh(base + ["agents", "list"])
-    missing = [x for x in ALIASES if x not in out]
-    print("verify: " + ("both holon aliases are visible to zeroclaw" if rc == 0 and not missing
+    missing = [x for x in aliases if x not in out]
+    print("verify: " + (f"all {len(aliases)} holon aliases are visible to zeroclaw" if rc == 0 and not missing
                         else f"zeroclaw agents list rc={rc}, missing={missing}: {out[-300:]}"))
     print("next: `holon adapter test zeroclaw` runs the conformance suite against this harness")
     return 0 if rc == 0 and not missing else 1

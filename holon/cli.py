@@ -215,6 +215,15 @@ def cmd_hr_hire(args, k):
     _out(args, e, f"hired {e['id']}  {e['name']}, {e['title']} in {e['dept']}" + (" (HOD)" if e["is_head"] else ""))
 
 
+@command("hr reassign", "chair", "change an employee's roles: the slots it now fills, or explicit roles",
+         arg("employee"), arg("--slot", action="append", help="a slot of the department's profile (repeat)"),
+         arg("--roles", help="comma list of " + ",".join(vocab.ROLES)), arg("--reason", required=True))
+def cmd_hr_reassign(args, k):
+    e = k.org.reassign(args.employee, args.reason, roles=args.roles.split(",") if args.roles else None,
+                       slots=args.slot)
+    _out(args, e, f"{e['id']}  {e['name']} now {','.join(e['roles'])}")
+
+
 @command("hr fire", "chair", "retire an employee; memory passes to the successor", arg("employee"),
          arg("--reason", required=True), arg("--successor", help="employee who inherits the role and memory"))
 def cmd_hr_fire(args, k):
@@ -794,6 +803,17 @@ def cmd_drivers(args, k):
     ds = drivers.available(k.home)
     _out(args, {n: {"source": d.source, "stages": d.stages} for n, d in ds.items()},
          "\n".join(f"{n:<16} {d.source}" for n, d in ds.items()))
+
+
+@command("scope", "any", "what each department's employees may reach beyond their work's workdir ([scope])",
+         arg("--dept"), mutates=False)
+def cmd_scope(args, k):
+    out = [k.scope(args.dept)] if args.dept else k.scopes()
+    lines = [f"{s['name']:<12} roots={s['roots'] or '-'} commands={s['commands'] or '-'} "
+             f"act_commands={s['act_commands'] or '-'}" for s in out]
+    _out(args, {"fingerprint": k.scope_fingerprint(), "scopes": out},
+         "\n".join(lines) + f"\nfingerprint {k.scope_fingerprint()} (harness sandboxes built from it must match: "
+                            "re-run the adapter installer after changing [scope])")
 
 
 @command("metrics", "any", "the feedback loops' sensors, each with its counter-metric", arg("--dept"),

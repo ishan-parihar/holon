@@ -1,12 +1,14 @@
 # Holon driver for ZeroClaw. Installed to $HOLON_HOME/config/drivers/zeroclaw.toml by install.py.
-# One agent alias per posture: holon-observe (research, shape, plan, approve, verify, retro: no write
-# tools) and holon-act (execute). The message carries the identity card and the stage brief; both
-# aliases mount the Holon MCP server, so the agent can submit its result with the holon_submit tool.
+# Two agent aliases per department scope (`holon scope`): holon-<scope>-observe (research, shape, plan,
+# approve, verify, retro: no write tools) and holon-<scope>-act (execute). The message carries the
+# identity card and the stage brief; every alias mounts the Holon MCP server, so the agent can submit
+# its result with the holon_submit tool.
 name = "zeroclaw"
-command = "zeroclaw agent -a holon-{posture} -m {briefing}"
+command = "zeroclaw agent -a holon-{scope}-{posture} -m {briefing}"
 cwd = "{workdir}"
 timeout_s = 3600
 result = "stdout-json"     # a holon_submit call, else result.json, else the last JSON object printed
 read_only = ""
-read_only_enforced = true  # holon-observe has no write tools; the kernel still checks unless the
+read_only_enforced = true  # observe aliases have no write tools; the kernel still checks unless the
                            # instance sets [planner] trust_harness_read_only = true
+scope_fingerprint = ""     # stamped by install.py; `holon doctor` flags a [scope] change since

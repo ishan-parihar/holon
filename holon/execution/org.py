@@ -198,6 +198,28 @@ class Org:
         r = self.conn.execute("SELECT head_id FROM departments WHERE id=?", (dept_id,)).fetchone()
         return self.employee(r["head_id"]) if r and r["head_id"] else None
 
+    def reassign(self, eid: str, reason: str, roles: list[str] | None = None, slots: list[str] | None = None) -> dict:
+        """Change an employee's roles (explicitly, or by the slots of its department's profile it now fills).
+        Headship is not changed here: a head keeps 'head', and nobody else gains it (hire or fire for that)."""
+        e = self.employee(eid)
+        new = set(roles or [])
+        for s in slots or []:
+            new |= set(self.slot_roles(e["dept"], s))
+        if e["is_head"]:
+            new.add("head")
+        elif "head" in new:
+            raise OrgError(f"{eid} is not the head of {e['dept']}; headship changes by hire or fire")
+        if not new:
+            raise OrgError("give --roles or --slot")
+        try:
+            gn.stages_for(sorted(new))
+        except gn.GenomeError as err:
+            raise OrgError(str(err)) from None
+        with write_txn(self.conn):
+            self.conn.execute("UPDATE employees SET roles=? WHERE id=?", (json.dumps(sorted(new)), eid))
+            self._event("employee", eid, ",".join(e["roles"]), ",".join(sorted(new)), f"reassigned: {reason}")
+        return self.employee(eid)
+
     def set_status(self, eid: str, status: str, reason: str) -> dict:
         e = self.employee(eid)
         with write_txn(self.conn):

@@ -110,6 +110,14 @@ def run(k) -> list[dict]:
         autonomy.policy(k.config)
     except ValueError as e:
         add("error", "config.autonomy", str(e))
+    from holon.execution import drivers
+    try:
+        for d in drivers.available(k.home).values():
+            if d.scope_fingerprint and d.scope_fingerprint != k.scope_fingerprint():
+                add("error", "scope.drift", f"driver {d.name} was installed for another [scope] "
+                                            f"({d.scope_fingerprint} ≠ {k.scope_fingerprint()}): re-run its installer")
+    except drivers.DriverError as e:
+        add("error", "drivers", str(e))
     if k.config["planner"].get("trust_harness_read_only"):
         add("warning", "config.read_only", "[planner] trust_harness_read_only = true: the kernel's read-only "
                                            "guard is skipped for harnesses that claim to enforce it")

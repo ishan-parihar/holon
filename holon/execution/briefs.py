@@ -44,7 +44,7 @@ def kernel_env(home: Home) -> dict[str, str]:
 
 def build(home: Home, run: dict, node: dict, context_md: str, library: Library | None = None,
           dept: str | None = None, employee: dict | None = None, identity_md: str | None = None,
-          token: str | None = None) -> Path:
+          token: str | None = None, scope: dict | None = None) -> Path:
     stage = run["kind"]
     d = home.run_dir(run["id"])
     d.mkdir(parents=True, exist_ok=True)
@@ -61,6 +61,13 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
     md = lib.render(lib.read(skill, file, dept), dict(
         run_id=run["id"], task_id=node["id"], work_id=node["parent_id"] or node["id"], stage=stage,
         context_md=str(d / "context.md"), result_path=str(result_path), workdir=workdir, holon=holon))
+    if scope and (scope["roots"] or scope["commands"] or scope["act_commands"]):
+        cmds = scope["commands"] + (scope["act_commands"] if vocab.POSTURE[stage] == "act" else [])
+        md = md.rstrip() + "\n\n## Your reach\n\n" + (
+            f"Beyond `{workdir}` and this run's directory, you may work in: "
+            + ", ".join(f"`{r}`" for r in scope["roots"]) + ".\n" if scope["roots"] else "") + (
+            "Commands granted to your department: " + ", ".join(f"`{c}`" for c in cmds) + ".\n" if cmds else "") + \
+            "Anything else is outside your department's scope: say so in your result instead of working around it.\n"
     (d / "BRIEF.md").write_text(md)
     bj = d / "brief.json"
     bj.write_text(json.dumps({
@@ -71,7 +78,8 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
         "brief_md": str(d / "BRIEF.md"), "context_md": str(d / "context.md"),
         "identity_md": str(d / "identity.md") if identity_md else None, "result_path": str(result_path),
         "workdir": workdir, "holon": holon, "lease_until": run.get("lease_until"), "token": token,
-        "envelope": f"schemas/{stage}-result.schema.json", "skill": skill, "created_at": now()}, indent=2))
+        "envelope": f"schemas/{stage}-result.schema.json", "skill": skill, "scope": scope or {"name": "org"},
+        "created_at": now()}, indent=2))
     bj.chmod(0o600)
     return d
 

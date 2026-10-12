@@ -45,9 +45,12 @@ DEFAULT_CONFIG = {
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
     "budget": {"max_running_per_dept": 0, "max_runs_per_dept_per_day": 0},   # 0 = no cap
     "notify": {"command": ""},   # e.g. a chat CLI with {message}; empty = no notifications
+    # what employees may reach beyond their work's workdir; [scope.dept.<slug>] adds to it per department
+    "scope": {"roots": [], "commands": [], "act_commands": []},
 }
 CONFIG_KEYS = {s: set(v) for s, v in DEFAULT_CONFIG.items() if s not in ("grading", "autonomy", "pipeline")}
 CONFIG_KEYS["budget"].add("dept")  # [budget.dept.<slug>] overrides
+CONFIG_KEYS["scope"].add("dept")   # [scope.dept.<slug>] additions
 
 
 def load_config(home: Home) -> dict:
@@ -312,7 +315,8 @@ class Kernel:
 
     # ── claiming ──────────────────────────────────────────────────────────
     def claim(self, stage: str | list[str] | None = None, employee_id: str | None = None,
-              driver: str | None = None, task_id: str | None = None) -> Claimed | None:
+              driver: str | None = None, task_id: str | None = None,
+              max_running: int | None = None) -> Claimed | None:
         who, emp = self.claimant(employee_id)
         stages = [stage] if isinstance(stage, str) else (stage or list(who.stages))
         if emp:
@@ -321,15 +325,16 @@ class Kernel:
                 raise TransitionError(f"{emp['name']} ({employee_id}) has no role that performs the '{stage}' stage")
         token, token_hash = security.new_token()
         got = self.work.claim(who, stages, driver or (emp["driver"] if emp else None), task_id, token_hash,
-                              exclude_depts=self.over_budget())
+                              exclude_depts=self.over_budget(), max_running=max_running)
         if got is None:
             return None
         node, run = got
         md, _ = compile_context(self.home, self.work, self.memory, node["id"],
                                 budget=int(self.config["context"]["budget_chars"]), run_id=run["id"],
                                 employee=emp, predecessors=self.org.predecessors(emp["id"]) if emp else None)
-        bdir = briefs.build(self.home, run, node, md, self.skills, self._dept_slug(node["dept_id"]), emp,
-                            self.identity(emp["id"]) if emp else None, token)
+        slug = self._dept_slug(node["dept_id"])
+        bdir = briefs.build(self.home, run, node, md, self.skills, slug, emp,
+                            self.identity(emp["id"]) if emp else None, token, scope=self.scope(slug))
         self.work.set_run_paths(run["id"], str(bdir), str(bdir / "driver.log"))
         return Claimed(run=self.work.get_run(run["id"]), node=node, brief_dir=bdir, token=token, employee=emp)
 
@@ -365,7 +370,8 @@ class Kernel:
             if env["kind"] == "needs_input":
                 out = self.work.submit_plan(run_id, env, exit_code=exit_code)
             else:
-                g = grading.grade_plan(self.wconn, work, env, self.config)
+                g = grading.grade_plan(self.wconn, work, env, self.config,
+                                       reach=self.scope(self._dept_slug(work["dept_id"]))["roots"])
                 approver = self.org.resolve_approver(work, g["grade"], run["employee_id"])
                 out = self.work.submit_plan(run_id, env, g, approver, exit_code)
         elif stage == "approve":
@@ -530,10 +536,8 @@ class Kernel:
 
     def dispatch(self, employee_id: str, stage: str | None = None, task_id: str | None = None) -> dict | None:
         emp = self.org.employee(employee_id)
-        if self.wconn.execute("SELECT count(*) FROM runs WHERE employee_id=? AND status='running'",
-                              (employee_id,)).fetchone()[0] >= emp["max_concurrency"]:
-            return None
-        claimed = self.claim(stage, employee_id, emp["driver"], task_id)
+        # checked inside the claim's transaction: two wakes due in one tick must not both start
+        claimed = self.claim(stage, employee_id, emp["driver"], task_id, max_running=emp["max_concurrency"])
         if claimed is None:
             return None
         return self.run_driver(claimed, emp["driver"])
@@ -569,6 +573,24 @@ class Kernel:
         with open(log, "a") as fh:
             subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
                              env={**os.environ, **kernel_env(self.home)})
+
+    # ── scope: what a department's employees may reach beyond their work's workdir ──
+    def scope(self, dept_slug: str | None) -> dict:
+        """The effective reach for a department: [scope] plus [scope.dept.<slug>]. `name` is the slug when
+        the department has its own section, else "org"; harness adapters build one sandbox per name."""
+        base = self.config.get("scope", {})
+        own = (base.get("dept") or {}).get(dept_slug) if dept_slug else None
+        merged = {k: [*base.get(k, []), *((own or {}).get(k, []))] for k in ("roots", "commands", "act_commands")}
+        merged["roots"] = [str(Path(r).expanduser()) for r in merged["roots"]]
+        return {"name": dept_slug if own is not None else "org", **merged}
+
+    def scopes(self) -> list[dict]:
+        """Every distinct scope: "org" first, then one per department with a [scope.dept.<slug>] section."""
+        return [self.scope(None)] + [self.scope(s) for s in sorted((self.config.get("scope", {}).get("dept") or {}))]
+
+    def scope_fingerprint(self) -> str:
+        import hashlib
+        return hashlib.sha256(json.dumps(self.scopes(), sort_keys=True).encode()).hexdigest()[:12]
 
     # ── budgets: how much work a department may have in flight, and start per day ──
     def budget(self, dept_slug: str | None) -> dict:

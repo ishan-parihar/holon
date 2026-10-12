@@ -30,6 +30,8 @@ class Shipped(KernelCase):
     def test_zeroclaw_installer_produces_valid_config_with_safe_roots(self):
         zc = self.tmp / "zeroclaw"
         zc.mkdir()
+        with open(self.home.config_file, "a") as fh:
+            fh.write('\n[scope.dept.eng]\nroots = ["/srv/shared"]\ncommands = ["arch"]\nact_commands = ["systemctl"]\n')
         (zc / "config.toml").write_text('[providers.models.openai.main]\nuri = "http://x"\nmodel = "m"\napi_key = "sk-secret"\n\n'
                                         '[agents.assistant]\nmodel_provider = "openai.main"\n')
         p = subprocess.run([sys.executable, str(ADAPTERS / "zeroclaw" / "install.py"), "--holon-home",
@@ -39,20 +41,29 @@ class Shipped(KernelCase):
         self.assertNotIn("sk-secret", p.stdout, "a dry run must not print keys")
         block = p.stdout[p.stdout.index("# ── Holon"):].replace('"<redacted>"', '"x"')
         cfg = tomllib.loads((zc / "config.toml").read_text() + "\n" + block)
-        observer = cfg["risk_profiles"]["holon-observer"]
+        observer = cfg["risk_profiles"]["holon-org-observer"]
         self.assertNotIn("git", observer["allowed_commands"])
         self.assertNotIn("sqlite3", observer["allowed_commands"])
         self.assertIn("file_write", observer["excluded_tools"])
         roots = observer["allowed_roots"]
         self.assertFalse(any(r == str(self.home.root) for r in roots), "agents must not reach the instance root")
         self.assertIn(str(self.home.root / "execution" / "runtime" / "work.db"), observer["forbidden_paths"])
-        self.assertEqual(cfg["agents"]["holon-observe"]["skill_bundles"], ["holon"])
+        self.assertEqual(cfg["agents"]["holon-org-observe"]["skill_bundles"], ["holon"])
+        eng_obs, eng_work = cfg["risk_profiles"]["holon-eng-observer"], cfg["risk_profiles"]["holon-eng-worker"]
+        self.assertIn("/srv/shared", eng_obs["allowed_roots"])
+        self.assertNotIn("/srv/shared", observer["allowed_roots"], "a department's reach is its own")
+        self.assertIn("arch", eng_obs["allowed_commands"])
+        self.assertNotIn("systemctl", eng_obs["allowed_commands"], "act_commands only reach the worker")
+        self.assertIn("systemctl", eng_work["allowed_commands"])
+        self.assertEqual(cfg["agents"]["holon-eng-act"]["risk_profile"], "holon-eng-worker")
+        self.assertIn('scope_fingerprint = ""', (ADAPTERS / "zeroclaw" / "driver.toml").read_text(),
+                      "install.py stamps the fingerprint by replacing this exact line")
         self.assertEqual(cfg["providers"]["models"]["openai"]["holon"]["model"], "free-stack")
         server = next(m for m in cfg["mcp"]["servers"] if m["name"] == "holon")
         self.assertEqual((server["transport"], server["args"]), ("stdio", ["mcp"]))
         self.assertTrue(server["command"].endswith("bin/holon"))
         self.assertEqual(cfg["mcp_bundles"]["holon"]["servers"], ["holon"])
-        for alias in ("holon-observe", "holon-act"):
+        for alias in ("holon-org-observe", "holon-org-act", "holon-eng-observe", "holon-eng-act"):
             self.assertEqual(cfg["agents"][alias]["mcp_bundles"], ["holon"])
 
     def test_zeroclaw_installer_wires_chair_notifications(self):

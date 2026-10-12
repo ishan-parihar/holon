@@ -19,7 +19,8 @@ Placeholders: {brief_dir} {brief_md} {context_md} {identity_md} {result_path} {w
 {prompt} (= the BRIEF.md text) {identity} (= the identity card) {briefing} (= identity card + BRIEF.md,
 for harnesses that take one message) {spawn} (= a one-line spawn message pointing at BRIEF.md)
 {act_args}
-{holon} (= kernel command). `duty` is accepted as an alias of `stage`.
+{holon} (= kernel command) {scope} (= the department's scope name: its slug if holon.toml has a
+[scope.dept.<slug>] section, else "org"; adapters that sandbox build one sandbox per scope). `duty` is accepted as an alias of `stage`.
 Search order: $HOLON_HOME/config/drivers/*.toml, then the examples shipped with the kernel.
 """
 
@@ -55,6 +56,7 @@ class Driver:
     read_only: str = ""
     act_args: str = ""
     read_only_enforced: bool = False   # the harness itself denies writes on observe stages
+    scope_fingerprint: str = ""        # set by an installer that built sandboxes from [scope]; doctor compares
     stages: list[str] = field(default_factory=lambda: list(vocab.STAGES))
     env: dict[str, str] = field(default_factory=dict)
     source: str = ""
@@ -63,7 +65,7 @@ class Driver:
     def from_toml(cls, text: str, source: str) -> "Driver":
         data = tomllib.loads(text)
         unknown = set(data) - {"name", "command", "cwd", "timeout_s", "result", "read_only", "act_args",
-                               "read_only_enforced", "stages", "duties", "env"}
+                               "read_only_enforced", "stages", "duties", "env", "scope_fingerprint"}
         if "duties" in data:  # pre-graph drivers named four duties; observe-capable ones serve every observe stage
             stages = {LEGACY_STAGE.get(d, d) for d in data.pop("duties")}
             data["stages"] = sorted(stages | ({"research", "shape", "retro"} if "plan" in stages else set()))
@@ -114,12 +116,13 @@ def render(driver: Driver, brief: dict) -> tuple[str, str]:
         "posture": vocab.POSTURE[stage], "employee_id": brief.get("employee_id") or "",
         "employee_slug": brief.get("employee_slug") or "", "holon": brief["holon"],
         "prompt": Path(brief["brief_md"]).read_text(), "spawn": spawn_message(brief),
+        "scope": (brief.get("scope") or {}).get("name") or "org",
     }
     values["identity"] = Path(brief["identity_md"]).read_text() if brief.get("identity_md") else ""
     values["briefing"] = (values["identity"] + "\n\n---\n\n" if values["identity"] else "") + values["prompt"]
     quoted = {k: shlex.quote(v) for k, v in values.items()}
     quoted["holon"] = values["holon"]  # already a shell-ready command
-    for k in ("stage", "duty", "role", "posture", "employee_slug"):
+    for k in ("stage", "duty", "role", "posture", "employee_slug", "scope"):
         quoted[k] = values[k]  # identifiers: safe, and used inside larger tokens (e.g. alias names)
     quoted["read_only"] = driver.read_only if vocab.POSTURE[stage] == "observe" else ""
     quoted["act_args"] = driver.act_args if vocab.POSTURE[stage] == "act" else ""

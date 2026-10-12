@@ -26,7 +26,10 @@ def verified_in_class(conn: sqlite3.Connection, task_class: str | None) -> int:
         "WHERE o.kind='execute' AND o.verified=1 AND t.task_class=?", (task_class,)).fetchone()[0]
 
 
-def grade_plan(conn: sqlite3.Connection, task: dict, env: dict, cfg: dict | None = None) -> dict:
+def grade_plan(conn: sqlite3.Connection, task: dict, env: dict, cfg: dict | None = None,
+               reach: list[str] | None = None) -> dict:
+    """`reach`: the department's scope roots ([scope] in holon.toml). Writes there count as in bounds;
+    writes beyond the workdir and the reach of a department that has one go to the Chair (G3)."""
     cfg = {**DEFAULTS, **((cfg or {}).get("grading", {}))}
     floor, reasons = RISK_FLOOR.get(task.get("risk") or "normal", 1), []
     reasons.append(f"risk={task.get('risk')}: floor G{floor}")
@@ -42,12 +45,17 @@ def grade_plan(conn: sqlite3.Connection, task: dict, env: dict, cfg: dict | None
     if env.get("external_effects"):
         bump(2, f"external effects {env['external_effects'][:3]}: floor G2")
     workdir = Path(task["workdir"]).expanduser().resolve() if task.get("workdir") else None
+    roots = [Path(r).expanduser().resolve() for r in reach or []]
     for w in env.get("writes") or []:
         if not isinstance(w, str) or "://" in w:
             continue
         p = Path(w).expanduser()
-        if p.is_absolute() and (workdir is None or not p.resolve().is_relative_to(workdir)):
-            bump(2, f"writes outside the task workdir ({w}): floor G2")
+        inside = p.is_absolute() and any(p.resolve().is_relative_to(r) for r in ([workdir] if workdir else []) + roots)
+        if p.is_absolute() and not inside:
+            if roots:
+                bump(3, f"writes outside the department's scope ({w}): floor G3")
+            else:
+                bump(2, f"writes outside the task workdir ({w}): floor G2")
         for pattern in cfg["sensitive_paths"]:
             if fnmatch.fnmatch(str(p), pattern) or fnmatch.fnmatch(w, pattern):
                 bump(3, f"writes a sensitive path ({w} ~ {pattern}): floor G3")

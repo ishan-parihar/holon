@@ -1,6 +1,7 @@
 
 # ── Holon (agentic OS) employees: appended by adapters/zeroclaw/install.py ──
-# Two agent aliases, one per posture; provider, allowed roots and the skills directory are filled in.
+# Two agent aliases per scope (`holon scope`): holon-<scope>-observe and holon-<scope>-act, each with its
+# own risk profile. Provider, roots, commands and the skills directory are filled in by install.py.
 
 @PROVIDER_BLOCK@
 [runtime_profiles.holon]
@@ -23,41 +24,4 @@ tool_timeout_secs = 120
 [mcp_bundles.holon]
 servers = ["holon"]
 
-[risk_profiles.holon-observer]
-# research, shape, plan, approve, verify, retro: look, never touch. No write tools; the shell is
-# limited to commands that cannot write (no git, no sqlite3, no interpreters).
-level = "full"
-block_high_risk_commands = true
-auto_approve = ["*"]
-excluded_tools = ["file_write", "file_edit", "file_upload", "file_upload_bundle", "file_download", "skill_manage"]
-allowed_roots = [@ALLOWED_ROOTS@]
-forbidden_paths = [@FORBIDDEN_PATHS@]
-allowed_commands = ["holon", "ls", "cat", "grep", "find", "head", "tail", "wc", "stat", "du", "df", "date", "pwd", "sort", "uniq", "cut", "tr", "jq", "uname", "uptime", "free", "hostname"]
-
-[risk_profiles.holon-worker]
-# execute: does the approved plan. Same roots and forbidden paths; broader commands.
-# skill_manage is excluded: an employee's learning belongs in Holon memory, not harness-local skills.
-level = "full"
-block_high_risk_commands = true
-auto_approve = ["*"]
-excluded_tools = ["skill_manage"]
-allowed_roots = [@ALLOWED_ROOTS@]
-forbidden_paths = [@FORBIDDEN_PATHS@]
-allowed_commands = ["holon", "git", "npm", "cargo", "ls", "cat", "grep", "find", "echo", "pwd", "wc", "head", "tail", "date", "df", "du", "uname", "uptime", "hostname", "python", "python3", "pip", "node", "free", "timeout", "sort", "awk", "sleep", "mkdir", "bash", "sh", "env", "cut", "tr", "uniq", "tee", "cp", "mv", "ln", "sed", "jq", "stat", "touch", "rm"]
-
-[agents.holon-observe]
-model_provider = "@MODEL_PROVIDER@"
-runtime_profile = "holon"
-mcp_bundles = ["holon"]
-risk_profile = "holon-observer"
-skill_bundles = ["holon"]
-enabled = true
-
-[agents.holon-act]
-model_provider = "@MODEL_PROVIDER@"
-runtime_profile = "holon"
-mcp_bundles = ["holon"]
-risk_profile = "holon-worker"
-skill_bundles = ["holon"]
-enabled = true
-# ── end Holon ──
+@SCOPES@# ── end Holon ──

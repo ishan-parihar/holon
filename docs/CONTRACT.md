@@ -81,7 +81,10 @@ SOME_VAR = "value"
 
 Placeholders (shell-quoted): `{brief_dir} {brief_md} {context_md} {identity_md} {result_path}
 {workdir} {run_id} {task_id} {stage} {role} {posture} {employee_id} {employee_slug} {read_only}
-{prompt}` (the BRIEF.md text), `{spawn}` (a one-line message pointing at BRIEF.md) and `{holon}`.
+{prompt}` (the BRIEF.md text), `{spawn}` (a one-line message pointing at BRIEF.md), `{holon}`,
+and `{scope}`: the department's scope name (its slug if `holon.toml` has `[scope.dept.<slug>]`, else
+`org`; GENOME §8). A harness that sandboxes builds one sandbox per scope, and its installer stamps
+`scope_fingerprint` (from `holon scope`) into the driver so `holon doctor` can report drift.
 Double literal braces: `{{ }}`. A driver that still lists `duties` is read as the matching stages.
 
 **Read-only.** For observe stages the kernel fingerprints the working directory before and
