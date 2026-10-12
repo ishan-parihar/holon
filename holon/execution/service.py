@@ -48,10 +48,14 @@ DEFAULT_CONFIG = {
     "notify": {"command": ""},   # e.g. a chat CLI with {message}; empty = no notifications
     # what employees may reach beyond their work's workdir; [scope.dept.<slug>] adds to it per department
     "scope": {"roots": [], "commands": [], "act_commands": []},
+    # machine checks the kernel runs in the workdir after every execute, before any verifier;
+    # [checks.dept.<slug>] and [checks.class.<task_class>] add their own
+    "checks": {"commands": [], "timeout_s": 600},
 }
 CONFIG_KEYS = {s: set(v) for s, v in DEFAULT_CONFIG.items() if s not in ("grading", "autonomy", "pipeline")}
 CONFIG_KEYS["budget"].add("dept")  # [budget.dept.<slug>] overrides
 CONFIG_KEYS["scope"].add("dept")   # [scope.dept.<slug>] additions
+CONFIG_KEYS["checks"] |= {"dept", "class"}   # [checks.dept.<slug>], [checks.class.<task_class>]
 
 
 def load_config(home: Home) -> dict:
@@ -379,10 +383,19 @@ class Kernel:
             out = self.decide(node["id"], env["decision"], env.get("note"), review_run=run_id)
         elif stage == "execute":
             out = self.work.submit_execute(run_id, env, exit_code)
-            skipped = self._sample_verification(self.work.get(work["id"]), run, env)
-            out["verification_skipped"] = bool(skipped)
-            if skipped:
-                out["work"] = skipped
+            if env["outcome"] != "failure":
+                checks = self.run_checks(self.work.get(work["id"]))
+                out["checks"] = checks
+                if checks and not all(c["ok"] for c in checks):
+                    failed = [c for c in checks if not c["ok"]]
+                    note = "Machine checks failed (run by the kernel; no verifier was spent):\n" + "\n".join(
+                        f"- `{c['command']}` exited {c['exit_code']}:\n```\n{c['tail']}\n```" for c in failed)
+                    out["work"] = self.verify(work["id"], "fail", note)["work"]
+            if not out.get("checks") or all(c["ok"] for c in out["checks"]):
+                skipped = self._sample_verification(self.work.get(work["id"]), run, env)
+                out["verification_skipped"] = bool(skipped)
+                if skipped:
+                    out["work"] = skipped
         elif stage == "verify":
             out = self.verify(node["id"], env["verdict"], env["note"], run_id=run_id)
         else:
@@ -579,6 +592,41 @@ class Kernel:
         with open(log, "a") as fh:
             subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
                              env={**os.environ, **kernel_env(self.home)})
+
+    # ── machine checks: acceptance a command can decide, run by the kernel, not by an agent ──
+    def checks_for(self, work: dict) -> list[str]:
+        c = self.config.get("checks", {})
+        slug = self._dept_slug(work.get("dept_id"))
+        return [*c.get("commands", []), *((c.get("dept") or {}).get(slug, {}).get("commands", []) if slug else []),
+                *((c.get("class") or {}).get(work.get("task_class") or "", {}).get("commands", []))]
+
+    def run_checks(self, work: dict) -> list[dict]:
+        """Run the work's checks in its workdir. Every result is posted on the work (the verifier reads it
+        in its context) and logged as an event; the caller turns a failure into rework."""
+        cmds = self.checks_for(work)
+        workdir = work.get("workdir")
+        if not cmds or not workdir or not Path(workdir).is_dir():
+            return []
+        env = {k: v for k, v in os.environ.items() if k not in ("HOLON_CHAIR_KEY", "HOLON_KEY", "HOLON_RUN_TOKEN")}
+        env.update({"HOLON_WORK_ID": work["id"], "HOLON_HOME": str(self.home.root)})
+        results = []
+        for cmd in cmds:
+            try:
+                p = subprocess.run(cmd, shell=True, cwd=workdir, env=env, capture_output=True, text=True,
+                                   timeout=int(self.config["checks"]["timeout_s"]))
+                code, tail = p.returncode, (p.stdout + p.stderr)[-1500:]
+            except subprocess.TimeoutExpired:
+                code, tail = 124, f"timed out after {self.config['checks']['timeout_s']}s"
+            results.append({"command": cmd, "exit_code": code, "ok": code == 0, "tail": tail.strip()})
+        summary = ", ".join(f"`{r['command']}` {'ok' if r['ok'] else 'FAILED (' + str(r['exit_code']) + ')'}"
+                            for r in results)
+        dept = self._dept_slug(work.get("dept_id"))
+        with write_txn(self.wconn):
+            self.work._event("task", work["id"], None, None, f"checks: {summary}", actor="kernel")
+            self.work._message("kernel", "Machine checks after execution: " + summary + "".join(
+                f"\n\n`{r['command']}` (exit {r['exit_code']}):\n```\n{r['tail'][-600:]}\n```" for r in results),
+                f"dept:{dept}" if dept else "org", kind="channel", task_id=work["id"])
+        return results
 
     # ── scope: what a department's employees may reach beyond their work's workdir ──
     def scope(self, dept_slug: str | None) -> dict:

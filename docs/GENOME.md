@@ -104,6 +104,8 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[scope]` | `roots` | [] | paths every employee may work in beyond its work's workdir; `[scope.dept.<slug>]` adds a department's own (§8) |
 | `[scope]` | `commands` | [] | extra shell commands every stage may use (a sandboxing harness grants them) |
 | `[scope]` | `act_commands` | [] | extra commands for the execute stage only |
+| `[checks]` | `commands` | [] | commands the kernel runs in the workdir after every execute; `[checks.dept.<slug>]` and `[checks.class.<task_class>]` add their own (§9) |
+| `[checks]` | `timeout_s` | 600 | per check command |
 
 ## 7. Operations
 
@@ -135,4 +137,23 @@ The kernel uses scope three ways, so it holds on any harness:
 An installer that builds sandboxes records `scope_fingerprint` (`holon scope` prints it) in the
 driver. `holon doctor` errors with `scope.drift` when `[scope]` changed after the install: re-run
 the installer, or new scopes have no sandbox and narrowed ones keep their old reach.
+
+## 9. Machine checks: acceptance a command can decide
+
+A verifier judges; a command decides. Whatever can be decided by a command (tests pass, the
+validator is clean, a file exists) is configured once and run by the kernel, not by an agent:
+
+```toml
+[checks.dept.charter]
+commands = ["arch validate"]
+[checks.class.kernel-change]
+commands = ["python3 -m unittest discover -s tests -t .", "python3 -m holon --home \"$(mktemp -d)\" lint --strict"]
+```
+
+After an execute stage succeeds (or is partial), the kernel runs `[checks]`, then the
+department's, then the task class's commands in the work's `workdir` (the Chair's and run
+tokens are removed from their environment). A failing command is recorded as a failed
+verification with its output: the work goes to rework (`execute#n`) and no verifier is spent.
+When all pass, the results are posted on the work, and the verifier reads them in its context;
+sampled G0 work is only closed unverified after its checks pass.
 
