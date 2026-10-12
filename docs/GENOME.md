@@ -97,3 +97,12 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[cadence]` | `dept_retro_days` | 7 | how often a department retro may run over pending proposals |
 | `[cadence]` | `dept_retro_min_proposals` | 1 | proposals needed before a department retro is due |
 | `[cadence]` | `probation_days` | 14 | days before a new hire's confirmation goes to their head |
+| `[budget]` | `max_running_per_dept` | 0 (no cap) | runs a department may have in flight; `[budget.dept.<slug>]` overrides |
+| `[budget]` | `max_runs_per_dept_per_day` | 0 (no cap) | runs a department may start in 24 hours; its stages wait on the board beyond it |
+
+## 7. Operations
+
+`holon backup --to DIR` takes a consistent copy of an instance while it runs (SQLite's online
+backup), with a checksum manifest; `holon restore PATH --force` puts it back after verifying the
+checksums. Neither touches secrets: the Chair key lives outside the instance. Take a backup before
+upgrading the kernel, since migrations are forward-only.

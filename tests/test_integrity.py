@@ -1,5 +1,7 @@
 """R1: `holon lint` (artifacts) and `holon doctor` (live state) catch what they claim to catch."""
 
+from pathlib import Path
+
 from holon.integrity import doctor, lint
 from tests.helpers import KernelCase
 
@@ -82,3 +84,30 @@ class Doctor(KernelCase):
         self.k.submit(c.run["id"], self.exec_env())
         self.k.wconn.execute("UPDATE outputs SET verified=1, verified_by=? WHERE kind='execute'", (f"emp:{self.dev1}",))
         self.assertIn("separation.verify", rules(doctor.run(self.k)))
+
+
+class Operations(KernelCase):
+    def test_backup_and_restore_round_trip(self):
+        from holon.integrity import backup
+        keep = self.add("keep me", dept="eng")
+        out = backup.backup(self.k, str(self.tmp / "bk"))
+        self.assertEqual(backup.verify(out["path"])["corrupt"], [])
+        self.add("made after the backup", dept="eng")
+        self.k.work.cancel(keep["id"], "oops")
+        backup.restore(self.k, out["path"])
+        titles = {t["title"]: t["status"] for t in self.k.work.list()}
+        self.assertEqual(titles, {"keep me": "open"})
+        self.assertNotIn("audit.chain", {f["check"] for f in doctor.run(self.k)}, "the restored trail is intact")
+        (Path(out["path"]) / "work.db").write_bytes(b"tampered")
+        self.assertIn("work.db", backup.verify(out["path"])["corrupt"])
+
+    def test_budget_caps_hold_work_on_the_board(self):
+        self.k.config["budget"] = {"max_running_per_dept": 1, "dept": {}}
+        self.add("one", dept="eng")
+        self.add("two", dept="eng")
+        self.assertIsNotNone(self.k.claim("plan", self.hod))
+        self.assertIsNone(self.k.claim("plan", self.hod), "eng is at its cap of one running run")
+        self.assertIn("budget.cap", {f["check"] for f in doctor.run(self.k)})
+        self.k.config["budget"] = {"max_running_per_dept": 0, "dept": {"eng": {"max_running_per_dept": 2}}}
+        self.assertIsNotNone(self.k.claim("plan", self.hod), "a department override raises the cap")
+        self.assertEqual(self.k.metrics("eng")["budget"]["running"], 2)

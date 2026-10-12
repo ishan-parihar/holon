@@ -357,7 +357,8 @@ class Work:
 
     # ── claiming ──────────────────────────────────────────────────────────
     def claim(self, who: Claimant, stages: tuple[str, ...] | list[str] | None = None, driver: str | None = None,
-              task_id: str | None = None, token_hash: str | None = None) -> tuple[dict, dict] | None:
+              task_id: str | None = None, token_hash: str | None = None,
+              exclude_depts: list[str] | None = None) -> tuple[dict, dict] | None:
         """Atomically claim the next ready stage this employee may do. A stale execute stage (its plan's
         written paths changed since approval) is cancelled and a fresh plan stage queued instead."""
         stages = [s for s in (stages or who.stages) if s in who.stages]
@@ -380,6 +381,9 @@ class Work:
                 if task_id:
                     q += " AND (t.id=? OR t.parent_id=?)"
                     args += [task_id, task_id]
+                if exclude_depts:
+                    q += f" AND coalesce(t.dept_id, '') NOT IN ({','.join('?' * len(exclude_depts))})"
+                    args += list(exclude_depts)
                 row = self.conn.execute(q + " ORDER BY t.priority, t.created_at, t.rowid LIMIT 1", args).fetchone()
                 if row is None:
                     return None

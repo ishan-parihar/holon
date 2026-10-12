@@ -804,6 +804,10 @@ def cmd_metrics(args, k):
             lines.append(f"  {key:<26} {v['value'] if v['value'] is not None else '-':<10} (counter: {v['counter']})")
     lines.append(f"  backlog                    {m['backlog']['ready_stages']} ready, oldest "
                  f"{m['backlog']['oldest_age_h'] or '-'}h")
+    if m.get("budget"):
+        b = m["budget"]
+        lines.append(f"  budget                     running {b['running']}/{b['max_running_per_dept'] or '∞'}, "
+                     f"last 24h {b['runs_last_24h']}/{b['max_runs_per_dept_per_day'] or '∞'}")
     lines.append("  cycle time (h) by stage    " + (", ".join(f"{s}={h}" for s, h in m["cycle_time_h_by_stage"].items())
                                                     or "-"))
     _out(args, m, "\n".join(lines))
@@ -833,6 +837,29 @@ def cmd_doctor(args, k):
          "\n".join(f"{f['severity'][:4].upper()} {f['check']:<22} {f['message']}" for f in findings)
          + f"\n{len(errors)} errors, {len(findings) - len(errors)} warnings")
     return 1 if errors else 0
+
+
+@command("backup", "chair", "a consistent copy of this instance (databases, config, skills, genome; never secrets)",
+         arg("--to", required=True, metavar="DIR"), arg("--with-runs", action="store_true", help="include run directories"))
+def cmd_backup(args, k):
+    from holon.integrity import backup
+    out = backup.backup(k, args.to, args.with_runs)
+    _out(args, out, f"backed up {out['files']} files to {out['path']}")
+
+
+@command("restore", "chair", "restore a backup into this instance (verifies its checksums first)", arg("path"),
+         arg("--force", action="store_true", help="required: the instance's current state is replaced"),
+         arg("--verify-only", action="store_true"))
+def cmd_restore(args, k):
+    from holon.integrity import backup
+    if args.verify_only:
+        r = backup.verify(args.path)
+        _out(args, r, "backup intact" if not r["corrupt"] else f"CORRUPT: {r['corrupt']}")
+        return 1 if r["corrupt"] else 0
+    if not args.force:
+        raise ValueError("restore replaces this instance's state; pass --force (take a backup first)")
+    out = backup.restore(k, args.path)
+    _out(args, out, f"restored from {out['restored_from']}; run `holon doctor`")
 
 
 @command("adapter test", "chair", "run the harness conformance suite against a driver", arg("driver"),

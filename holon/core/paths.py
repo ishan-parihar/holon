@@ -8,7 +8,6 @@ HOLON_HOME/
   capabilities/memory/memory.db     project memory (single writer: holon.capabilities.memory)
   capabilities/strategy/trajectory.db   intent hierarchy (read-only to the kernel)
   capabilities/logbook/logbook.db       human evidence (read-only to the kernel)
-  governance/law/genome.db          architecture records (P5)
 """
 
 from __future__ import annotations
@@ -65,10 +64,6 @@ class Home:
     def logbook_db(self) -> Path:
         return self.root / "capabilities" / "logbook" / "logbook.db"
 
-    @property
-    def genome_db(self) -> Path:
-        return self.root / "governance" / "law" / "genome.db"
-
     def run_dir(self, run_id: str) -> Path:
         return self.runs_dir / run_id
 
@@ -79,6 +74,5 @@ class Home:
             self.memory_db.parent,
             self.trajectory_db.parent,
             self.logbook_db.parent,
-            self.genome_db.parent,
         ):
             d.mkdir(parents=True, exist_ok=True)

@@ -43,8 +43,10 @@ DEFAULT_CONFIG = {
     "memory": {"promotion_threshold": 2},
     "healing": {"incident_dept": "it", "lease_expiries_for_incident": 2, "schedule_failures_for_incident": 3},
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
+    "budget": {"max_running_per_dept": 0, "max_runs_per_dept_per_day": 0},   # 0 = no cap
 }
 CONFIG_KEYS = {s: set(v) for s, v in DEFAULT_CONFIG.items() if s not in ("grading", "autonomy", "pipeline")}
+CONFIG_KEYS["budget"].add("dept")  # [budget.dept.<slug>] overrides
 
 
 def load_config(home: Home) -> dict:
@@ -317,7 +319,8 @@ class Kernel:
             if isinstance(stage, str) and missing:
                 raise TransitionError(f"{emp['name']} ({employee_id}) has no role that performs the '{stage}' stage")
         token, token_hash = security.new_token()
-        got = self.work.claim(who, stages, driver or (emp["driver"] if emp else None), task_id, token_hash)
+        got = self.work.claim(who, stages, driver or (emp["driver"] if emp else None), task_id, token_hash,
+                              exclude_depts=self.over_budget())
         if got is None:
             return None
         node, run = got
@@ -561,6 +564,33 @@ class Kernel:
             subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
                              env={**os.environ, **kernel_env(self.home)})
 
+    # ── budgets: how much work a department may have in flight, and start per day ──
+    def budget(self, dept_slug: str | None) -> dict:
+        b = {k: v for k, v in self.config.get("budget", {}).items() if k != "dept"}
+        if dept_slug:
+            b.update(self.config.get("budget", {}).get("dept", {}).get(dept_slug, {}))
+        return {k: int(v) for k, v in b.items()}
+
+    def budget_usage(self, dept_id: str) -> dict:
+        since = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        running, today = self.wconn.execute(
+            "SELECT sum(r.status='running'), sum(r.started_at>?) FROM runs r JOIN tasks t ON t.id=r.task_id "
+            "WHERE t.dept_id=?", (since, dept_id)).fetchone()
+        return {"running": running or 0, "runs_last_24h": today or 0}
+
+    def over_budget(self) -> list[str]:
+        """Departments at a cap: their stages wait on the board until the department is under it again."""
+        out = []
+        for d in self.org.depts():
+            cap = self.budget(d["slug"])
+            if not (cap.get("max_running_per_dept") or cap.get("max_runs_per_dept_per_day")):
+                continue
+            use = self.budget_usage(d["id"])
+            if (cap.get("max_running_per_dept") and use["running"] >= cap["max_running_per_dept"]) or \
+                    (cap.get("max_runs_per_dept_per_day") and use["runs_last_24h"] >= cap["max_runs_per_dept_per_day"]):
+                out.append(d["id"])
+        return out
+
     # ── feedback loops (R5): sensors that post work when something needs attention ──
     def triggers(self, swept: list[dict] | None = None) -> list[dict]:
         out = []
@@ -690,6 +720,7 @@ class Kernel:
                 backlog[1], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)).total_seconds() / 3600, 1)
         return {
             "dept": dept or "(organization)", "days": days,
+            "budget": {**self.budget(dept), **self.budget_usage(dept_id)} if dept_id else None,
             "first_pass_rate": {"value": ratio(first[1] or 0, first[0]), "counter": "verify_pass_rate"},
             "verify_pass_rate": {"value": ratio(verifies[1] or 0, verifies[0]), "counter": "rework_rate"},
             "rework_rate": {"value": ratio(execs[1] or 0, execs[0]), "counter": "first_pass_rate"},

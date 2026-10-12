@@ -67,6 +67,14 @@ def run(k) -> list[dict]:
     for r in q("SELECT approver, task_class, max_grade FROM authority WHERE max_grade NOT BETWEEN -1 AND 4"):
         add("error", "authority.range", f"{r[0]} on {r[1]}: G{r[2]}")
 
+    # budgets
+    for d in k.org.depts():
+        if d["id"] in k.over_budget():
+            waiting = w.execute("SELECT count(*) FROM tasks WHERE dept_id=? AND stage IS NOT NULL AND status='ready'",
+                                (d["id"],)).fetchone()[0]
+            if waiting:
+                add("warning", "budget.cap", f"{d['slug']} is at its budget cap with {waiting} ready stages waiting")
+
     # leases
     n = w.execute("SELECT count(*) FROM runs WHERE status='running' AND lease_until < ?", (now(),)).fetchone()[0]
     if n:

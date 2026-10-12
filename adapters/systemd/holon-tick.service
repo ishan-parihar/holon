@@ -1,5 +1,5 @@
 [Unit]
-Description=Holon tick: self-healing sweep + fire due schedules
+Description=Holon heartbeat: recover dead runs, fire feedback-loop triggers and due schedules
 After=network-online.target
 
 [Service]
@@ -7,4 +7,6 @@ Type=oneshot
 Environment=HOLON_HOME=%h/holon
 # systemd's user PATH omits per-user bin dirs; harness CLIs (and `holon` itself) usually live there.
 Environment=PATH=%h/bin:%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+# `holon tick` is a kernel command: it authenticates with the Chair key file created by `holon init`
+# (~/.config/holon/keys/<instance>.chair). Set HOLON_CHAIR_KEY_FILE if you keep it elsewhere.
 ExecStart=/usr/bin/env holon tick
