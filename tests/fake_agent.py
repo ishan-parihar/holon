@@ -5,6 +5,7 @@
   stdout          prints the envelope on stdout instead of writing result.json
   fail            executor reports outcome=failure
   self-submit     the agent submits its own result with its run token (pull-in-push)
+  wrapped         prints a harness summary {"text": <reply>, "usage": {...}} (jcode, Claude Code style)
 """
 
 import json
@@ -61,7 +62,10 @@ else:  # retro
     env = {"summary": "a write failed", "cause": "the disk was full", "learnings": ["check disk space first"],
            "actions": [{"title": "Add a disk check", "intent": "fail fast when the disk is full"}]}
 
-if mode == "stdout":
+if mode == "wrapped":
+    print(json.dumps({"text": "Done.\n" + json.dumps(env), "total_cost_usd": 0.01,
+                      "usage": {"input_tokens": 100, "cache_read_input_tokens": 20, "output_tokens": 7}}))
+elif mode == "stdout":
     print("some chatter before the answer")
     print(json.dumps(env))
 elif "self-submit" in modes:

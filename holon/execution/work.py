@@ -429,7 +429,8 @@ class Work:
         if run["status"] != "running":
             raise TransitionError(f"run {run_id} is already '{run['status']}'")
         self.conn.execute(
-            "UPDATE runs SET status=?, ended_at=?, exit_code=?, tokens_in=?, tokens_out=?, cost=? WHERE id=?",
+            "UPDATE runs SET status=?, ended_at=?, exit_code=?, tokens_in=coalesce(?, tokens_in),"
+            " tokens_out=coalesce(?, tokens_out), cost=coalesce(?, cost) WHERE id=?",
             (status, now(), exit_code, metrics.get("tokens_in"), metrics.get("tokens_out"), metrics.get("cost"), run_id))
         self._event("run", run_id, "running", status, actor=f"emp:{run['employee_id']}" if run["employee_id"] else None)
         return run
@@ -446,6 +447,12 @@ class Work:
     def set_run_paths(self, run_id: str, brief_path: str, log_path: str) -> None:
         with write_txn(self.conn):
             self.conn.execute("UPDATE runs SET brief_path=?, log_path=? WHERE id=?", (brief_path, log_path, run_id))
+
+    def set_run_usage(self, run_id: str, tokens_in: int | None, tokens_out: int | None, cost: float | None) -> None:
+        """What the harness reported a run consumed (budgets and cost per verified result read it)."""
+        with write_txn(self.conn):
+            self.conn.execute("UPDATE runs SET tokens_in=coalesce(?, tokens_in), tokens_out=coalesce(?, tokens_out),"
+                              " cost=coalesce(?, cost) WHERE id=?", (tokens_in, tokens_out, cost, run_id))
 
     def _begin_submit(self, run_id: str, stage: str, exit_code: int | None, status: str = "succeeded",
                       **metrics: Any) -> tuple[dict, dict, dict, str | None]:

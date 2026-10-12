@@ -179,19 +179,35 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive
                 alive()
     log_path.write_text(f"$ {cmd}\n[cwd] {cwd}\n[exit] {exit_code}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n")
     envelope = None
+    outer = extract_last_json(stdout) if driver.result == "stdout-json" else None
     result_path = Path(brief["result_path"])
     if result_path.exists():
         try:
             envelope = json.loads(result_path.read_text())
         except json.JSONDecodeError:
             envelope = None
-    if envelope is None and driver.result == "stdout-json":
-        envelope = extract_last_json(stdout)
-        if isinstance(envelope, dict) and isinstance(envelope.get("result"), str):
-            # harnesses that wrap the model reply in {"result": "..."}: look inside it
-            envelope = extract_last_json(envelope["result"]) or envelope
+    if envelope is None and outer is not None:
+        envelope = outer
+        reply = next((outer[k] for k in ("result", "text") if isinstance(outer.get(k), str)), None)
+        if reply is not None:
+            # harnesses that wrap the model reply in {"result": "..."} or {"text": "..."}: look inside it
+            envelope = extract_last_json(reply) or envelope
     return {"exit_code": exit_code, "envelope": envelope, "log_path": str(log_path), "stdout_tail": stdout[-4000:],
-            "stderr_tail": stderr[-2000:]}
+            "stderr_tail": stderr[-2000:], "usage": usage_of(outer)}
+
+
+def usage_of(outer: dict | None) -> dict | None:
+    """Tokens and cost from a harness's JSON summary ({"usage": {"input_tokens", "output_tokens"}, and
+    "total_cost_usd" or "cost"}), when it prints one."""
+    if not isinstance(outer, dict) or not isinstance(outer.get("usage"), dict):
+        return None
+    u = outer["usage"]
+    tin = u.get("input_tokens") if isinstance(u.get("input_tokens"), int) else None
+    if tin is not None and isinstance(u.get("cache_read_input_tokens"), int):
+        tin += u["cache_read_input_tokens"]
+    tout = u.get("output_tokens") if isinstance(u.get("output_tokens"), int) else None
+    cost = next((outer[k] for k in ("total_cost_usd", "cost") if isinstance(outer.get(k), (int, float))), None)
+    return {"tokens_in": tin, "tokens_out": tout, "cost": cost}
 
 
 def extract_last_json(text: str) -> dict | None:

@@ -110,6 +110,14 @@ class PushMode(KernelCase):
         self.assertEqual(drivers.run(self.home, hung, brief, alive_every_s=0.2)["exit_code"], 124)
         self.assertLess(time.monotonic() - t0, 10, "a harness past its timeout is killed, shell and all")
 
+    def test_a_harness_summary_is_unwrapped_and_its_usage_recorded(self):
+        self.install_fake_driver("fake", result="stdout-json", mode="wrapped")
+        self.add(dept="eng")
+        out = self.k.dispatch(self.hod, "plan")
+        self.assertFalse(out.get("breach"), out)
+        run = self.k.wconn.execute("SELECT tokens_in, tokens_out, cost FROM runs").fetchone()
+        self.assertEqual(tuple(run), (120, 7, 0.01))
+
     def test_concurrency_cap(self):
         self.add(dept="eng")
         self.add("second", dept="eng")
