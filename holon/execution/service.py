@@ -514,13 +514,17 @@ class Kernel:
                  and not claimed.brief_dir.resolve().is_relative_to(Path(workdir).resolve()))
         before = _hash_dir(Path(workdir)) if guard else None
         out = drivers.run(self.home, drv, brief, claimed.token)
-        if guard and _hash_dir(Path(workdir)) != before:
-            return self._contract_breach(self.work.get_run(claimed.run["id"]),
-                                         [f"{claimed.run['kind']} run modified the working directory (must be read-only)"],
-                                         out, out["exit_code"])
+        changed = guard and _hash_dir(Path(workdir)) != before
+        breach = f"{claimed.run['kind']} run modified the working directory (must be read-only)"
         if self.work.get_run(claimed.run["id"])["status"] != "running":  # the agent submitted itself (pull-in-push)
-            return {"stage": claimed.run["kind"], "submitted_by_agent": True,
+            if changed:  # too late to discard the result: record it where audits and retros see it
+                with write_txn(self.wconn):
+                    self.work._event("task", claimed.node["id"], None, None, f"read-only breach: {breach}",
+                                     actor=f"emp:{claimed.employee['id']}" if claimed.employee else None)
+            return {"stage": claimed.run["kind"], "submitted_by_agent": True, "breach": [breach] if changed else None,
                     "work": self.work.work_of(claimed.node["id"])}
+        if changed:
+            return self._contract_breach(self.work.get_run(claimed.run["id"]), [breach], out, out["exit_code"])
         return self.submit(claimed.run["id"], out["envelope"], out["exit_code"], driver_output=out)
 
     def dispatch(self, employee_id: str, stage: str | None = None, task_id: str | None = None) -> dict | None:

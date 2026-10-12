@@ -15,6 +15,7 @@ from pathlib import Path
 
 brief = json.loads((Path(os.environ["HOLON_BRIEF_DIR"]) / "brief.json").read_text())
 mode = os.environ.get("FAKE_MODE", "ok")
+modes = set(mode.split("+"))  # e.g. "dirty-planner+self-submit"
 stage = brief["stage"]
 workdir = Path(brief["workdir"])
 assert Path(brief["context_md"]).read_text().startswith("# Context"), "context bundle missing"
@@ -25,8 +26,11 @@ assert "HOLON_CHAIR_KEY" not in os.environ, "the Chair key must never reach an a
 if mode == "garbage":
     print("I did some things, trust me")
     sys.exit(0)
-if mode == "dirty-planner" and os.environ["HOLON_POSTURE"] == "observe":
+if "dirty-planner" in modes and os.environ["HOLON_POSTURE"] == "observe":
     (workdir / "scribble.txt").write_text("an observer should not write")
+if "pycache" in modes:  # running the tests while observing leaves a cache behind
+    (workdir / "__pycache__").mkdir(exist_ok=True)
+    (workdir / "__pycache__" / "x.cpython-314.pyc").write_bytes(b"cache")
 
 if stage == "research":
     env = {"summary": "an empty directory", "terrain": [{"content": f"{workdir} starts empty", "source": "ls"}]}
@@ -60,7 +64,7 @@ else:  # retro
 if mode == "stdout":
     print("some chatter before the answer")
     print(json.dumps(env))
-elif mode == "self-submit":
+elif "self-submit" in modes:
     Path(brief["result_path"]).write_text(json.dumps(env))
     subprocess.run([sys.executable, "-m", "holon", "--home", os.environ["HOLON_HOME"], "submit", brief["run_id"]],
                    check=True, capture_output=True)

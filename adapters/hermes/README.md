@@ -22,7 +22,21 @@ employees on low-risk departments, or under a separate OS user without access to
 
 ```sh
 python3 adapters/hermes/install.py --holon-home ~/holon --dry-run
-python3 adapters/hermes/install.py --holon-home ~/holon
-holon adapter test hermes
+python3 adapters/hermes/install.py --holon-home ~/holon \
+    --model free-stack --base-url http://127.0.0.1:20129/v1 --api-key-file ~/.config/holon/model.key
+holon adapter test hermes            # 5/5 on Hermes v0.19.0 + aroute free-stack, about 2.5 minutes
 holon hr hire … --driver hermes
 ```
+
+`--model`, `--base-url` and `--api-key-file` pin Holon's employees to one model on an
+OpenAI-compatible endpoint without touching Hermes' own configuration (Hermes then needs no
+provider of its own). The key file is read at run time; keep it mode 0600.
+
+## Lessons from real runs
+
+- Current Hermes reads `CUSTOM_BASE_URL`, not `OPENAI_BASE_URL`, for a custom endpoint.
+- Hermes switches its stream-stall detector off for local endpoints, so one stalled upstream
+  stream hung a run for 15 minutes. The driver sets `HERMES_LOCAL_STREAM_STALE_TIMEOUT`,
+  `HERMES_STREAM_STALE_TIMEOUT` and `HERMES_API_TIMEOUT` (`--stall-timeout`, default 300 s).
+- Skills exported to Hermes serve every instance: `$holon` is rendered as `${HOLON:-holon}`, the
+  command each run exports, never one instance's path.

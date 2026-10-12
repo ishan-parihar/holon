@@ -13,6 +13,8 @@ import os
 import subprocess
 from pathlib import Path
 
+# build and tool caches that running tests or linters creates: never a meaningful change of the tree
+CACHE_DIRS = {"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", "node_modules", ".cache"}
 MAX_FILE_BYTES = 5 * 1024 * 1024
 MAX_WALK_FILES = 5000
 
@@ -35,12 +37,13 @@ def _hash_file(p: Path) -> str:
 def _hash_dir(p: Path) -> str:
     head = _git(["rev-parse", "HEAD"], p)
     if head is not None:
-        status = _git(["status", "--porcelain", "--", "."], p) or ""
+        status = "\n".join(line for line in (_git(["status", "--porcelain", "--", "."], p) or "").splitlines()
+                           if not CACHE_DIRS & set(Path(line[3:].strip().strip('"')).parts))
         return "git:" + hashlib.sha256((head + status).encode()).hexdigest()
     h = hashlib.sha256()
     count = 0
     for root, dirs, files in os.walk(p):
-        dirs[:] = sorted(d for d in dirs if d not in (".git", "__pycache__", "node_modules"))
+        dirs[:] = sorted(d for d in dirs if d != ".git" and d not in CACHE_DIRS)
         for name in sorted(files):
             fp = Path(root) / name
             try:

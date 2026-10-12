@@ -53,6 +53,26 @@ class PushMode(KernelCase):
         self.add("again", dept="eng")
         self.assertNotIn("breach", self.k.dispatch(self.hod, "plan"))
 
+    def test_caches_left_by_running_tests_are_not_a_breach(self):
+        import subprocess
+        subprocess.run(["git", "init", "-q"], cwd=self.workdir, check=True)
+        (self.workdir / "a.py").write_text("x = 1\n")
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "-A"], cwd=self.workdir, check=True)
+        subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "i"], cwd=self.workdir,
+                       check=True)
+        self.install_fake_driver("fake", mode="pycache")
+        self.add(dept="eng")
+        self.assertNotIn("breach", self.k.dispatch(self.hod, "plan"))
+
+    def test_a_breach_after_the_agent_submitted_itself_is_recorded_not_fatal(self):
+        self.install_fake_driver("fake", mode="dirty-planner+self-submit")
+        t = self.add(dept="eng")
+        out = self.k.dispatch(self.hod, "plan")
+        self.assertTrue(out["submitted_by_agent"])
+        self.assertIn("read-only", out["breach"][0])
+        stage = self.k.work.stages(t["id"], "plan")[0]
+        self.assertTrue(any("read-only breach" in (e["note"] or "") for e in self.k.work.events(stage["id"])))
+
     def test_stdout_json_driver(self):
         self.install_fake_driver("fake", result="stdout-json", mode="stdout")
         self.add(dept="eng")
