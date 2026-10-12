@@ -8,4 +8,5 @@ cwd = "{workdir}"
 timeout_s = 3600
 result = "stdout-json"   # result.json if the agent wrote it; else the last JSON object it printed
 read_only = ""
+read_only_enforced = true   # holon-observer profile has no write tools; see README
 duties = ["plan", "execute", "verify", "review"]

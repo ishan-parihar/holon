@@ -7,6 +7,9 @@
     result    = "file"                 # "file": agent writes {result_path}; "stdout-json": last JSON object on stdout
     read_only = "--plan-only"   # substituted as {read_only} for plan/verify/review runs, else ""
     duties    = ["plan", "execute", "verify", "review"]   # optional restriction
+    read_only_enforced = false   # true if the harness itself denies writes on plan/verify/review runs;
+                                 # Holon then skips its workdir fingerprint guard (which cannot attribute
+                                 # changes in a working tree other processes are also writing)
     [env]                              # optional extra environment
     FOO = "bar"
 
@@ -43,6 +46,7 @@ class Driver:
     timeout_s: int = 3600
     result: str = "file"
     read_only: str = ""
+    read_only_enforced: bool = False   # the harness itself denies writes on plan/verify/review runs
     duties: list[str] = field(default_factory=lambda: ["plan", "execute", "verify", "review"])
     env: dict[str, str] = field(default_factory=dict)
     source: str = ""
@@ -50,7 +54,8 @@ class Driver:
     @classmethod
     def from_toml(cls, text: str, source: str) -> "Driver":
         data = tomllib.loads(text)
-        unknown = set(data) - {"name", "command", "cwd", "timeout_s", "result", "read_only", "duties", "env"}
+        unknown = set(data) - {"name", "command", "cwd", "timeout_s", "result", "read_only", "read_only_enforced",
+                               "duties", "env"}
         if unknown:
             raise DriverError(f"{source}: unknown keys {sorted(unknown)}")
         if not data.get("name") or not data.get("command"):

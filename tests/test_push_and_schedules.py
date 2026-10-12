@@ -38,6 +38,15 @@ class PushMode(KernelCase):
         self.assertIn("read-only", out["breach"][0])
         self.assertEqual(self.k.work.get_task(t["id"])["status"], "inbox")
 
+    def test_harness_enforced_read_only_skips_workdir_guard(self):
+        self.install_fake_driver("fake", mode="dirty-planner")
+        d = self.home.drivers_dir / "fake.toml"
+        d.write_text(d.read_text().replace("[env]", "read_only_enforced = true\n[env]"))
+        self.add(dept="eng")
+        out = self.k.dispatch("plan", self.hod)
+        self.assertNotIn("breach", out)
+        self.assertEqual(out["task"]["status"], "awaiting_approval")
+
     def test_stdout_json_driver(self):
         self.install_fake_driver("fake", result="stdout-json", mode="stdout")
         self.add(dept="eng")

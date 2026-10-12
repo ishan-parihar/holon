@@ -317,7 +317,7 @@ class Kernel:
         brief = briefs.load(self.home, claimed.run["id"])
         workdir = claimed.task.get("workdir")
         guard = (claimed.run["kind"] in ("plan", "review") and workdir and Path(workdir).is_dir()
-                 and self.config["planner"]["enforce_read_only"]
+                 and self.config["planner"]["enforce_read_only"] and not drv.read_only_enforced
                  and not claimed.brief_dir.resolve().is_relative_to(Path(workdir).resolve()))
         before = _hash_dir(Path(workdir)) if guard else None
         out = drivers.run(self.home, drv, brief, claimed.run["kind"])
