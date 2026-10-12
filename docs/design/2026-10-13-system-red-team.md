@@ -166,3 +166,25 @@ ZeroClaw cron/SOP for the legacy loops, nor Holon's schedules for org work.
   `it` (`~/.hermes`, `~/.cache`, `/tmp`; `systemctl` while executing) and `charter` (`arch`).
   The reassignment events read "Chair-approved"; the Chair approved the scope and supervised
   mode, and the role split was applied as the recommended default.
+
+## 9. Status after closing the gaps (2026-10-13, local; VPS deferred by the Chair)
+
+| Gap | Closed by | Guard |
+|---|---|---|
+| G-A machine checks | `[checks]` / `.dept.<slug>` / `.class.<class>` run by the kernel after execute; failure = rework, pass = evidence for the verifier | `test_a_failing_check_is_rework_without_spending_a_verifier` |
+| G-B skill evolution | `skill_changes` in the execute result, named in the plan (`skill:<skill>/<file>`, floor G2), applied by the kernel on verification, rolled back if `skill check` fails, re-exported to every registered harness directory; doctor `skills.export_stale` | `test_a_verified_change_lands_in_the_department_layer_and_every_export` |
+| G-C integrity on the heartbeat | `tick` runs doctor every `doctor_every_min`, one incident per failing check; GitHub Actions runs tests and lint --strict | `test_a_doctor_error_becomes_one_incident_and_the_check_waits_its_interval` |
+| G-D dashboard | `adapters/notion`: Departments, Employees, Work, Runs with the holarchy's relations; hash-based push, signed webhooks, reconcile, Chair-only inputs, `check --repair` | `tests/test_notion.py` against a strict fake API; **live Notion validation pending a token** |
+| G-E taxonomy | `[classes]`; agent-proposed work outside it breaches the contract; doctor `classes.unknown` | `test_agents_use_the_departments_task_classes` |
+| G-F cost and tokens | drivers record the `usage` a harness prints (jcode, Claude Code JSON) on the run | `test_a_harness_summary_is_unwrapped_and_its_usage_recorded` |
+| G-G guard on shared trees | file snapshots instead of git state; `[planner] guard_ignore` | `test_a_shared_tree_others_commit_to_or_write_ignored_paths_in_is_not_a_breach` |
+| G-H back-off | failing stages wait 10 min, doubling, before the next claim | `test_a_stage_whose_runs_keep_failing_opens_an_incident` |
+| G-I Claude Code | deferred by the Chair | — |
+
+Found while validating jcode for real, and fixed: a harness kept running a closing model turn
+(about 12 minutes on free-stack) after its agent had submitted through `holon_submit`; the
+dispatcher now stops it (`test_a_harness_still_running_after_its_result_is_in_is_stopped`).
+
+Still open: the Notion mirror against a real workspace (needs an integration token and a public
+URL for webhooks); the VPS redeploy of all of the above (after the Chair's local verification);
+nothing yet acts on metrics automatically beyond retros.
