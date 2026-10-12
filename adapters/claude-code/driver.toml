@@ -1,10 +1,14 @@
-# Holon driver for Claude Code headless (`claude -p`). Observe stages run in plan mode (no edits);
-# execute gets edit permissions. The prompt carries the identity card and the stage brief.
+# Holon driver for Claude Code headless (`claude -p`).
+# The identity card goes into the system prompt (--append-system-prompt-file); the message is the
+# stage brief. Claude Code confines tools to the working directory, so the run directory (brief,
+# context, result.json) is added with --add-dir, and the kernel command is allowed for heartbeats
+# and submits. Observe stages run in plan mode (no edits); execute may edit and run commands,
+# because its plan was approved.
 name = "claude-code"
-command = "claude -p {briefing} {read_only}{act_args} --output-format json"
+command = "claude -p {prompt} --append-system-prompt-file {identity_md} --add-dir {brief_dir} --allowedTools 'Bash({holon}:*)' {read_only}{act_args} --output-format json"
 cwd = "{workdir}"
 timeout_s = 3600
 result = "stdout-json"   # result.json when written; else the JSON in Claude's reply
 read_only = "--permission-mode plan"
-act_args = "--permission-mode acceptEdits"
+act_args = "--permission-mode acceptEdits --allowedTools Bash"
 read_only_enforced = true

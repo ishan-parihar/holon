@@ -24,7 +24,8 @@ class Shipped(KernelCase):
         for p in found:
             d = Driver.from_toml(p.read_text(), str(p))
             self.assertEqual(d.stages, list(vocab.STAGES), p)
-            self.assertIn("{briefing}", d.command, p)
+            self.assertTrue(any(x in d.command for x in ("{briefing}", "{identity}", "{identity_md}")),
+                            f"{p}: the identity card must reach the agent")
 
     def test_zeroclaw_installer_produces_valid_config_with_safe_roots(self):
         zc = self.tmp / "zeroclaw"
