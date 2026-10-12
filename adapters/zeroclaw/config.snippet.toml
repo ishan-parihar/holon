@@ -3,6 +3,10 @@
 # One agent alias per duty; provider, allowed roots and (optionally) a pinned model are filled in by the installer.
 
 @PROVIDER_BLOCK@
+[runtime_profiles.holon]
+# Planning and execution need room to explore; the ZeroClaw default stops a turn after 10 tool calls.
+max_tool_iterations = 40
+
 [risk_profiles.holon-observer]
 # plan / verify / review: look, never touch. Write tools are excluded and the shell is limited
 # to read-only commands; Holon additionally fails any plan/review run that changed its workdir.
