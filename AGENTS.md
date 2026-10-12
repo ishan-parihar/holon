@@ -77,6 +77,7 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | VPS, first heartbeat | the oneshot unit's cgroup kill took every spawned dispatch with it | `test_the_heartbeat_unit_lets_spawned_dispatches_outlive_the_tick` |
 | VPS, first heartbeat | the timer's `PATH` found an old `zeroclaw` without `agent -a` | `test_zeroclaw_installer_pins_a_binary_that_supports_agent_aliases` |
 | VPS, first heartbeat | a stage whose runs kept failing retried forever and never opened an incident | `test_a_stage_whose_runs_keep_failing_opens_an_incident` |
+| VPS first wave | a slow model outlived its stage lease, so the stage could be reclaimed mid-run | `test_a_running_harness_keeps_its_lease_and_a_hung_one_is_killed` |
 | VPS survey | two wakes due in one tick could both pass the concurrency check | `test_the_concurrency_cap_is_checked_inside_the_claim` |
 | VPS survey | a harness sandbox built for an older `[scope]` kept its old reach | `test_doctor_catches_a_sandbox_built_for_another_scope` |
 | Red-team R1 | the Chair key reached a harness's environment | `test_the_chair_key_never_reaches_a_harness` |

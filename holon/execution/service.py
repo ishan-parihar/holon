@@ -521,7 +521,12 @@ class Kernel:
                  and self.config["planner"]["enforce_read_only"] and not trusted
                  and not claimed.brief_dir.resolve().is_relative_to(Path(workdir).resolve()))
         before = _hash_dir(Path(workdir)) if guard else None
-        out = drivers.run(self.home, drv, brief, claimed.token)
+        def alive() -> None:  # the harness is still working: keep its lease (a dead dispatcher stops renewing)
+            try:
+                self.work.heartbeat(claimed.run["id"])
+            except TransitionError:  # the agent already submitted, or the run was swept
+                pass
+        out = drivers.run(self.home, drv, brief, claimed.token, alive=alive)
         changed = guard and _hash_dir(Path(workdir)) != before
         breach = f"{claimed.run['kind']} run modified the working directory (must be read-only)"
         if self.work.get_run(claimed.run["id"])["status"] != "running":  # the agent submitted itself (pull-in-push)

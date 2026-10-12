@@ -29,7 +29,9 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import signal
 import subprocess
+import time
 import tomllib
 from dataclasses import dataclass, field
 from importlib import resources
@@ -146,8 +148,11 @@ def run_env(home: Home, brief: dict, token: str | None) -> dict[str, str]:
     return env
 
 
-def run(home: Home, driver: Driver, brief: dict, token: str | None = None) -> dict:
-    """Invoke the harness and return {'exit_code', 'envelope' | None, 'log_path', 'stdout_tail'}."""
+def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive=None,
+        alive_every_s: float = 60.0) -> dict:
+    """Invoke the harness and return {'exit_code', 'envelope' | None, 'log_path', 'stdout_tail'}.
+    `alive()` is called every `alive_every_s` while the harness process runs (the kernel renews the
+    run's lease with it), so a lease expires only when the dispatcher itself has died."""
     if brief["stage"] not in driver.stages:
         raise DriverError(f"driver {driver.name} does not serve the '{brief['stage']}' stage")
     cmd, cwd = render(driver, brief)
@@ -156,14 +161,22 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None) -> di
     clean = {k: v for k, v in os.environ.items() if k not in ("HOLON_CHAIR_KEY", "HOLON_KEY")}
     env = {**clean, **run_env(home, brief, token), **driver.env}
     log_path = Path(brief["brief_md"]).parent / "driver.log"
-    try:
-        proc = subprocess.run(cmd, shell=True, cwd=cwd, env=env, capture_output=True, text=True,
-                              timeout=driver.timeout_s)
-        exit_code, stdout, stderr = proc.returncode, proc.stdout, proc.stderr
-    except subprocess.TimeoutExpired as e:
-        exit_code = 124
-        stdout = (e.stdout or b"").decode(errors="replace") if isinstance(e.stdout, bytes) else (e.stdout or "")
-        stderr = f"driver timed out after {driver.timeout_s}s"
+    proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=True)
+    deadline = time.monotonic() + driver.timeout_s
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=max(0.1, min(alive_every_s, deadline - time.monotonic())))
+            exit_code = proc.returncode
+            break
+        except subprocess.TimeoutExpired:
+            if time.monotonic() >= deadline:
+                os.killpg(proc.pid, signal.SIGKILL)  # the shell and the harness it started
+                stdout, _ = proc.communicate()
+                exit_code, stderr = 124, f"driver timed out after {driver.timeout_s}s"
+                break
+            if alive:
+                alive()
     log_path.write_text(f"$ {cmd}\n[cwd] {cwd}\n[exit] {exit_code}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n")
     envelope = None
     result_path = Path(brief["result_path"])

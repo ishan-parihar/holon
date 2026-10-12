@@ -95,7 +95,9 @@ trust_harness_read_only = true` (for working trees other processes also write).
 ## 4. Leases
 
 Every run holds a lease: research and plan 30 min, execute 60, verify and retro 20, shape and
-approve 15. Renew with `holon run heartbeat <run_id>`. The heartbeat reclaims expired leases: the
+approve 15. Renew with `holon run heartbeat <run_id>`. In push mode the dispatcher renews it while the harness
+process is alive, so a lease expires only when the dispatcher died; the driver's `timeout_s` bounds
+the run (the harness and its shell are killed). The heartbeat reclaims expired leases: the
 stage returns to the board, and an execute stage counts as a failed attempt.
 
 ## 5. Staleness

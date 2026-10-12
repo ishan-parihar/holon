@@ -93,6 +93,23 @@ class PushMode(KernelCase):
         self.assertTrue(out["breach"])
         self.assertIn("trust me", self.k.work.last_execute_output(out["work"]["id"])["documentation"])
 
+    def test_a_running_harness_keeps_its_lease_and_a_hung_one_is_killed(self):
+        import sys
+        import time
+        from holon.execution import briefs, drivers
+        self.add(dept="eng")
+        c = self.k.claim("plan", self.hod)
+        brief = briefs.load(self.home, c.run["id"])
+        beats = []
+        slow = drivers.Driver(name="slow", command=f"{sys.executable} -c 'import time; time.sleep(1)'")
+        out = drivers.run(self.home, slow, brief, alive=lambda: beats.append(1), alive_every_s=0.2)
+        self.assertEqual(out["exit_code"], 0)
+        self.assertGreaterEqual(len(beats), 3, "the kernel renews the lease while the harness works")
+        hung = drivers.Driver(name="hung", command=f"{sys.executable} -c 'import time; time.sleep(30)'", timeout_s=1)
+        t0 = time.monotonic()
+        self.assertEqual(drivers.run(self.home, hung, brief, alive_every_s=0.2)["exit_code"], 124)
+        self.assertLess(time.monotonic() - t0, 10, "a harness past its timeout is killed, shell and all")
+
     def test_concurrency_cap(self):
         self.add(dept="eng")
         self.add("second", dept="eng")
