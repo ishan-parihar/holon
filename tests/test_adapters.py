@@ -27,6 +27,20 @@ class Shipped(KernelCase):
             self.assertTrue(any(x in d.command for x in ("{briefing}", "{identity}", "{identity_md}")),
                             f"{p}: the identity card must reach the agent")
 
+    def test_hermes_driver_reaches_custom_endpoints_and_detects_stalls(self):
+        p = subprocess.run([sys.executable, str(ADAPTERS / "hermes" / "install.py"), "--holon-home", str(self.home.root),
+                            "--model", "free-stack", "--base-url", "http://127.0.0.1:9/v1", "--dry-run"],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        env = tomllib.loads(p.stdout[p.stdout.index('name = "hermes"'):])["env"]
+        self.assertEqual(env["CUSTOM_BASE_URL"], "http://127.0.0.1:9/v1", "Hermes ignores OPENAI_BASE_URL")
+        self.assertIn("HERMES_LOCAL_STREAM_STALE_TIMEOUT", env, "Hermes skips stall detection for local endpoints")
+
+    def test_claude_code_driver_can_read_its_run_dir_and_gets_its_identity(self):
+        d = Driver.from_toml((ADAPTERS / "claude-code" / "driver.toml").read_text(), "claude-code")
+        self.assertIn("--add-dir {brief_dir}", d.command, "Claude Code confines tools to the cwd (the workdir)")
+        self.assertIn("--append-system-prompt-file {identity_md}", d.command)
+
     def test_the_heartbeat_unit_lets_spawned_dispatches_outlive_the_tick(self):
         unit = (ADAPTERS / "systemd" / "holon-tick.service").read_text()
         self.assertIn("Type=oneshot", unit)

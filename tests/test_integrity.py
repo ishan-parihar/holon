@@ -1,6 +1,7 @@
 """R1: `holon lint` (artifacts) and `holon doctor` (live state) catch what they claim to catch."""
 
 from pathlib import Path
+from unittest import mock
 
 from holon.integrity import doctor, lint
 from tests.helpers import KernelCase
@@ -16,6 +17,20 @@ class Lint(KernelCase):
         findings = lint.run(self.k)
         self.assertEqual([f for f in findings if f["severity"] == "error"], [])
         self.assertEqual([f for f in findings if f["severity"] == "warning"], [])
+
+    def test_the_regression_ledger_cannot_lose_a_guard(self):
+        d = self.tmp / "dist"
+        (d / "tests").mkdir(parents=True)
+        (d / "tests" / "test_x.py").write_text("def test_kept():\n    pass\n")
+        (d / "AGENTS.md").write_text("# x\n\n## Regression ledger\n\n| Found | Defect | Guard |\n|---|---|---|\n"
+                                     "| a | b | `test_kept` |\n| a | c | `test_gone` |\n| a | d | none |\n")
+        f = lint.Findings()
+        with mock.patch.object(lint, "DIST", d):
+            lint._guards(f)
+        msgs = " ".join(x["message"] for x in f)
+        self.assertIn("test_gone", msgs)
+        self.assertIn("no guard test", msgs)
+        self.assertNotIn("test_kept", msgs)
 
     def test_a_stub_skill_fails_the_depth_rubric(self):
         self.k.skills.new("stub", "operation", "Does a thing")

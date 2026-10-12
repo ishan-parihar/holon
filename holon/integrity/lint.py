@@ -221,6 +221,7 @@ def pack_ref(k, f: Findings) -> None:
                 continue
             if not (doc.parent / target).exists():
                 f.add("error", "ref.link", _rel(doc), f"link to missing {target}")
+    _guards(f)
     contract_doc = DIST / "docs" / "CONTRACT.md"
     if contract_doc.exists():
         from holon.execution import drivers
@@ -231,6 +232,30 @@ def pack_ref(k, f: Findings) -> None:
             f.add("error", "ref.env", "docs/CONTRACT.md", f"the driver sets {var} but the contract does not document it")
         for var in sorted(documented - expected - {"HOLON_KEY", "HOLON_CHAIR_KEY", "HOLON_CHAIR_KEY_FILE"}):
             f.add("error", "ref.env", "docs/CONTRACT.md", f"documents {var}, which nothing sets or reads")
+
+
+def _guards(f: Findings) -> None:
+    """The regression ledger (AGENTS.md): every defect a real run found names the test that guards it,
+    and every guard named anywhere in the docs still exists. Deleting a guard fails lint."""
+    tests = DIST / "tests"
+    if not tests.is_dir():  # an installed package without its tests: nothing to check against
+        return
+    defined = set(re.findall(r"def (test_\w+)", "\n".join(p.read_text() for p in tests.glob("test_*.py"))))
+    for doc in _docs():
+        for name in sorted(set(re.findall(r"`(test_\w+)`", doc.read_text())) - defined):
+            f.add("error", "ref.guard", _rel(doc), f"names guard test {name}, which does not exist")
+    agents = DIST / "AGENTS.md"
+    if agents.exists():
+        text = agents.read_text()
+        start = text.find("## Regression ledger")
+        if start < 0:
+            f.add("error", "ref.guard", "AGENTS.md", "the regression ledger section is missing")
+            return
+        section = text[start:text.find("\n## ", start + 1) if "\n## " in text[start + 1:] else len(text)]
+        rows = [r for r in section.splitlines() if r.startswith("|") and not set(r) <= set("|-: ")][1:]
+        for r in rows:
+            if not re.search(r"`test_\w+`", r):
+                f.add("error", "ref.guard", "AGENTS.md", f"ledger row has no guard test: {r[:80]}")
 
 
 # ── BIND ──────────────────────────────────────────────────────────────────
