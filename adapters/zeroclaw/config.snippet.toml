@@ -25,21 +25,25 @@ allowed_commands = ["holon", "git", "npm", "cargo", "ls", "cat", "grep", "find",
 
 [agents.holon-plan]
 model_provider = "@MODEL_PROVIDER@"
+runtime_profile = "holon"
 risk_profile = "holon-observer"
 enabled = true
 
 [agents.holon-review]
 model_provider = "@MODEL_PROVIDER@"
+runtime_profile = "holon"
 risk_profile = "holon-observer"
 enabled = true
 
 [agents.holon-verify]
 model_provider = "@MODEL_PROVIDER@"
+runtime_profile = "holon"
 risk_profile = "holon-observer"
 enabled = true
 
 [agents.holon-execute]
 model_provider = "@MODEL_PROVIDER@"
+runtime_profile = "holon"
 risk_profile = "holon-worker"
 enabled = true
 # ── end Holon ──
