@@ -20,7 +20,7 @@ from string import Template
 from holon.core.db import now
 from holon.core.paths import Home
 
-ROLE_OF_KIND = {"plan": "planner", "execute": "executor", "verify": "verifier"}
+ROLE_OF_KIND = {"plan": "planner", "execute": "executor", "verify": "verifier", "review": "reviewer"}
 KIND_OF_ROLE = {v: k for k, v in ROLE_OF_KIND.items()}
 
 

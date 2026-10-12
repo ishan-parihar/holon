@@ -1,9 +1,9 @@
 # Example driver: Claude Code headless (`claude -p`).
-# Planner/verifier runs get plan mode (no edits); executors get edit permissions.
+# Plan/verify/review runs get plan mode (no edits); executors get edit permissions.
 name = "claude-code"
 command = "claude -p {prompt} {read_only} --output-format json"
 cwd = "{workdir}"
 timeout_s = 3600
 result = "file"   # the agent writes result.json; stdout JSON is the fallback either way
 read_only = "--permission-mode plan"
-roles = ["planner", "executor", "verifier"]
+duties = ["plan", "execute", "verify", "review"]

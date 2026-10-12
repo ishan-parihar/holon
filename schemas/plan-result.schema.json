@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "holon planner result",
+  "title": "Holon planner result",
   "oneOf": [
     {
       "type": "object",
@@ -58,6 +58,28 @@
           "items": {
             "type": "string"
           }
+        },
+        "external_effects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "assignee": {
+          "type": "string"
+        },
+        "grade": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            },
+            {
+              "type": "string",
+              "pattern": "^[Gg]?[0-4]$"
+            }
+          ]
         }
       }
     },
@@ -113,9 +135,28 @@
               },
               "workdir": {
                 "type": "string"
+              },
+              "dept": {
+                "type": "string"
+              },
+              "assignee": {
+                "type": "string"
               }
             }
           }
+        },
+        "grade": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4
+            },
+            {
+              "type": "string",
+              "pattern": "^[Gg]?[0-4]$"
+            }
+          ]
         }
       }
     },

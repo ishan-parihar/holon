@@ -1,17 +1,22 @@
-"""work.db: the delegated-work state machine. The only writer of work.db.
+"""work.db: the delegated-work state machine. The only writer of task/plan/run/result rows.
 
     inbox -> planning -> awaiting_approval -> approved -> executing -> verifying -> done
-                |  \\-> needs_input -> inbox      ^  |           |            \\-> failed
-                |                                |  \\-> stale -> inbox       (retry / replan)
-                \\-> (decompose approved) waiting_on_subtasks -> done when all children close
+              |  \\-> needs_input -> inbox      ^  |                 |           \\-> failed
+              |                                 |  \\-> stale -> inbox            (retry / replan)
+              \\-> decompose approved: waiting_on_subtasks -> done when all sub-tasks close
 
-Every transition is checked against TRANSITIONS and recorded in `events`.
+Who may claim what follows the organization (see `Claimant`):
+  plan     the assignee (with the plan duty) or the department's HOD; un-triaged work: the CEO
+  execute  the plan's/task's assignee; else any member of the task's department
+  verify   any member of the task's department (or the executive) except the executor
+  review   the approver the plan requires (HOD / CEO), within their authority
 """
 
 from __future__ import annotations
 
 import json
 import sqlite3
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -33,7 +38,8 @@ TRANSITIONS: dict[str, set[str]] = {
     "cancelled": set(),
 }
 TERMINAL = {"done", "cancelled"}
-DEFAULT_LEASE_S = {"plan": 1800, "execute": 3600, "verify": 1200}
+DEFAULT_LEASE_S = {"plan": 1800, "execute": 3600, "verify": 1200, "review": 900}
+SOURCES = ("chair", "agent", "audit", "schedule")
 
 
 class TransitionError(RuntimeError):
@@ -42,6 +48,20 @@ class TransitionError(RuntimeError):
 
 class NotFound(LookupError):
     pass
+
+
+@dataclass
+class Claimant:
+    """Who is claiming. With no id: an unaffiliated pull-mode worker that may claim anything."""
+    id: str | None = None
+    dept_id: str | None = None
+    is_head: bool = False
+    is_ceo: bool = False
+    in_executive: bool = False
+
+    @property
+    def ref(self) -> str | None:
+        return f"emp:{self.id}" if self.id else None
 
 
 def _lease(seconds: int) -> str:
@@ -59,7 +79,7 @@ def _dumps(v: Any) -> str | None:
 
 
 class Work:
-    def __init__(self, conn: sqlite3.Connection, actor: str = "human:cli"):
+    def __init__(self, conn: sqlite3.Connection, actor: str = "chair"):
         self.conn = conn
         self.actor = actor
 
@@ -85,14 +105,13 @@ class Work:
         task.update(status=to, blocked_reason=blocked_reason)
         return task
 
-    def _stat(self, task_class: str | None, **inc: int) -> None:
-        key = task_class or "(none)"
-        self.conn.execute("INSERT OR IGNORE INTO task_class_stats (task_class) VALUES (?)", (key,))
-        for col, n in inc.items():
-            if col == "last_failure_at":
-                self.conn.execute("UPDATE task_class_stats SET last_failure_at=? WHERE task_class=?", (now(), key))
-            else:
-                self.conn.execute(f"UPDATE task_class_stats SET {col}={col}+? WHERE task_class=?", (n, key))
+    def _dept_id(self, ref: str | None) -> str | None:
+        if not ref:
+            return None
+        r = self.conn.execute("SELECT id FROM departments WHERE id=? OR slug=?", (ref, ref)).fetchone()
+        if r is None:
+            raise NotFound(f"no department {ref}")
+        return r["id"]
 
     # ── reads ─────────────────────────────────────────────────────────────
     def get_task(self, task_id: str) -> dict:
@@ -129,26 +148,34 @@ class Work:
             "SELECT r.* FROM results r JOIN runs u ON u.id=r.run_id WHERE u.task_id=? AND u.kind='execute' "
             "ORDER BY r.created_at DESC LIMIT 1", (task_id,)).fetchone())
 
+    def executor_of(self, task_id: str) -> str | None:
+        r = self.conn.execute("SELECT employee_id FROM runs WHERE task_id=? AND kind='execute' ORDER BY started_at DESC"
+                              " LIMIT 1", (task_id,)).fetchone()
+        return r[0] if r else None
+
     def list_tasks(self, status: str | None = None, project_ref: str | None = None, parent_id: str | None = None,
-                   limit: int = 50) -> list[dict]:
+                   dept_id: str | None = None, assignee: str | None = None, limit: int = 50) -> list[dict]:
         q, args = "SELECT * FROM tasks WHERE 1=1", []
         if status:
             q += " AND status IN (%s)" % ",".join("?" * len(status.split(",")))
             args += status.split(",")
-        if project_ref:
-            q += " AND project_ref=?"
-            args.append(project_ref)
-        if parent_id:
-            q += " AND parent_id=?"
-            args.append(parent_id)
+        for col, val in (("project_ref", project_ref), ("parent_id", parent_id), ("dept_id", dept_id),
+                         ("assignee", assignee)):
+            if val:
+                q += f" AND {col}=?"
+                args.append(val)
         q += " ORDER BY priority, created_at LIMIT ?"
         args.append(limit)
         return [dict(r) for r in self.conn.execute(q, args)]
 
-    def awaiting_approval(self) -> list[dict]:
-        return [dict(r) for r in self.conn.execute(
-            "SELECT p.*, t.title AS task_title, t.priority, t.risk, t.task_class FROM plans p "
-            "JOIN tasks t ON t.id=p.task_id WHERE p.status='awaiting_approval' ORDER BY t.priority, p.created_at")]
+    def awaiting_approval(self, approver: str | None = "chair") -> list[dict]:
+        q = ("SELECT p.*, t.title AS task_title, t.priority, t.risk, t.task_class FROM plans p "
+             "JOIN tasks t ON t.id=p.task_id WHERE p.status='awaiting_approval'")
+        args: list = []
+        if approver:
+            q += " AND p.approver=?"
+            args.append(approver)
+        return [dict(r) for r in self.conn.execute(q + " ORDER BY p.grade DESC, t.priority, p.created_at", args)]
 
     def events(self, entity_id: str | None = None, limit: int = 50) -> list[dict]:
         if entity_id:
@@ -169,39 +196,35 @@ class Work:
 
     # ── intake ────────────────────────────────────────────────────────────
     def add_task(self, title: str, intent: str, *, acceptance: str | None = None, project_ref: str | None = None,
-                 parent_id: str | None = None, priority: int = 3, source: str = "human", task_class: str | None = None,
-                 risk: str = "normal", workdir: str | None = None, due: str | None = None,
-                 max_attempts: int = 2) -> dict:
+                 parent_id: str | None = None, dept: str | None = None, assignee: str | None = None,
+                 requested_by: str | None = None, priority: int = 3, source: str = "chair",
+                 task_class: str | None = None, risk: str = "normal", workdir: str | None = None,
+                 due: str | None = None, max_attempts: int = 2) -> dict:
         if not title.strip() or not intent.strip():
             raise ValueError("title and intent are required")
+        if source not in SOURCES:
+            raise ValueError(f"source must be one of {SOURCES}")
         tid, ts = new_id("task"), now()
         with write_txn(self.conn):
             if parent_id:
                 self.get_task(parent_id)
+            dept_id = self._dept_id(dept)
+            if assignee:
+                emp = self.conn.execute("SELECT dept_id, status FROM employees WHERE id=?", (assignee,)).fetchone()
+                if emp is None or emp["status"] == "retired":
+                    raise NotFound(f"no active employee {assignee}")
+                dept_id = dept_id or emp["dept_id"]
             self.conn.execute(
-                "INSERT INTO tasks (id, project_ref, parent_id, title, intent, acceptance, priority, source, task_class,"
-                " risk, workdir, due, max_attempts, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (tid, project_ref, parent_id, title.strip(), intent.strip(), acceptance, priority, source, task_class,
-                 risk, workdir, due, max_attempts, ts, ts))
+                "INSERT INTO tasks (id, project_ref, parent_id, dept_id, assignee, requested_by, title, intent, acceptance,"
+                " priority, source, task_class, risk, workdir, due, max_attempts, created_at, updated_at)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (tid, project_ref, parent_id, dept_id, assignee, requested_by or self.actor, title.strip(),
+                 intent.strip(), acceptance, priority, source, task_class, risk, workdir, due, max_attempts, ts, ts))
             self._event("task", tid, None, "inbox", f"source={source}")
         return self.get_task(tid)
 
-    # ── planning ──────────────────────────────────────────────────────────
-    def claim_for_planning(self, agent_id: str | None, driver: str | None = None,
-                           lease_s: int = DEFAULT_LEASE_S["plan"], task_id: str | None = None) -> tuple[dict, dict] | None:
-        with write_txn(self.conn):
-            if task_id:
-                row = self.conn.execute("SELECT id FROM tasks WHERE id=? AND status='inbox'", (task_id,)).fetchone()
-            else:
-                row = self.conn.execute(
-                    "SELECT id FROM tasks WHERE status='inbox' ORDER BY priority, created_at LIMIT 1").fetchone()
-            if row is None:
-                return None
-            task = self._move(row["id"], "planning", f"claimed by {agent_id}", actor=agent_id or self.actor)
-            run = self._open_run(task["id"], None, "plan", agent_id, driver, lease_s)
-        return task, run
-
-    def _open_run(self, task_id: str, plan_id: str | None, kind: str, agent_id: str | None, driver: str | None,
+    # ── claiming ──────────────────────────────────────────────────────────
+    def _open_run(self, task_id: str, plan_id: str | None, kind: str, who: Claimant, driver: str | None,
                   lease_s: int) -> dict:
         attempt = 1
         if kind == "execute":
@@ -210,11 +233,107 @@ class Work:
             ).fetchone()[0]
         rid, ts = new_id("run"), now()
         self.conn.execute(
-            "INSERT INTO runs (id, task_id, plan_id, kind, agent_id, driver, attempt, lease_until, heartbeat_at, started_at)"
-            " VALUES (?,?,?,?,?,?,?,?,?,?)",
-            (rid, task_id, plan_id, kind, agent_id, driver, attempt, _lease(lease_s), ts, ts))
-        self._event("run", rid, None, "running", f"{kind} for {task_id}", actor=agent_id or self.actor)
+            "INSERT INTO runs (id, task_id, plan_id, kind, employee_id, driver, attempt, lease_until, heartbeat_at,"
+            " started_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (rid, task_id, plan_id, kind, who.id, driver, attempt, _lease(lease_s), ts, ts))
+        self._event("run", rid, None, "running", f"{kind} for {task_id}", actor=who.ref or self.actor)
         return self.get_run(rid)
+
+    @staticmethod
+    def _planning_scope(who: Claimant) -> tuple[str, list]:
+        if not who.id:
+            return "1=1", []
+        parts, args = ["assignee=?"], [who.id]
+        if who.is_head and who.dept_id:
+            parts.append("dept_id=?")  # an HOD plans any department work, assigned or not
+            args.append(who.dept_id)
+        if who.is_ceo:
+            parts.append("(assignee IS NULL AND dept_id IS NULL)")
+        return " OR ".join(parts), args
+
+    def claim_for_planning(self, who: Claimant, driver: str | None = None, lease_s: int = DEFAULT_LEASE_S["plan"],
+                           task_id: str | None = None) -> tuple[dict, dict] | None:
+        cond, args = self._planning_scope(who)
+        with write_txn(self.conn):
+            q = f"SELECT id FROM tasks WHERE status='inbox' AND ({cond})"
+            if task_id:
+                q += " AND id=?"
+                args = [*args, task_id]
+            row = self.conn.execute(q + " ORDER BY priority, created_at LIMIT 1", args).fetchone()
+            if row is None:
+                return None
+            task = self._move(row["id"], "planning", f"claimed by {who.ref or self.actor}", actor=who.ref)
+            run = self._open_run(task["id"], None, "plan", who, driver, lease_s)
+        return task, run
+
+    def claim_for_execution(self, who: Claimant, driver: str | None = None, lease_s: int = DEFAULT_LEASE_S["execute"],
+                            task_id: str | None = None) -> tuple[dict, dict, dict] | None:
+        """Claim the next approved task this employee may execute. Plans whose written paths
+        changed since approval are superseded and their tasks return to the inbox."""
+        while True:
+            with write_txn(self.conn):
+                q = ("SELECT t.id FROM tasks t JOIN plans p ON p.task_id=t.id AND p.status='approved' "
+                     "WHERE t.status='approved'")
+                args: list = []
+                if who.id:
+                    q += (" AND (coalesce(p.assignee, t.assignee)=? OR (coalesce(p.assignee, t.assignee) IS NULL AND"
+                          " (t.dept_id=? OR (t.dept_id IS NULL AND ?))))")
+                    args += [who.id, who.dept_id, 1 if who.in_executive else 0]
+                if task_id:
+                    q += " AND t.id=?"
+                    args.append(task_id)
+                row = self.conn.execute(q + " ORDER BY t.priority, t.created_at LIMIT 1", args).fetchone()
+                if row is None:
+                    return None
+                task = self.get_task(row["id"])
+                plan = self.latest_plan(task["id"], "approved")
+                if plan["writes_fingerprint"]:
+                    current = fingerprint(task["workdir"], json.loads(plan["writes"] or "[]"))
+                    if current != plan["writes_fingerprint"]:
+                        self.conn.execute("UPDATE plans SET status='superseded' WHERE id=?", (plan["id"],))
+                        self._event("plan", plan["id"], "approved", "superseded", "written paths changed since approval")
+                        self._move(task["id"], "inbox", "stale plan: paths changed", blocked_reason="stale_plan")
+                        if task_id:
+                            return None
+                        continue
+                task = self._move(task["id"], "executing", f"claimed by {who.ref or self.actor}", actor=who.ref)
+                run = self._open_run(task["id"], plan["id"], "execute", who, driver, lease_s)
+            return task, plan, run
+
+    def claim_for_verification(self, who: Claimant, driver: str | None = None,
+                               lease_s: int = DEFAULT_LEASE_S["verify"]) -> tuple[dict, dict] | None:
+        with write_txn(self.conn):
+            q = ("SELECT t.id FROM tasks t WHERE t.status='verifying' AND NOT EXISTS ("
+                 " SELECT 1 FROM runs r WHERE r.task_id=t.id AND r.kind='verify' AND r.status='running')")
+            args: list = []
+            if who.id:
+                q += (" AND coalesce((SELECT employee_id FROM runs WHERE task_id=t.id AND kind='execute'"
+                      " ORDER BY started_at DESC LIMIT 1), '') <> ?"
+                      " AND (t.dept_id=? OR t.dept_id IS NULL OR ?)")
+                args += [who.id, who.dept_id, 1 if who.in_executive else 0]
+            row = self.conn.execute(q + " ORDER BY t.priority, t.updated_at LIMIT 1", args).fetchone()
+            if row is None:
+                return None
+            task = self.get_task(row["id"])
+            plan = self.latest_plan(task["id"], "approved")
+            run = self._open_run(task["id"], plan["id"] if plan else None, "verify", who, driver, lease_s)
+        return task, run
+
+    def claim_for_review(self, who: Claimant, driver: str | None = None,
+                         lease_s: int = DEFAULT_LEASE_S["review"]) -> tuple[dict, dict, dict] | None:
+        if not who.id:
+            return None
+        with write_txn(self.conn):
+            row = self.conn.execute(
+                "SELECT p.id FROM plans p JOIN tasks t ON t.id=p.task_id WHERE p.status='awaiting_approval' "
+                "AND p.approver=? AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.plan_id=p.id AND r.kind='review' "
+                "AND r.status='running') ORDER BY t.priority, p.created_at LIMIT 1", (who.ref,)).fetchone()
+            if row is None:
+                return None
+            plan = self.get_plan(row["id"])
+            task = self.get_task(plan["task_id"])
+            run = self._open_run(task["id"], plan["id"], "review", who, driver, lease_s)
+        return task, plan, run
 
     def _close_run(self, run_id: str, status: str, exit_code: int | None = None, **metrics: Any) -> None:
         run = self.get_run(run_id)
@@ -223,7 +342,7 @@ class Work:
         self.conn.execute(
             "UPDATE runs SET status=?, ended_at=?, exit_code=?, tokens_in=?, tokens_out=?, cost=? WHERE id=?",
             (status, now(), exit_code, metrics.get("tokens_in"), metrics.get("tokens_out"), metrics.get("cost"), run_id))
-        self._event("run", run_id, "running", status, actor=run["agent_id"] or self.actor)
+        self._event("run", run_id, "running", status, actor=f"emp:{run['employee_id']}" if run["employee_id"] else None)
 
     def heartbeat(self, run_id: str, lease_s: int | None = None) -> dict:
         run = self.get_run(run_id)
@@ -238,26 +357,31 @@ class Work:
         with write_txn(self.conn):
             self.conn.execute("UPDATE runs SET brief_path=?, log_path=? WHERE id=?", (brief_path, log_path, run_id))
 
-    def submit_plan(self, run_id: str, env: dict, exit_code: int | None = 0) -> dict:
-        """Ingest a validated planner envelope. Returns {'task', 'plan'?, 'question'?}."""
+    # ── planning ──────────────────────────────────────────────────────────
+    def submit_plan(self, run_id: str, env: dict, grading: dict | None = None, approver: str = "chair",
+                    exit_code: int | None = 0) -> dict:
+        """Ingest a validated planner result (org references already resolved by the caller)."""
         run = self.get_run(run_id)
         if run["kind"] != "plan":
             raise TransitionError(f"run {run_id} is a {run['kind']} run, not a plan run")
+        author = run["employee_id"]
+        actor = f"emp:{author}" if author else None
         with write_txn(self.conn):
             task = self.get_task(run["task_id"])
             if task["status"] != "planning":
                 raise TransitionError(f"task {task['id']} is '{task['status']}', not planning")
             self._close_run(run_id, "succeeded", exit_code)
             if env["kind"] == "needs_input":
-                self._message(sender=run["agent_id"] or "planner", to_ref="human", task_id=task["id"],
+                self._message(sender=actor or "planner", to_ref="chair", kind="question", task_id=task["id"],
                               body=env["question"], ack_required=1)
-                task = self._move(task["id"], "needs_input", "planner needs input", actor=run["agent_id"],
+                task = self._move(task["id"], "needs_input", "planner needs input", actor=actor,
                                   blocked_reason=env["question"])
                 return {"task": task, "question": env["question"]}
             version = 1 + self.conn.execute("SELECT coalesce(max(version),0) FROM plans WHERE task_id=?",
                                             (task["id"],)).fetchone()[0]
             self.conn.execute("UPDATE plans SET status='superseded' WHERE task_id=? AND status='awaiting_approval'",
                               (task["id"],))
+            g = grading or {"proposed": None, "floor": 4, "grade": 4, "reasons": ["ungraded"]}
             pid = new_id("plan")
             if env["kind"] == "decompose":
                 steps, findings, writes, fp = _dumps(env["children"]), env["rationale"], None, None
@@ -266,111 +390,106 @@ class Work:
                 findings, writes = env["findings"], env.get("writes") or []
                 fp = fingerprint(task["workdir"], writes)
             self.conn.execute(
-                "INSERT INTO plans (id, task_id, version, kind, planner_agent, findings, writes_fingerprint, steps,"
-                " writes, risks, rollback, estimate, context_refs, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (pid, task["id"], version, "decompose" if env["kind"] == "decompose" else "execute", run["agent_id"],
-                 findings, fp, steps, _dumps(writes), env.get("risks"), env.get("rollback"), env.get("estimate"),
-                 _dumps(env.get("context_refs")), now()))
+                "INSERT INTO plans (id, task_id, version, kind, author, findings, writes_fingerprint, steps, writes,"
+                " external_effects, assignee, risks, rollback, estimate, context_refs, grade_proposed, grade_floor,"
+                " grade, grade_reasons, approver, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (pid, task["id"], version, "decompose" if env["kind"] == "decompose" else "execute", author, findings,
+                 fp, steps, _dumps(writes), _dumps(env.get("external_effects")), env.get("assignee"),
+                 env.get("risks"), env.get("rollback"), env.get("estimate"), _dumps(env.get("context_refs")),
+                 g["proposed"], g["floor"], g["grade"], _dumps(g["reasons"]), approver, now()))
             self.conn.execute("UPDATE runs SET plan_id=? WHERE id=?", (pid, run_id))
             if env.get("acceptance") and not task["acceptance"]:
                 self.conn.execute("UPDATE tasks SET acceptance=? WHERE id=?", (env["acceptance"], task["id"]))
-            self._event("plan", pid, None, "awaiting_approval", f"v{version}", actor=run["agent_id"])
-            self._stat(task["task_class"], plans=1)
-            task = self._move(task["id"], "awaiting_approval", f"plan {pid} v{version}", actor=run["agent_id"])
+            self._event("plan", pid, None, "awaiting_approval", f"v{version} G{g['grade']} -> {approver}", actor=actor)
+            task = self._move(task["id"], "awaiting_approval", f"plan {pid} v{version}", actor=actor)
         return {"task": task, "plan": self.get_plan(pid)}
 
-    # ── approval (the human gate) ─────────────────────────────────────────
-    def approve(self, plan_id: str, note: str | None = None, recurring: bool = False) -> dict:
+    def set_grade(self, plan_id: str, grade: int, approver: str, note: str) -> dict:
         with write_txn(self.conn):
             plan = self.get_plan(plan_id)
             if plan["status"] != "awaiting_approval":
                 raise TransitionError(f"plan {plan_id} is '{plan['status']}'")
+            self.conn.execute("UPDATE plans SET grade=?, approver=? WHERE id=?", (grade, approver, plan_id))
+            self._event("plan", plan_id, f"G{plan['grade']}", f"G{grade}", f"regraded -> {approver}: {note}")
+        return self.get_plan(plan_id)
+
+    # ── approval ──────────────────────────────────────────────────────────
+    def _decider(self, plan: dict, review_run: str | None) -> str:
+        decider = self.actor
+        if review_run:
+            decider = f"emp:{self.get_run(review_run)['employee_id']}"
+            self._close_run(review_run, "succeeded")
+        if decider != "chair" and decider != plan["approver"]:
+            raise TransitionError(f"{decider} may not decide plan {plan['id']} (requires {plan['approver']})")
+        if plan["author"] and decider == f"emp:{plan['author']}":
+            raise TransitionError("nobody decides their own plan")
+        return decider
+
+    def approve(self, plan_id: str, note: str | None = None, recurring: bool = False,
+                review_run: str | None = None) -> dict:
+        """The Chair may approve any plan. An employee may approve only plans routed to them."""
+        with write_txn(self.conn):
+            plan = self.get_plan(plan_id)
+            if plan["status"] != "awaiting_approval":
+                raise TransitionError(f"plan {plan_id} is '{plan['status']}'")
+            decider = self._decider(plan, review_run)
             task = self.get_task(plan["task_id"])
             self.conn.execute(
                 "UPDATE plans SET status='approved', review_note=?, decided_by=?, decided_at=?, recurring=? WHERE id=?",
-                (note, self.actor, now(), 1 if recurring else 0, plan_id))
-            self._event("plan", plan_id, "awaiting_approval", "approved", note)
-            if plan["version"] == 1:
-                self._stat(task["task_class"], approved_first_try=1)
+                (note, decider, now(), 1 if recurring else 0, plan_id))
+            self._event("plan", plan_id, "awaiting_approval", "approved", note, actor=decider)
+            if plan["assignee"]:
+                self.conn.execute("UPDATE tasks SET assignee=? WHERE id=?", (plan["assignee"], task["id"]))
             children = []
             if plan["kind"] == "decompose":
-                self._move(task["id"], "waiting_on_subtasks", f"decomposed by {plan_id}")
+                self._move(task["id"], "waiting_on_subtasks", f"split by {plan_id}", actor=decider)
                 for c in json.loads(plan["steps"]):
                     cid, ts = new_id("task"), now()
+                    dept_id = self._dept_id(c.get("dept")) or task["dept_id"]
                     self.conn.execute(
-                        "INSERT INTO tasks (id, project_ref, parent_id, title, intent, acceptance, priority, source,"
-                        " task_class, risk, workdir, max_attempts, created_at, updated_at)"
-                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                        (cid, task["project_ref"], task["id"], c["title"], c["intent"], c.get("acceptance"),
-                         c.get("priority", task["priority"]), "agent", c.get("task_class", task["task_class"]),
-                         c.get("risk", task["risk"]), c.get("workdir", task["workdir"]), task["max_attempts"], ts, ts))
-                    self._event("task", cid, None, "inbox", f"child of {task['id']}")
+                        "INSERT INTO tasks (id, project_ref, parent_id, dept_id, assignee, requested_by, title, intent,"
+                        " acceptance, priority, source, task_class, risk, workdir, max_attempts, created_at, updated_at)"
+                        " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        (cid, task["project_ref"], task["id"], dept_id, c.get("assignee"),
+                         f"emp:{plan['author']}" if plan["author"] else decider, c["title"], c["intent"],
+                         c.get("acceptance"), c.get("priority", task["priority"]), "agent",
+                         c.get("task_class", task["task_class"]), c.get("risk", task["risk"]),
+                         c.get("workdir", task["workdir"]), task["max_attempts"], ts, ts))
+                    self._event("task", cid, None, "inbox", f"sub-task of {task['id']}", actor=decider)
                     children.append(cid)
             else:
-                self._move(task["id"], "approved", f"plan {plan_id} approved")
-        return {"plan": self.get_plan(plan_id), "task": self.get_task(task["id"]), "children": children}
+                self._move(task["id"], "approved", f"plan {plan_id} approved", actor=decider)
+        return {"plan": self.get_plan(plan_id), "task": self.get_task(task["id"]), "children": children,
+                "decider": decider}
 
-    def reject(self, plan_id: str, note: str) -> dict:
+    def reject(self, plan_id: str, note: str, review_run: str | None = None) -> dict:
         if not note or not note.strip():
             raise ValueError("a rejection needs a review note: it is what the planner learns from")
         with write_txn(self.conn):
             plan = self.get_plan(plan_id)
             if plan["status"] != "awaiting_approval":
                 raise TransitionError(f"plan {plan_id} is '{plan['status']}'")
-            task = self.get_task(plan["task_id"])
+            decider = self._decider(plan, review_run)
             self.conn.execute("UPDATE plans SET status='rejected', review_note=?, decided_by=?, decided_at=? WHERE id=?",
-                              (note, self.actor, now(), plan_id))
-            self._event("plan", plan_id, "awaiting_approval", "rejected", note)
-            self._stat(task["task_class"], rejected=1)
-            task = self._move(task["id"], "inbox", f"plan {plan_id} rejected: replan")
-        return {"plan": self.get_plan(plan_id), "task": task}
+                              (note, decider, now(), plan_id))
+            self._event("plan", plan_id, "awaiting_approval", "rejected", note, actor=decider)
+            task = self._move(plan["task_id"], "inbox", f"plan {plan_id} rejected: replan", actor=decider)
+        return {"plan": self.get_plan(plan_id), "task": task, "decider": decider}
 
     def answer(self, task_id: str, answer: str) -> dict:
         with write_txn(self.conn):
-            task = self.get_task(task_id)
-            self._message(sender=self.actor, to_ref="planner", task_id=task_id, body=answer)
+            self._message(sender=self.actor, to_ref="planner", kind="answer", task_id=task_id, body=answer)
             self.conn.execute("UPDATE messages SET acked_at=? WHERE task_id=? AND ack_required=1 AND acked_at IS NULL",
                               (now(), task_id))
             task = self._move(task_id, "inbox", "input provided", expect={"needs_input"})
         return task
 
-    # ── execution ─────────────────────────────────────────────────────────
-    def claim_for_execution(self, agent_id: str | None, driver: str | None = None,
-                            lease_s: int = DEFAULT_LEASE_S["execute"], task_id: str | None = None
-                            ) -> tuple[dict, dict, dict] | None:
-        """Claim the next approved task. Plans whose findings changed since approval are
-        marked superseded and their tasks return to the inbox for replanning."""
-        while True:
-            with write_txn(self.conn):
-                if task_id:
-                    row = self.conn.execute("SELECT id FROM tasks WHERE id=? AND status='approved'", (task_id,)).fetchone()
-                else:
-                    row = self.conn.execute(
-                        "SELECT id FROM tasks WHERE status='approved' ORDER BY priority, created_at LIMIT 1").fetchone()
-                if row is None:
-                    return None
-                task = self.get_task(row["id"])
-                plan = self.latest_plan(task["id"], "approved")
-                if plan is None:
-                    raise TransitionError(f"approved task {task['id']} has no approved plan")
-                if plan["writes_fingerprint"]:
-                    current = fingerprint(task["workdir"], json.loads(plan["writes"] or "[]"))
-                    if current != plan["writes_fingerprint"]:
-                        self.conn.execute("UPDATE plans SET status='superseded' WHERE id=?", (plan["id"],))
-                        self._event("plan", plan["id"], "approved", "superseded", "findings changed since approval")
-                        self._move(task["id"], "inbox", "stale plan: findings changed", blocked_reason="stale_plan")
-                        if task_id:
-                            return None
-                        continue
-                task = self._move(task["id"], "executing", f"claimed by {agent_id}", actor=agent_id or self.actor)
-                run = self._open_run(task["id"], plan["id"], "execute", agent_id, driver, lease_s)
-                self._stat(task["task_class"], runs=1)
-            return task, plan, run
-
+    # ── execution + verification ──────────────────────────────────────────
     def submit_result(self, run_id: str, env: dict, exit_code: int | None = 0, **metrics: Any) -> dict:
         run = self.get_run(run_id)
         if run["kind"] != "execute":
             raise TransitionError(f"run {run_id} is a {run['kind']} run, not an execute run")
+        actor = f"emp:{run['employee_id']}" if run["employee_id"] else None
         with write_txn(self.conn):
             task = self.get_task(run["task_id"])
             failed = env["outcome"] == "failure"
@@ -384,35 +503,19 @@ class Work:
             if failed:
                 task = self._fail_or_retry(task, run, f"execution failed: {env['summary'][:200]}")
             else:
-                task = self._move(task["id"], "verifying", f"result {env['outcome']}", actor=run["agent_id"])
+                task = self._move(task["id"], "verifying", f"result {env['outcome']}", actor=actor)
         return {"task": task, "run": self.get_run(run_id), "result": self.result_for_run(run_id)}
 
     def _fail_or_retry(self, task: dict, run: dict, reason: str) -> dict:
-        self._stat(task["task_class"], last_failure_at=1)
+        actor = f"emp:{run['employee_id']}" if run.get("employee_id") else None
         attempts = self.conn.execute(
             "SELECT count(*) FROM runs WHERE task_id=? AND kind='execute' AND plan_id=?", (task["id"], run["plan_id"])
         ).fetchone()[0]
         if attempts < task["max_attempts"]:
-            return self._move(task["id"], "approved", f"retry {attempts + 1}/{task['max_attempts']}: {reason}",
-                              actor=run["agent_id"])
-        task = self._move(task["id"], "failed", reason, actor=run["agent_id"], blocked_reason=reason)
+            return self._move(task["id"], "approved", f"retry {attempts + 1}/{task['max_attempts']}: {reason}", actor=actor)
+        task = self._move(task["id"], "failed", reason, actor=actor, blocked_reason=reason)
         self._close_parent_if_settled(task)
         return task
-
-    # ── verification ──────────────────────────────────────────────────────
-    def claim_for_verification(self, agent_id: str | None, driver: str | None = None,
-                               lease_s: int = DEFAULT_LEASE_S["verify"]) -> tuple[dict, dict] | None:
-        with write_txn(self.conn):
-            row = self.conn.execute(
-                "SELECT t.id FROM tasks t WHERE t.status='verifying' AND NOT EXISTS ("
-                " SELECT 1 FROM runs r WHERE r.task_id=t.id AND r.kind='verify' AND r.status='running')"
-                " ORDER BY t.priority, t.updated_at LIMIT 1").fetchone()
-            if row is None:
-                return None
-            task = self.get_task(row["id"])
-            plan = self.latest_plan(task["id"], "approved")
-            run = self._open_run(task["id"], plan["id"] if plan else None, "verify", agent_id, driver, lease_s)
-        return task, run
 
     def verify(self, task_id: str, verdict: str, note: str, run_id: str | None = None) -> dict:
         if verdict not in ("pass", "fail"):
@@ -424,22 +527,23 @@ class Work:
             actor = self.actor
             if run_id:
                 vrun = self.get_run(run_id)
-                actor = vrun["agent_id"] or actor
+                actor = f"emp:{vrun['employee_id']}" if vrun["employee_id"] else actor
                 self._close_run(run_id, "succeeded")
             exec_run = self.conn.execute(
                 "SELECT * FROM runs WHERE task_id=? AND kind='execute' ORDER BY started_at DESC LIMIT 1",
                 (task_id,)).fetchone()
-            self.conn.execute("UPDATE results SET verified=?, verifier_note=? WHERE run_id=?",
-                              (1 if verdict == "pass" else 0, note, exec_run["id"]))
+            if actor != "chair" and exec_run["employee_id"] and actor == f"emp:{exec_run['employee_id']}":
+                raise TransitionError("an employee may not verify their own work")
+            self.conn.execute("UPDATE results SET verified=?, verifier_note=?, verified_by=? WHERE run_id=?",
+                              (1 if verdict == "pass" else 0, note, actor, exec_run["id"]))
             if verdict == "pass":
-                self._stat(task["task_class"], verified_success=1)
                 task = self._move(task_id, "done", f"verified: {note}", actor=actor)
                 self._close_parent_if_settled(task)
             else:
                 task = self._fail_or_retry(task, dict(exec_run), f"verification failed: {note}")
         return task
 
-    # ── operator controls ─────────────────────────────────────────────────
+    # ── Chair controls ────────────────────────────────────────────────────
     def cancel(self, task_id: str, note: str) -> dict:
         with write_txn(self.conn):
             task = self._move(task_id, "cancelled", note)
@@ -450,27 +554,24 @@ class Work:
             self._close_parent_if_settled(task)
         return task
 
-    def retry(self, task_id: str, note: str = "operator retry") -> dict:
+    def retry(self, task_id: str, note: str = "chair retry") -> dict:
         with write_txn(self.conn):
-            plan = self.latest_plan(task_id, "approved")
-            if plan is None:
+            if self.latest_plan(task_id, "approved") is None:
                 raise TransitionError("no approved plan to retry; use replan")
             self.conn.execute("UPDATE tasks SET max_attempts=max_attempts+1 WHERE id=?", (task_id,))
             return self._move(task_id, "approved", note, expect={"failed"})
 
-    def replan(self, task_id: str, note: str = "operator replan") -> dict:
+    def replan(self, task_id: str, note: str = "chair replan") -> dict:
         with write_txn(self.conn):
             self.conn.execute("UPDATE plans SET status='superseded' WHERE task_id=? AND status='approved'", (task_id,))
             return self._move(task_id, "inbox", note, expect={"failed", "approved"})
 
     def sweep_leases(self) -> list[dict]:
-        """Recover work held by agents that died: expired planning returns to inbox,
-        expired execution retries or fails, expired verification is reopened."""
+        """Self-healing: recover work held by employees whose runs died."""
         swept = []
         with write_txn(self.conn):
-            expired = self.conn.execute(
-                "SELECT * FROM runs WHERE status='running' AND lease_until < ?", (now(),)).fetchall()
-            for run in expired:
+            for run in self.conn.execute("SELECT * FROM runs WHERE status='running' AND lease_until < ?",
+                                         (now(),)).fetchall():
                 run = dict(run)
                 self._close_run(run["id"], "timeout")
                 task = self.get_task(run["task_id"])
@@ -494,27 +595,31 @@ class Work:
         if "failed" in statuses:
             self._move(parent_id, "needs_input", "a sub-task failed", blocked_reason="sub-task failed")
         elif "done" in statuses:
-            done = self._move(parent_id, "done", "all sub-tasks closed")
-            self._close_parent_if_settled(done)
+            self._close_parent_if_settled(self._move(parent_id, "done", "all sub-tasks closed"))
         else:
             self._move(parent_id, "cancelled", "all sub-tasks cancelled")
 
     # ── messages ──────────────────────────────────────────────────────────
-    def _message(self, sender: str, body: str, to_ref: str | None = None, task_id: str | None = None,
-                 ack_required: int = 0) -> str:
+    def _message(self, sender: str, body: str, to_ref: str, kind: str = "dm", task_id: str | None = None,
+                 thread_id: str | None = None, ack_required: int = 0) -> str:
         mid = new_id("message")
         self.conn.execute(
-            "INSERT INTO messages (id, ts, sender, to_ref, task_id, body, ack_required) VALUES (?,?,?,?,?,?,?)",
-            (mid, now(), sender, to_ref, task_id, body, ack_required))
+            "INSERT INTO messages (id, ts, sender, to_ref, kind, task_id, thread_id, body, ack_required)"
+            " VALUES (?,?,?,?,?,?,?,?,?)", (mid, now(), sender, to_ref, kind, task_id, thread_id or mid, body, ack_required))
         return mid
 
-    def post_message(self, body: str, to_ref: str | None = None, task_id: str | None = None) -> str:
+    def post_message(self, sender: str, to_ref: str, body: str, kind: str = "dm", task_id: str | None = None,
+                     thread_id: str | None = None) -> str:
         with write_txn(self.conn):
-            return self._message(self.actor, body, to_ref, task_id)
+            return self._message(sender, body, to_ref, kind, task_id, thread_id)
 
-    def messages(self, task_id: str | None = None, limit: int = 50) -> list[dict]:
+    def messages(self, task_id: str | None = None, to_refs: list[str] | None = None, limit: int = 50) -> list[dict]:
         if task_id:
             rows = self.conn.execute("SELECT * FROM messages WHERE task_id=? ORDER BY ts LIMIT ?", (task_id, limit))
+        elif to_refs:
+            marks = ",".join("?" * len(to_refs))
+            rows = self.conn.execute(f"SELECT * FROM messages WHERE to_ref IN ({marks}) OR sender IN ({marks}) "
+                                     "ORDER BY ts DESC LIMIT ?", [*to_refs, *to_refs, limit])
         else:
             rows = self.conn.execute("SELECT * FROM messages ORDER BY ts DESC LIMIT ?", (limit,))
         return [dict(r) for r in rows]

@@ -11,7 +11,9 @@ from holon.capabilities.context import compile_context
 from holon.core.db import migrate
 from holon.core.ids import new_id, ulid
 from holon.execution.cron import Cron, CronError
-from holon.execution.envelopes import EnvelopeError, extract_last_json, validate_executor, validate_planner
+from holon.execution.envelopes import (EnvelopeError, extract_last_json, validate_executor, validate_planner,
+                                      validate_reviewer)
+from holon.execution.grading import grade_plan
 from tests.helpers import KernelCase
 
 PKG = Path(__file__).resolve().parents[1] / "holon"
@@ -56,6 +58,16 @@ class Envelopes(unittest.TestCase):
         with self.assertRaises(EnvelopeError) as cm:
             validate_executor({"outcome": "meh", "summary": "", "learnings": [{"kind": "bogus"}]})
         self.assertGreaterEqual(len(cm.exception.problems), 3)
+
+    def test_reviewer_and_grade(self):
+        validate_reviewer({"decision": "approve"})
+        validate_reviewer({"decision": "reject", "note": "why"})
+        for bad in ({"decision": "reject"}, {"decision": "maybe", "note": "x"}):
+            with self.assertRaises(EnvelopeError):
+                validate_reviewer(bad)
+        validate_planner({"kind": "plan", "findings": "t", "steps": ["a"], "grade": "G3"})
+        with self.assertRaises(EnvelopeError):
+            validate_planner({"kind": "plan", "findings": "t", "steps": ["a"], "grade": "G9"})
 
     def test_extract_last_json(self):
         self.assertEqual(extract_last_json('noise {"a": 1} more {"b": {"c": 2}} tail'), {"b": {"c": 2}})
@@ -117,6 +129,23 @@ class MemoryBehaviour(KernelCase):
         self.assertIn("Context gaps", md)
         row = self.k.mconn.execute("SELECT degraded FROM context_log WHERE run_id='run_x'").fetchone()
         self.assertIn("trajectory", row[0])
+
+
+class Grading(KernelCase):
+    config = '[grading]\nnovelty_min_verified = 0\nsensitive_paths = ["*/billing/*"]\n'
+
+    def test_floor_signals(self):
+        t = self.add(dept="eng", task_class="ops", risk="low")
+        self.assertEqual(grade_plan(self.k.wconn, t, {"kind": "plan", "writes": ["a.txt"]}, self.k.config)["grade"], 2,
+                         "no proposal -> default G2")
+        self.assertEqual(grade_plan(self.k.wconn, t, {"kind": "plan", "grade": 0}, self.k.config)["grade"], 0)
+        g = grade_plan(self.k.wconn, t, {"kind": "plan", "grade": 0, "writes": ["/etc/hosts"]}, self.k.config)
+        self.assertEqual(g["grade"], 2)
+        g = grade_plan(self.k.wconn, t, {"kind": "plan", "grade": 0, "writes": ["/srv/billing/x.py"]}, self.k.config)
+        self.assertEqual(g["grade"], 3)
+        self.assertTrue(any("sensitive" in r for r in g["reasons"]))
+        irreversible = self.add(dept="eng", task_class="ops", risk="irreversible")
+        self.assertEqual(grade_plan(self.k.wconn, irreversible, {"kind": "plan", "grade": 0}, self.k.config)["grade"], 4)
 
 
 class Agnosticism(unittest.TestCase):

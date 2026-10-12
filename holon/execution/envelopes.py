@@ -1,14 +1,16 @@
 """Result envelopes: the only thing an agent must produce, whatever harness runs it.
 
-An agent writes `result.json` into its brief dir. Three shapes, by role:
+An agent writes `result.json` into its brief dir. Four shapes, by duty:
 
-planner  -> {"kind": "plan", "findings", "steps", "writes"?, "risks"?, "rollback"?,
-             "estimate"?, "context_refs"?, "acceptance"?}
-         |  {"kind": "decompose", "rationale", "children": [{"title", "intent", ...}, ...]}
+planner  -> {"kind": "plan", "findings", "steps", "writes"?, "external_effects"?, "assignee"?,
+             "grade"?, "risks"?, "rollback"?, "estimate"?, "context_refs"?, "acceptance"?}
+         |  {"kind": "decompose", "rationale", "grade"?,
+             "children": [{"title", "intent", "dept"?, "assignee"?, ...}, ...]}
          |  {"kind": "needs_input", "question"}
 executor -> {"outcome", "summary", "documentation", "artifacts"?, "learnings"?, "decisions"?,
              "blockers"?, "proposals"?, "next_intent"?}
 verifier -> {"verdict": "pass" | "fail", "note"}
+reviewer -> {"decision": "approve" | "reject", "note"}   (note required to reject)
 
 JSON Schemas mirroring these rules ship in schemas/ for harness authors; the kernel
 validates by hand so it needs no schema library.
@@ -17,7 +19,6 @@ validates by hand so it needs no schema library.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 OUTCOMES = ("success", "partial", "failure", "noop")
@@ -78,8 +79,9 @@ def validate_planner(env: Any) -> dict:
         _text(env, "steps", problems)
         for k in ("risks", "rollback", "estimate", "acceptance"):
             _text(env, k, problems, required=False)
-        for k in ("writes", "context_refs"):
+        for k in ("writes", "context_refs", "external_effects"):
             _list(env, k, problems)
+        _text(env, "assignee", problems, required=False)
     elif kind == "decompose":
         _text(env, "rationale", problems)
         children = env.get("children")
@@ -91,10 +93,14 @@ def validate_planner(env: Any) -> dict:
                     problems.append(f"'children[{i}]' needs non-empty 'title' and 'intent'")
                 elif "priority" in c and not isinstance(c["priority"], int):
                     problems.append(f"'children[{i}].priority' must be an integer")
+                elif any(k in c and not isinstance(c[k], str) for k in ("dept", "assignee", "task_class")):
+                    problems.append(f"'children[{i}]' dept/assignee/task_class must be strings")
     elif kind == "needs_input":
         _text(env, "question", problems)
     else:
         problems.append("'kind' must be one of: plan, decompose, needs_input")
+    if kind in ("plan", "decompose") and "grade" in env and _grade(env["grade"]) is None:
+        problems.append("'grade' must be 0-4 or 'G0'..'G4'")
     if problems:
         raise EnvelopeError(problems)
     return env
@@ -132,9 +138,30 @@ def validate_verifier(env: Any) -> dict:
     return env
 
 
-VALIDATORS = {"plan": validate_planner, "execute": validate_executor, "verify": validate_verifier}
+def validate_reviewer(env: Any) -> dict:
+    if not isinstance(env, dict):
+        raise EnvelopeError(["envelope must be a JSON object"])
+    problems: list[str] = []
+    if env.get("decision") not in ("approve", "reject"):
+        problems.append("'decision' must be 'approve' or 'reject'")
+    _text(env, "note", problems, required=env.get("decision") == "reject")
+    if problems:
+        raise EnvelopeError(problems)
+    return env
 
-_JSON_OBJ = re.compile(r"\{.*\}", re.S)
+
+def _grade(v: Any) -> int | None:
+    if isinstance(v, str):
+        v = v.strip().upper().lstrip("G")
+    try:
+        g = int(v)
+    except (TypeError, ValueError):
+        return None
+    return g if 0 <= g <= 4 else None
+
+
+VALIDATORS = {"plan": validate_planner, "execute": validate_executor, "verify": validate_verifier,
+              "review": validate_reviewer}
 
 
 def extract_last_json(text: str) -> dict | None:

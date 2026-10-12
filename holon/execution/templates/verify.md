@@ -1,4 +1,4 @@
-# Role: VERIFIER — run $run_id
+# Duty: VERIFY — run $run_id
 
 You are independently verifying task **$task_id**. You did not do the work; judge it.
 
@@ -14,7 +14,7 @@ You are independently verifying task **$task_id**. You did not do the work; judg
 3. Read-only: do not fix anything. A failing verdict sends the task back for another attempt.
 4. `fail` when an acceptance criterion is unmet or a claim is false. Say exactly which one.
 
-## Output — write exactly one JSON object to `$result_path`
+## Output: write exactly one JSON object to `$result_path`
 
 ```json
 {"verdict": "pass | fail", "note": "which criteria were checked, how, and what you found"}

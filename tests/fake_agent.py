@@ -1,5 +1,5 @@
 """A stand-in harness that honors the brief contract. Behavior via FAKE_MODE:
-  ok (default)    plan -> plan touching hello.txt; execute -> writes hello.txt; verify -> checks it
+  ok (default)    plan -> plan writing hello.txt; execute -> writes it; verify -> checks it; review -> approves
   dirty-planner   planner writes into the workdir (must be rejected by the read-only guard)
   garbage         prints junk, writes no result.json
   stdout          prints the envelope on stdout instead of writing result.json
@@ -37,6 +37,8 @@ elif kind == "execute":
                "learnings": ["hello.txt lives at the workdir root", {"content": "greetings are lowercase",
                                                                       "kind": "constraint", "confidence": "high"}],
                "decisions": ["use plain text, no markdown"], "next_intent": "translate the greeting"}
+elif kind == "review":
+    env = {"decision": "approve", "note": "steps meet the acceptance criteria"}
 else:
     ok = (workdir / "hello.txt").exists()
     env = {"verdict": "pass" if ok else "fail", "note": "hello.txt " + ("exists" if ok else "missing")}

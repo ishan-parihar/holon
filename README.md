@@ -1,70 +1,68 @@
-# holon
+# Holon
 
-A harness-agnostic agentic operating system kernel. A human feeds tasks in; agents plan
-them; the human approves plans; agents execute and verify; results come back with
-attached documentation, and every run feeds a project memory that the next run reads.
+**An agentic operating system that runs as an organization.** Persistent AI employees work
+in departments under heads of department (HODs), led by a CEO, governed by a charter, and
+supervised by you, the Chair. Every task leaves the organization smarter: lessons accumulate
+in employees, recur across colleagues, and are promoted into department and company
+knowledge that every future brief carries. Authority to approve work is earned from
+verified results and lost on incidents, so the organization takes on more as it proves
+itself. See [docs/INTENT.md](docs/INTENT.md).
 
-- **Zero dependencies.** Python ≥ 3.11 stdlib + `sqlite3`. Nothing to `pip install`.
-- **Harness-agnostic.** The kernel never names, imports, or reads the state of any agent
-  harness. A harness joins by a 10-line driver file (push mode) or by calling two commands
-  (pull mode). Enforced by tests.
-- **One pipeline, one audit trail.** Every transition is checked against a state machine
-  and recorded.
+- **Zero dependencies.** Python ≥ 3.11 stdlib + `sqlite3`.
+- **Harness-agnostic.** Employees run on any agent harness (ZeroClaw, Claude Code, operant,
+  hermes…) through a small driver file, or by calling `holon claim` / `holon submit`. The
+  kernel never names a harness (enforced by tests). An employee's identity and memory
+  belong to Holon, so they can change harness and keep their career.
 
-## The pipeline
+## How work flows
 
 ```
-inbox → planning → awaiting_approval ──(you)──→ approved → executing → verifying → done
-          │   └→ needs_input ─(you answer)─→ inbox      │                 └→ failed → retry | replan
-          │                                              └→ stale plan (findings changed) → inbox
-          └→ decompose ─(you approve)─→ waiting_on_subtasks → done when all sub-tasks close
-  rejected plans return to inbox; the replan sees your review note
+Chair drafts a task ─► CEO triages / splits it into department tasks ─► HOD plans or splits to employees
+   ─► plan graded G0–G4 (max of planner's grade and an objective floor)
+   ─► routed to the lowest approver whose earned authority covers the grade (HOD → CEO → Chair)
+   ─► employee executes ─► a colleague (never the executor) verifies ─► done, documentation attached
+   ─► lessons → employee memory → department → organization; approver's authority updated from the outcome
 ```
+
+Task states: `inbox → planning → awaiting_approval → approved → executing → verifying → done`,
+plus `needs_input`, `waiting_on_subtasks`, `failed`, `cancelled`. Stale plans (the paths they
+write changed) are replanned; dead runs are recovered by `holon tick`.
 
 ## Quick start
 
 ```sh
 export HOLON_HOME=~/holon
 bin/holon init
-bin/holon task add "Summarize the Q3 logs" --intent "One-page summary of errors by service" \
-      --acceptance "summary.md exists with one section per service" --workdir ~/logs
-bin/holon agent add --role planner  --driver hermes --id planner-1
-bin/holon agent add --role executor --driver hermes --id executor-1
-bin/holon agent add --role verifier --driver hermes --id verifier-1
-bin/holon schedule add --kind planner  --cron "*/10 * * * *" --agent planner-1
-bin/holon schedule add --kind executor --cron "*/5 * * * *"  --agent executor-1
-bin/holon schedule add --kind verifier --cron "*/5 * * * *"  --agent verifier-1
-# from any timer (systemd, cron, launchd, a harness scheduler):
-bin/holon tick
-# your side:
-bin/holon plan queue                 # plans waiting for you
-bin/holon plan show <plan_id>
-bin/holon plan approve <plan_id> [--note "..."] | bin/holon plan reject <plan_id> --note "what to change"
-bin/holon task show <task_id>        # result + attached documentation
+bin/holon hr hire --dept executive --head --name Ada --title CEO --duties plan,review \
+     --driver zeroclaw --jd @jd/ceo.md --reason "founding CEO" --status active
+bin/holon dept create it --name "IT" --mission "Keep hosts, tools and credentials healthy"
+bin/holon hr hire --dept it --head --name Bo --title "Head of IT" --duties plan,review,verify \
+     --driver zeroclaw --jd @jd/head-of-it.md --reason "founding HOD"
+bin/holon task add "Free disk space on the VPS" --intent "Get / under 75% used" --dept it
+bin/holon schedule add --kind plan    --cron "*/10 * * * *" --as <hod-id>
+bin/holon schedule add --kind review  --cron "*/10 * * * *" --as <ceo-id>
+bin/holon tick                         # from any timer: systemd, cron, a harness scheduler
+
+bin/holon status                       # what needs you
+bin/holon plan queue                   # plans routed to you (G2+ until authority is earned)
+bin/holon plan approve <plan> --note "…" | bin/holon plan reject <plan> --note "what to change"
+bin/holon audit samples                # spot-check approvals your CEO/HODs made
+bin/holon org                          # the org chart
 ```
-
-## Two ways a harness participates
-
-| Mode | How | Use when |
-|---|---|---|
-| **push** | `holon tick` / `holon dispatch` claims work, writes a brief, runs the agent's driver | scheduled autonomous agents |
-| **pull** | an agent running anywhere: `holon claim --role executor` → read `BRIEF.md` → write `result.json` → `holon submit <run_id>` | interactive sessions, harnesses you don't want to wrap |
-
-See [docs/CONTRACT.md](docs/CONTRACT.md) for briefs, result envelopes, and drivers.
 
 ## Instance layout (`$HOLON_HOME`)
 
 ```
-holon.toml                         instance config
-config/drivers/*.toml                 harness drivers (override the shipped examples)
-execution/runtime/work.db             tasks, plans, runs, results, agents, schedules, events, messages
-execution/runtime/runs/<run_id>/      briefs and results
-capabilities/memory/memory.db         project memory: items, episodes, checkpoints
-capabilities/strategy/trajectory.db   intent hierarchy (read-only to the kernel; goal lineage in context)
-capabilities/logbook/logbook.db       human evidence (read-only to the kernel)
+holon.toml                            config: grading floors, authority, memory promotion, context budget
+config/drivers/*.toml                 harness drivers
+execution/runtime/work.db             departments, employees, authority, tasks, plans, runs, results, messages
+execution/runtime/runs/<run>/         BRIEF.md, brief.json, context.md, result.json, driver.log
+capabilities/memory/memory.db         institutional memory (emp / dept / org / project / class scopes)
+capabilities/strategy/trajectory.db   goals tree (read-only to the kernel)
+capabilities/logbook/logbook.db       the Chair's logbook (read-only to the kernel)
 ```
 
-The distribution (this repo) holds code only; all state lives in the instance.
+Docs: [INTENT](docs/INTENT.md) · [CONTRACT](docs/CONTRACT.md) (for harness authors) · [NAMING](docs/NAMING.md)
 
 ## Tests
 

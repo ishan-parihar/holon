@@ -7,6 +7,7 @@ filled in priority order; each has a cap and the whole bundle has a budget.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -87,13 +88,39 @@ def _logbook(home: Home, text: str, bundle: Bundle, limit: int = 5) -> None:
                    "\n".join(f"- {r['date']} [{r['channel']}] {r['title']}: {(r['body'] or '').strip()}" for r in rows))
 
 
+def _dept_slug(work: Work, dept_id: str | None) -> str | None:
+    if not dept_id:
+        return None
+    r = work.conn.execute("SELECT slug FROM departments WHERE id=?", (dept_id,)).fetchone()
+    return r["slug"] if r else None
+
+
 def compile_context(home: Home, work: Work, memory: Memory, task_id: str, role: str,
-                    budget: int = DEFAULT_BUDGET_CHARS, run_id: str | None = None) -> tuple[str, dict]:
+                    budget: int = DEFAULT_BUDGET_CHARS, run_id: str | None = None,
+                    employee: dict | None = None, predecessors: list[str] | None = None,
+                    plan_id: str | None = None) -> tuple[str, dict]:
     task = work.get_task(task_id)
-    scope = scope_for(task)
-    scopes = [scope] + ([f"class:{task['task_class']}"] if task.get("task_class") else []) + \
-             (["global"] if scope != "global" else [])
+    task_dept = _dept_slug(work, task.get("dept_id"))
+    dept_scope = f"dept:{task_dept}" if task_dept else None
+    scope = scope_for(task, dept_scope)
+    personal = ([f"emp:{employee['id']}"] + [f"emp:{p}" for p in predecessors or []]) if employee else []
+    scopes = list(dict.fromkeys(
+        personal + [scope] + ([dept_scope] if dept_scope else [])
+        + ([f"dept:{employee['dept']}"] if employee else [])
+        + ([f"class:{task['task_class']}"] if task.get("task_class") else []) + ["org"]))
     b = Bundle()
+
+    # 0. who you are (persistent identity: the reason this is an employee, not a contractor)
+    if employee:
+        mgr = work.conn.execute("SELECT name, title FROM employees WHERE id=?", (employee.get("reports_to"),)).fetchone() \
+            if employee.get("reports_to") else None
+        b.add("Your role",
+              f"You are **{employee['name']}**, {employee['title']} in the **{employee['dept']}** department"
+              + (" (head of department)" if employee.get("is_head") else "")
+              + (f", reporting to {mgr['name']} ({mgr['title']})" if mgr else ", reporting to the Chair")
+              + f". Employee id `{employee['id']}`; your memory scope is `emp:{employee['id']}`."
+              + (f" You inherited the role and memory of {', '.join(predecessors)}." if predecessors else "")
+              + f"\n\n### Job description\n\n{employee['job_description']}")
 
     # 1. the task itself
     meta = [f"- id: {task['id']}", f"- status: {task['status']}", f"- priority: {task['priority']}",
@@ -107,10 +134,21 @@ def compile_context(home: Home, work: Work, memory: Memory, task_id: str, role: 
     b.add("Task", body)
 
     # 2. role-specific working material
+    if role == "review" and plan_id:
+        p = work.get_plan(plan_id)
+        reasons = json.loads(p["grade_reasons"] or "[]")
+        b.add(f"Plan to review (v{p['version']}, {p['id']}, grade G{p['grade']})",
+              f"Author: {p['author'] or '-'}  ·  kind: {p['kind']}  ·  proposed assignee: {p['assignee'] or '-'}\n\n"
+              f"Findings:\n{p['findings'] or '-'}\n\nSteps:\n{p['steps']}"
+              + (f"\n\nWrites: {p['writes']}" if p["writes"] else "")
+              + (f"\n\nExternal effects: {p['external_effects']}" if p["external_effects"] else "")
+              + (f"\n\nRisks: {p['risks']}" if p["risks"] else "")
+              + (f"\n\nRollback: {p['rollback']}" if p["rollback"] else "")
+              + "\n\nWhy this grade:\n" + "\n".join(f"- {r}" for r in reasons))
     approved = work.latest_plan(task_id, "approved")
     if role in ("execute", "verify") and approved:
         b.add(f"Approved plan (v{approved['version']}, {approved['id']})",
-              f"{approved['steps']}\n\nTerrain at planning time:\n{approved['findings'] or '-'}"
+              f"{approved['steps']}\n\nFindings at planning time:\n{approved['findings'] or '-'}"
               + (f"\n\nRisks: {approved['risks']}" if approved['risks'] else "")
               + (f"\n\nRollback: {approved['rollback']}" if approved['rollback'] else "")
               + (f"\n\nReviewer note: {approved['review_note']}" if approved['review_note'] else ""))

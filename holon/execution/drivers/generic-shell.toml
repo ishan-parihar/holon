@@ -7,4 +7,4 @@ cwd = "{workdir}"
 timeout_s = 1800
 result = "stdout-json"   # accept a JSON object printed on stdout if no result.json is written
 read_only = ""
-roles = ["planner", "executor", "verifier"]
+duties = ["plan", "execute", "verify", "review"]

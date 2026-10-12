@@ -9,8 +9,10 @@ file is for agents changing the kernel itself.
 | Path | Stratum | Owns |
 |---|---|---|
 | `holon/core/` | — | instance paths (`HOLON_HOME`), ids, sqlite + migrations |
-| `holon/execution/work.py` | execution/runtime | the state machine; **only writer of work.db** |
-| `holon/execution/roster.py` | execution/runtime | agents, schedules, recurring plans (work.db) |
+| `holon/execution/work.py` | operations/work | the state machine; **only writer of task/plan/run/result rows** |
+| `holon/execution/org.py` | operations/hr | departments, employees, authority, evidence-based reviews |
+| `holon/execution/grading.py` | operations/work | G0–G4 grade floors |
+| `holon/execution/schedules.py` | operations/work | schedules and recurring plans |
 | `holon/execution/service.py` | execution/runtime | claim → brief → driver → ingest; `tick` |
 | `holon/execution/{briefs,drivers,envelopes,findings,cron}.py` | execution/runtime | the harness contract |
 | `holon/execution/templates/` | execution/runtime | role instructions (planner/executor/verifier) |
@@ -24,10 +26,11 @@ file is for agents changing the kernel itself.
 
 1. **Stdlib only** under `holon/`. No third-party imports, ever.
 2. **No harness named in kernel code.** Harness specifics go in driver TOML files only.
-3. **One writer per database.** work.db ← `holon.execution.work`/`roster`; memory.db ← `holon.capabilities.memory`.
+3. **One writer per database.** work.db ← `holon.execution.{work,org,schedules}`; memory.db ← `holon.capabilities.memory`.
    Other capabilities' databases are opened read-only.
 4. **Every task transition goes through `TRANSITIONS`** and writes an event. No direct status updates
    elsewhere (the only exception, `instantiate_recurring`, writes its own event).
+7. **Every org term binds to a mechanism** (docs/INTENT.md). No hollow roles.
 5. **Schema changes are new migration files.** Never edit an applied migration.
 6. **Tests first** for any change to the state machine, envelopes, or drivers.
 

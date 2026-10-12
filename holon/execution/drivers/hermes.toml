@@ -7,4 +7,4 @@ cwd = "{workdir}"
 timeout_s = 3600
 result = "file"
 read_only = ""   # hermes has no plan-only flag; planner read-only is enforced by the kernel's post-run check
-roles = ["planner", "executor", "verifier"]
+duties = ["plan", "execute", "verify", "review"]

@@ -9,9 +9,9 @@ For each run the kernel writes `$HOLON_HOME/execution/runtime/runs/<run_id>/`:
 
 | File | Who writes | Content |
 |---|---|---|
-| `BRIEF.md` | kernel | role instructions: planner, executor, or verifier |
+| `BRIEF.md` | kernel | duty instructions: plan, execute, verify, or review |
 | `brief.json` | kernel | `run_id, task_id, kind, role, brief_md, context_md, result_path, workdir, holon, lease_until` |
-| `context.md` | kernel | the compiled context bundle (task, plan, constraints, memory, goal lineage, logbook) |
+| `context.md` | kernel | the compiled context: **Your role** (identity, job description, manager), task, plan, constraints, memory from your own/department/organization scopes, goal lineage, logbook |
 | `result.json` | **agent** | the result envelope (§2) |
 | `driver.log` | kernel | command, exit code, stdout/stderr (push mode) |
 
@@ -25,21 +25,29 @@ Environment in push mode: `HOLON_HOME, OG, HOLON_RUN_ID, HOLON_TASK_ID, HOLON_RO
 
 JSON Schemas: [`schemas/`](../schemas). Summary:
 
-**planner** (`plan-result.schema.json`): one of
-- `{"kind": "plan", "findings", "steps", "writes"?, "risks"?, "rollback"?, "estimate"?, "acceptance"?, "context_refs"?}`
-- `{"kind": "decompose", "rationale", "children": [{"title", "intent", "acceptance"?, ...}, ≥2]}`
+**plan** (`plan-result.schema.json`): one of
+- `{"kind": "plan", "findings", "steps", "writes"?, "external_effects"?, "grade"?, "assignee"?, "risks"?, "rollback"?, "estimate"?, "acceptance"?, "context_refs"?}`
+- `{"kind": "decompose", "rationale", "grade"?, "children": [{"title", "intent", "dept"?, "assignee"?, "acceptance"?, ...}, ≥2]}`
 - `{"kind": "needs_input", "question"}`
 
-**executor** (`execute-result.schema.json`):
-`{"outcome": success|partial|failure|noop, "summary", "documentation", "artifacts"?, "learnings"?, "decisions"?, "blockers"?, "proposals"?, "next_intent"?}`
+The effective grade is max(`grade`, an objective floor: risk, writes outside the workdir or to
+sensitive paths, external effects, decomposition, novelty of the task class). The plan is
+routed to the lowest approver (HOD → CEO → Chair) whose authority covers it; nobody decides
+their own plan.
 
-**verifier** (`verify-result.schema.json`): `{"verdict": pass|fail, "note"}`
+**execute** (`execute-result.schema.json`):
+`{"outcome": success|partial|failure|noop, "summary", "documentation", "artifacts"?, "learnings"?, "decisions"?, "blockers"?, "proposals"?, "next_intent"?}`.
+Lessons go to the employee's own memory; facts/decisions/constraints to the project or department.
+
+**verify** (`verify-result.schema.json`): `{"verdict": pass|fail, "note"}`. The executor never verifies their own work.
+
+**review** (`review-result.schema.json`): `{"decision": approve|reject, "note"}` (note required to reject).
 
 ### What happens to non-compliant output
-- **planner / verifier:** the run fails and the task returns to the queue (no partial state).
+- **plan / verify / review:** the run fails and the task returns to the queue (no partial state).
 - **executor:** the output is wrapped as a `partial` result with the stdout tail as its
   documentation and sent to verification, so an independent verifier decides, not the agent.
-- **planner that modifies its working directory** (push mode, when `[planner] enforce_read_only`):
+- **plan or review run that modifies its working directory** (push mode, when `[planner] enforce_read_only`):
   the plan is discarded and the task returns to the inbox.
 - **late result after the lease expired:** discarded; the work was already reassigned.
 
@@ -53,8 +61,8 @@ command   = "my-agent --prompt-file {brief_md} --cwd {workdir}"
 cwd       = "{workdir}"
 timeout_s = 1800
 result    = "file"          # or "stdout-json": take the last JSON object printed on stdout
-read_only = "--plan-only"   # inserted at {read_only} for planner/verifier runs
-roles     = ["planner", "executor", "verifier"]
+read_only = "--plan-only"   # inserted at {read_only} for plan/verify/review runs
+duties    = ["plan", "execute", "verify", "review"]
 [env]
 SOME_VAR = "value"
 ```
@@ -66,7 +74,7 @@ Double literal braces: `{{ }}`. Shipped examples: `hermes`, `claude-code`, `gene
 
 ## 4. Leases
 
-Every run holds a lease (plan 30 min, execute 60 min, verify 20 min). Renew with
+Every run holds a lease (plan 30 min, execute 60 min, verify 20 min, review 15 min). Renew with
 `holon run heartbeat <run_id>`. `holon tick` reclaims expired leases: planning returns to the
 inbox; execution retries (up to `max_attempts`) or fails.
 

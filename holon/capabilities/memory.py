@@ -1,9 +1,17 @@
-"""memory.db: project context. The only writer of memory.db.
+"""memory.db: institutional memory. The only writer of memory.db.
 
-Scopes: `traj:<id>` / any project ref, `class:<task_class>` (lessons that travel across
-projects), `global`, `agent:<id>`. Items are deduplicated on write: an exact
-normalized match reinforces the existing item; a near match (token Jaccard >= 0.85)
-supersedes it, so memory converges instead of accreting.
+Scopes, from personal to collective:
+  emp:<id>        what one employee has learned (inherited by their successor)
+  dept:<slug>     what a department knows
+  org             what the whole organization knows
+  <project ref>   facts about one project (e.g. traj:<node>)
+  class:<name>    lessons about one kind of work, across projects
+
+Items are deduplicated on write: an exact normalized match reinforces the existing item;
+a near match (token Jaccard >= 0.85) supersedes it, so memory converges instead of
+accreting. Collective intelligence emerges by *promotion*: a lesson that recurs in several
+employees' memories is lifted to their department, and one that recurs across several
+departments is lifted to the organization.
 """
 
 from __future__ import annotations
@@ -20,6 +28,8 @@ from holon.core.ids import new_id
 KINDS = ("fact", "decision", "constraint", "preference", "lesson", "open_question", "glossary", "artifact")
 STEERING_KINDS = ("constraint", "decision", "preference")
 NEAR_DUP_JACCARD = 0.85
+PROMOTION_JACCARD = 0.6   # lessons phrased differently by different employees still count as the same
+PERSONAL_KINDS = ("lesson", "preference")
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -224,42 +234,74 @@ class Memory:
                                json.dumps(degraded) if degraded else None))
 
     # ── consolidation (the write path after every run) ────────────────────
-    def consolidate(self, task: dict, run_id: str, env: dict) -> dict:
-        """Deterministic consolidation of an executor result into memory. An optional
-        scribe agent can enrich `project_state.summary` later; nothing here needs an LLM."""
-        scope = scope_for(task)
+    def consolidate(self, task: dict, run_id: str, env: dict, employee_id: str | None = None,
+                    dept_scope: str | None = None) -> dict:
+        """Deterministic consolidation of an executor result into memory. Lessons become the
+        employee's own; facts, decisions and constraints belong to the project (or department).
+        An optional scribe can enrich `project_state.summary` later; nothing here needs an LLM."""
+        work_scope = task.get("project_ref") or dept_scope or "org"
+        personal = f"emp:{employee_id}" if employee_id else work_scope
         prov = f"work:{run_id}"
-        written = []
+        written, lessons = [], []
         for entries, default_kind in ((env.get("learnings") or [], "lesson"), (env.get("decisions") or [], "decision")):
             for e in entries:
                 if isinstance(e, str):
                     e = {"content": e}
-                item = self.add_item(scope, e.get("kind", default_kind), e["content"], prov,
-                                     confidence=e.get("confidence", "medium"))
-                written.append({"id": item["id"], "action": item["action"]})
+                kind = e.get("kind", default_kind)
+                scope = personal if kind in PERSONAL_KINDS else work_scope
+                item = self.add_item(scope, kind, e["content"], prov, confidence=e.get("confidence", "medium"))
+                written.append({"id": item["id"], "scope": scope, "action": item["action"]})
+                if kind == "lesson":
+                    lessons.append(item)
         for b in env.get("blockers") or []:
             text = b if isinstance(b, str) else json.dumps(b)
-            item = self.add_item(scope, "open_question", f"Blocker on '{task['title']}': {text}", prov)
-            written.append({"id": item["id"], "action": item["action"]})
+            item = self.add_item(work_scope, "open_question", f"Blocker on '{task['title']}': {text}", prov)
+            written.append({"id": item["id"], "scope": work_scope, "action": item["action"]})
         digest = f"[{env['outcome']}] {task['title']}: {env['summary']}"
         if env.get("next_intent"):
             digest += f"\nNext: {env['next_intent']}"
-        eid = self.add_episode(scope, digest, task["id"], run_id, env["outcome"])
-        state = self.update_state(scope, run_id, current_focus=task["title"], next_steps=env.get("next_intent"))
-        return {"scope": scope, "items": written, "episode": eid, "state": state}
+        eid = self.add_episode(work_scope, digest, task["id"], run_id, env["outcome"])
+        state = self.update_state(work_scope, run_id, current_focus=task["title"], next_steps=env.get("next_intent"))
+        return {"scope": work_scope, "personal_scope": personal, "items": written, "lessons": lessons,
+                "episode": eid, "state": state}
 
-    def record_review(self, task: dict, plan: dict, decision: str, note: str | None) -> list[dict]:
-        """Your plan-review notes are the richest learning signal: store them where future
-        planners for this project and this task class will read them."""
+    def promote_recurring(self, item: dict, sibling_scopes: list[str], target_scope: str,
+                          threshold: int = 2) -> dict | None:
+        """Lift a lesson to a wider scope when it recurs independently in `threshold` or more
+        sibling scopes (employees of a department, or departments of the organization)."""
+        if item["scope"] not in sibling_scopes:
+            return None
+        matches = [r for r in self.search(item["content"], scopes=sibling_scopes, kinds=[item["kind"]], limit=50)
+                   if jaccard(r["content"], item["content"]) >= PROMOTION_JACCARD]
+        scopes = {r["scope"] for r in matches} | {item["scope"]}
+        if len(scopes) < threshold:
+            return None
+        sources = sorted({item["id"], *(r["id"] for r in matches)})
+        promoted = self.add_item(target_scope, item["kind"], item["content"],
+                                 "promoted:" + ",".join(sources[:8]), confidence="high")
+        if promoted["action"] == "created":
+            with write_txn(self.conn):
+                for sid in sources:
+                    self.conn.execute("INSERT OR IGNORE INTO links VALUES (?,?,?)",
+                                      (f"mem:{promoted['id']}", f"mem:{sid}", "derived_from"))
+        return {**promoted, "from_scopes": sorted(scopes)}
+
+    def record_review(self, task: dict, plan: dict, decision: str, note: str | None,
+                      dept_scope: str | None = None) -> list[dict]:
+        """Plan-review notes are the richest learning signal: store them where future planners
+        will read them: the project (or department), the task class, and the author's own memory."""
         if not note or not note.strip():
             return []
         content = f"Plan review ({decision}) of '{task['title']}': {note.strip()}"
-        out = [self.add_item(scope_for(task), "preference", content, "human", confidence="high")]
+        out = [self.add_item(task.get("project_ref") or dept_scope or "org", "preference", content, "chair",
+                             confidence="high")]
         if task.get("task_class"):
-            out.append(self.add_item(f"class:{task['task_class']}", "preference", note.strip(), "human",
+            out.append(self.add_item(f"class:{task['task_class']}", "preference", note.strip(), "chair",
                                      confidence="high"))
+        if plan.get("author"):
+            out.append(self.add_item(f"emp:{plan['author']}", "lesson", content, "chair", confidence="high"))
         return out
 
 
-def scope_for(task: dict) -> str:
-    return task.get("project_ref") or "global"
+def scope_for(task: dict, dept_scope: str | None = None) -> str:
+    return task.get("project_ref") or dept_scope or "org"

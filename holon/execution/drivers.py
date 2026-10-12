@@ -5,8 +5,8 @@
     cwd       = "{workdir}"            # default
     timeout_s = 1800
     result    = "file"                 # "file": agent writes {result_path}; "stdout-json": last JSON object on stdout
-    read_only = "--plan-only"   # substituted as {read_only} for planner/verifier runs, else ""
-    roles     = ["planner", "executor", "verifier"]   # optional restriction
+    read_only = "--plan-only"   # substituted as {read_only} for plan/verify/review runs, else ""
+    duties    = ["plan", "execute", "verify", "review"]   # optional restriction
     [env]                              # optional extra environment
     FOO = "bar"
 
@@ -43,14 +43,14 @@ class Driver:
     timeout_s: int = 3600
     result: str = "file"
     read_only: str = ""
-    roles: list[str] = field(default_factory=lambda: ["planner", "executor", "verifier"])
+    duties: list[str] = field(default_factory=lambda: ["plan", "execute", "verify", "review"])
     env: dict[str, str] = field(default_factory=dict)
     source: str = ""
 
     @classmethod
     def from_toml(cls, text: str, source: str) -> "Driver":
         data = tomllib.loads(text)
-        unknown = set(data) - {"name", "command", "cwd", "timeout_s", "result", "read_only", "roles", "env"}
+        unknown = set(data) - {"name", "command", "cwd", "timeout_s", "result", "read_only", "duties", "env"}
         if unknown:
             raise DriverError(f"{source}: unknown keys {sorted(unknown)}")
         if not data.get("name") or not data.get("command"):
@@ -90,7 +90,7 @@ def render(driver: Driver, brief: dict, kind: str) -> tuple[str, str]:
     }
     quoted = {k: shlex.quote(v) for k, v in values.items()}
     quoted["holon"] = values["holon"]  # already a shell-ready command
-    quoted["read_only"] = driver.read_only if role in ("planner", "verifier") else ""
+    quoted["read_only"] = driver.read_only if kind in ("plan", "verify", "review") else ""
     try:
         cmd = driver.command.format(**quoted)
         cwd = driver.cwd.format(**values)
@@ -101,13 +101,13 @@ def render(driver: Driver, brief: dict, kind: str) -> tuple[str, str]:
 
 def run(home: Home, driver: Driver, brief: dict, kind: str) -> dict:
     """Invoke the harness and return {'exit_code', 'envelope' | None, 'log_path', 'stdout_tail'}."""
-    if ROLE_OF_KIND[kind] not in driver.roles:
-        raise DriverError(f"driver {driver.name} does not serve role {ROLE_OF_KIND[kind]}")
+    if kind not in driver.duties:
+        raise DriverError(f"driver {driver.name} does not serve the '{kind}' duty")
     cmd, cwd = render(driver, brief, kind)
     if not Path(cwd).is_dir():
         cwd = str(Path(brief["brief_md"]).parent)
     env = {**os.environ, **kernel_env(home), "HOLON_RUN_ID": brief["run_id"], "HOLON_TASK_ID": brief["task_id"],
-           "HOLON_ROLE": ROLE_OF_KIND[kind], "HOLON_BRIEF_DIR": str(Path(brief["brief_md"]).parent),
+           "HOLON_DUTY": kind, "HOLON_ROLE": ROLE_OF_KIND[kind], "HOLON_BRIEF_DIR": str(Path(brief["brief_md"]).parent),
            "HOLON_RESULT_PATH": brief["result_path"], **driver.env}
     log_path = Path(brief["brief_md"]).parent / "driver.log"
     try:
