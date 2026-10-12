@@ -30,13 +30,14 @@ class Shipped(KernelCase):
     def test_zeroclaw_installer_produces_valid_config_with_safe_roots(self):
         zc = self.tmp / "zeroclaw"
         zc.mkdir()
-        (zc / "config.toml").write_text('[providers.models.openai.main]\nuri = "http://x"\nmodel = "m"\n\n'
+        (zc / "config.toml").write_text('[providers.models.openai.main]\nuri = "http://x"\nmodel = "m"\napi_key = "sk-secret"\n\n'
                                         '[agents.assistant]\nmodel_provider = "openai.main"\n')
         p = subprocess.run([sys.executable, str(ADAPTERS / "zeroclaw" / "install.py"), "--holon-home",
                             str(self.home.root), "--config-dir", str(zc), "--allow", str(self.workdir),
                             "--model", "free-stack", "--dry-run"], capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)
-        block = p.stdout[p.stdout.index("# ── Holon"):]
+        self.assertNotIn("sk-secret", p.stdout, "a dry run must not print keys")
+        block = p.stdout[p.stdout.index("# ── Holon"):].replace('"<redacted>"', '"x"')
         cfg = tomllib.loads((zc / "config.toml").read_text() + "\n" + block)
         observer = cfg["risk_profiles"]["holon-observer"]
         self.assertNotIn("git", observer["allowed_commands"])

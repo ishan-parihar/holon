@@ -18,6 +18,7 @@ Uninstall: restore the printed backup (or delete the marked block) and remove th
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import subprocess
 import sys
@@ -137,7 +138,8 @@ def main() -> int:
         tomllib.loads(new_text)  # never write invalid TOML
     print(f"config: {cfg_path} provider={provider}\n  allowed_roots={roots}\n  skills={skills_dir}")
     if a.dry_run:
-        print("dry run: no changes written\n" + (block if new_text else ""))
+        shown = re.sub(r'^((?:api_key|token|secret)\s*=\s*)".*"$', r'\1"<redacted>"', block, flags=re.M)
+        print("dry run: no changes written\n" + (shown if new_text else ""))
         return 0
 
     holon = [sys.executable, "-m", "holon", "--home", str(home)]
