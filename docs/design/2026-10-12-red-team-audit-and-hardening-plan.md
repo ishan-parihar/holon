@@ -223,13 +223,13 @@ All six phases are implemented on `main`; 99 tests pass; `holon lint --strict` r
 G1 and G2 were closed afterwards: `holon backup` / `holon restore` (online, checksummed, no
 secrets) and per-department budget caps (`[budget]`).
 
-## 7. Real-harness validation (2026-10-12, this laptop)
+## 7. Real-harness validation (2026-10-12/13, laptop and VPS)
 
 | Harness | Result |
 |---|---|
 | Hermes Agent v0.19.0, aroute `free-stack` | conformance 5/5 (~2.5 min); end to end: a `light` department of three Hermes employees took a real coding task through research, shape, plan, Chair approval, execute and verify; terrain, lessons and a proposal landed in memory; doctor and lint clean |
 | Claude Code (`claude -p`) | driver, plan, approve pass; execute and verify not yet run (the account's session limit cut the run off) |
-| ZeroClaw | not installed locally; on the VPS only |
+| ZeroClaw 0.8.5 (VPS), aroute `free-stack`, adapter v3 | conformance 5/5 (plan 13.5 min, approve 8.5, execute 3.5, verify 7.5). Plan, approve and verify agents had no file-write tool and handed in their results through the `holon_submit` MCP tool |
 
 Defects the real runs found, all fixed with regression tests:
 1. Exported skills baked one instance's path into `$holon`, so a harness serving another instance
@@ -242,6 +242,12 @@ Defects the real runs found, all fixed with regression tests:
 5. A breach found after an agent self-submitted crashed the dispatch; it is now recorded.
 6. Claude Code confines tools to the working directory, so the agent could not read its context.
    The driver adds the run directory with `--add-dir` and puts the identity in the system prompt.
+7. The conformance suite read results from dispatch's return value, which has a different shape
+   when the agent self-submits (as ZeroClaw agents do through `holon_submit`), so it raised
+   `KeyError`. Clauses now judge from the work graph.
 
-Still open: Claude Code's execute and verify clauses; ZeroClaw conformance and the VPS migration
-(the Chair's go-ahead); model latency on free-stack (50–115 s per large-context call).
+The VPS instance is migrated to the stage graph (migration 0004, authenticated, Chair key created).
+
+Still open: Claude Code's execute and verify clauses (deferred); genome profiles for the VPS
+departments and the `holon-tick` timer (the Chair's call); model latency on free-stack
+(50–115 s per large-context call, 3–14 min per ZeroClaw stage).
