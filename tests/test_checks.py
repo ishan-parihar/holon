@@ -40,3 +40,24 @@ class Checks(KernelCase):
         work, out = self.execute(write=True)
         self.assertEqual(out["checks"], [])
         self.assertEqual(self.pipeline_of(work)[-1], ("verify", "ready"))
+
+
+class Taxonomy(KernelCase):
+    def configure(self, toml):
+        self.home.config_file.write_text(self.pipeline + "\n" + self.config + "\n" + toml)
+        self.k.close()
+        self.k = Kernel(self.home)
+
+    def test_agents_use_the_departments_task_classes(self):
+        from holon.integrity import doctor
+        self.configure('[classes]\norg = ["incident"]\neng = ["greeting", "docs"]\n')
+        w = self.add(dept="eng", task_class="greeting")
+        c = self.k.claim("plan", self.hod)
+        self.assertIn("`greeting`, `docs`", (c.brief_dir / "context.md").read_text().replace("`incident`, ", ""))
+        out = self.k.submit(c.run["id"], {"kind": "decompose", "rationale": "two parts", "children": [
+            {"title": "a", "intent": "a", "task_class": "greeting"},
+            {"title": "b", "intent": "b", "task_class": "poetry"}]})
+        self.assertIn("'poetry' is not one of eng's", out["breach"][0])
+        self.add("odd one", dept="eng", task_class="poetry")  # the Chair may still file anything
+        self.assertIn("classes.unknown", {f["check"] for f in doctor.run(self.k)})
+        self.assertEqual(self.status(w), "open")

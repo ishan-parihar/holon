@@ -118,7 +118,15 @@ def run(k) -> list[dict]:
                                             f"({d.scope_fingerprint} ≠ {k.scope_fingerprint()}): re-run its installer")
     except drivers.DriverError as e:
         add("error", "drivers", str(e))
+    if k.config.get("classes"):
+        for r in w.execute("SELECT t.id, t.task_class, d.slug FROM tasks t LEFT JOIN departments d ON d.id=t.dept_id "
+                           "WHERE t.stage IS NULL AND t.task_class IS NOT NULL AND t.status NOT IN "
+                           "('done','failed','cancelled')").fetchall():
+            if k.classes_for(r["slug"]) and r["task_class"] not in k.classes_for(r["slug"]):
+                add("warning", "classes.unknown", f"{r['id']} has task class {r['task_class']!r}, outside "
+                                                  f"{r['slug'] or 'the organization'}'s taxonomy")
     stale = k.stale_skill_exports()
+
     if stale:
         add("warning", "skills.export_stale", f"{len(stale)} exported skill files differ from the library "
                                               f"(e.g. {stale[0]}): `holon skill export` again, or let a skill change land")

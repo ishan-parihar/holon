@@ -56,7 +56,8 @@ DEFAULT_CONFIG = {
 CONFIG_KEYS = {s: set(v) for s, v in DEFAULT_CONFIG.items() if s not in ("grading", "autonomy", "pipeline")}
 CONFIG_KEYS["budget"].add("dept")  # [budget.dept.<slug>] overrides
 CONFIG_KEYS["scope"].add("dept")   # [scope.dept.<slug>] additions
-CONFIG_KEYS["checks"] |= {"dept", "class"}   # [checks.dept.<slug>], [checks.class.<task_class>]
+CONFIG_KEYS["checks"] |= {"dept", "class"}
+CONFIG_KEYS["classes"] = set()   # [classes] org = [...], <dept slug> = [...]: checked by lint against departments   # [checks.dept.<slug>], [checks.class.<task_class>]
 
 
 def load_config(home: Home) -> dict:
@@ -342,6 +343,9 @@ class Kernel:
                                 budget=int(self.config["context"]["budget_chars"]), run_id=run["id"],
                                 employee=emp, predecessors=self.org.predecessors(emp["id"]) if emp else None)
         slug = self._dept_slug(node["dept_id"])
+        if self.classes_for(slug) and node["stage"] in ("shape", "plan", "retro"):
+            md += ("\n\n## Task classes\n\nNew or split work in " + (slug or "the organization") + " uses one of: "
+                   + ", ".join(f"`{c}`" for c in self.classes_for(slug)) + ".\n")
         bdir = briefs.build(self.home, run, node, md, self.skills, slug, emp,
                             self.identity(emp["id"]) if emp else None, token, scope=self.scope(slug))
         self.work.set_run_paths(run["id"], str(bdir), str(bdir / "driver.log"))
@@ -365,7 +369,7 @@ class Kernel:
             if envelope is None:
                 raise EnvelopeError(["no result.json and no JSON output"])
             env = contract.validate(stage, envelope)
-            self._check_org_refs(env)
+            self._check_org_refs(env, self.work.work_of(run["task_id"]))
             if stage == "execute":
                 self._check_skill_changes(self.work.work_of(run["task_id"]), env)
         except EnvelopeError as e:
@@ -546,8 +550,21 @@ class Kernel:
                         stale.append(f"{d}: {name}/{f}")
         return stale
 
-    def _check_org_refs(self, env: dict) -> None:
+    def classes_for(self, dept_slug: str | None) -> list[str]:
+        """The task classes a department's work may carry ([classes] org + <slug>); empty = any. A shared
+        taxonomy is what lets track records accrue, so earned authority and sampling can engage."""
+        c = self.config.get("classes") or {}
+        return list(dict.fromkeys([*c.get("org", []), *(c.get(dept_slug, []) if dept_slug else [])]))
+
+    def _check_org_refs(self, env: dict, work: dict | None = None) -> None:
         problems = []
+        home_dept = self._dept_slug(work.get("dept_id")) if work else None
+
+        def class_ok(task_class: str | None, slug: str | None, where: str) -> None:
+            allowed = self.classes_for(slug)
+            if task_class and allowed and task_class not in allowed:
+                problems.append(f"{where}: task class {task_class!r} is not one of {slug or 'the organization'}'s "
+                                f"{allowed}")
 
         def emp_ok(eid: str, where: str) -> None:
             try:
@@ -566,10 +583,12 @@ class Kernel:
             emp_ok(env["assignee"], "assignee")
         if env.get("dept"):
             dept_ok(env["dept"], "dept")
+        class_ok(env.get("task_class"), env.get("dept") or home_dept, "task_class")
         for key in ("children", "actions"):
             for i, c in enumerate(env.get(key) or []):
                 if c.get("dept"):
                     dept_ok(c["dept"], f"{key}[{i}]")
+                class_ok(c.get("task_class"), c.get("dept") or home_dept, f"{key}[{i}].task_class")
                 if c.get("assignee"):
                     emp_ok(c["assignee"], f"{key}[{i}].assignee")
         if problems:

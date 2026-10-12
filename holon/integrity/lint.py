@@ -133,6 +133,15 @@ def pack_schema(k, f: Findings) -> None:
         for section, values in raw.items():
             if section not in known:
                 f.add("warning", "schema.config", "holon.toml", f"unknown section [{section}]")
+            elif section == "classes" and isinstance(values, dict):
+                for slug, classes in values.items():
+                    if slug != "org":
+                        try:
+                            k.org.dept(slug)
+                        except LookupError:
+                            f.add("warning", "schema.config", "holon.toml", f"[classes] {slug}: no such department")
+                    if not isinstance(classes, list) or not all(isinstance(c, str) and c for c in classes):
+                        f.add("error", "schema.config", "holon.toml", f"[classes] {slug}: must be a list of names")
             elif section in CONFIG_KEYS and isinstance(values, dict):
                 if section in ("budget", "scope"):
                     for slug, sub in (values.get("dept") or {}).items():

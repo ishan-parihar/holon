@@ -114,6 +114,7 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[scope]` | `act_commands` | [] | extra commands for the execute stage only |
 | `[checks]` | `commands` | [] | commands the kernel runs in the workdir after every execute; `[checks.dept.<slug>]` and `[checks.class.<task_class>]` add their own (§9) |
 | `[checks]` | `timeout_s` | 600 | per check command |
+| `[classes]` | `org`, `<dept slug>` | (any) | the task classes work may carry, organization-wide and per department; agents proposing work with another class breach the contract, `holon doctor` warns about open work outside it. Track records (novelty floors, earned authority, sampling) accrue per class, so a small shared taxonomy is what lets trust grow |
 
 ## 7. Operations
 
