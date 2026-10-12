@@ -5,4 +5,6 @@ After=network-online.target
 [Service]
 Type=oneshot
 Environment=HOLON_HOME=%h/holon
-ExecStart=%h/.local/bin/holon tick
+# systemd's user PATH omits per-user bin dirs; harness CLIs (and `holon` itself) usually live there.
+Environment=PATH=%h/bin:%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/env holon tick
