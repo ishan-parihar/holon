@@ -10,3 +10,7 @@ Environment=PATH=%h/bin:%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 # `holon tick` is a kernel command: it authenticates with the Chair key file created by `holon init`
 # (~/.config/holon/keys/<instance>.chair). Set HOLON_CHAIR_KEY_FILE if you keep it elsewhere.
 ExecStart=/usr/bin/env holon tick
+# `holon tick` starts each due dispatch as a detached process and exits. systemd's default
+# (KillMode=control-group) kills everything in the unit's cgroup when a oneshot finishes, which kills
+# those dispatches before they run (found on the first real heartbeat). Only kill the tick itself.
+KillMode=process

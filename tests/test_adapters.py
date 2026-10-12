@@ -27,6 +27,11 @@ class Shipped(KernelCase):
             self.assertTrue(any(x in d.command for x in ("{briefing}", "{identity}", "{identity_md}")),
                             f"{p}: the identity card must reach the agent")
 
+    def test_the_heartbeat_unit_lets_spawned_dispatches_outlive_the_tick(self):
+        unit = (ADAPTERS / "systemd" / "holon-tick.service").read_text()
+        self.assertIn("Type=oneshot", unit)
+        self.assertIn("KillMode=process", unit, "a oneshot's cgroup is killed on exit, dispatches with it")
+
     def test_zeroclaw_installer_produces_valid_config_with_safe_roots(self):
         zc = self.tmp / "zeroclaw"
         zc.mkdir()
