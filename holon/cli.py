@@ -24,6 +24,7 @@ from holon.core import vocab
 from holon.core.paths import Home, HomeNotSet
 
 NOTHING, FORBIDDEN = 3, 4
+EXPORTED_HOLON = "${HOLON:-holon}"
 GRADE = {g: f"G{g} {n}" for g, n in vocab.GRADE_NAMES.items()}
 
 
@@ -739,8 +740,9 @@ def cmd_skill_check(args, k):
 @command("skill export", "chair", "write resolved, rendered skills to a directory a harness loads skills from",
          arg("--to", required=True), arg("--name", action="append"), arg("--dept"))
 def cmd_skill_export(args, k):
-    from holon.execution.briefs import holon_command
-    out = k.skills.export(Path(args.to).expanduser(), {"holon": holon_command(k.home)}, args.name or None, args.dept)
+    # exported skills serve every instance and run: `$HOLON` is the kernel command each run exports, and
+    # pull-mode sessions fall back to `holon` on PATH with HOLON_HOME set
+    out = k.skills.export(Path(args.to).expanduser(), {"holon": EXPORTED_HOLON}, args.name or None, args.dept)
     _out(args, [str(p) for p in out], "\n".join(f"exported {p}" for p in out))
 
 

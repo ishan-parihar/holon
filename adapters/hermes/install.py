@@ -39,7 +39,12 @@ def render_driver(a) -> str:
     text = text.replace('command = "hermes chat', f'command = "{prefix}hermes chat', 1).replace(
         "--max-turns 60", f"--max-turns 60{flags}", 1)
     if a.base_url:
-        text = text.rstrip() + f'\n\n[env]\nCUSTOM_BASE_URL = "{a.base_url}"\n'
+        # Hermes disables its stream-stall detector for local endpoints unless told otherwise; a stalled
+        # upstream stream would then hang the run until its lease expires
+        text = text.rstrip() + (f'\n\n[env]\nCUSTOM_BASE_URL = "{a.base_url}"\n'
+                                f'HERMES_LOCAL_STREAM_STALE_TIMEOUT = "{a.stall_timeout}"\n'
+                                f'HERMES_STREAM_STALE_TIMEOUT = "{a.stall_timeout}"\n'
+                                f'HERMES_API_TIMEOUT = "{a.stall_timeout * 3}"\n')
     tomllib.loads(text)  # never install an invalid driver
     return text
 
@@ -52,6 +57,8 @@ def main() -> int:
     ap.add_argument("--provider", help="hermes --provider (default: auto)")
     ap.add_argument("--base-url", help="an OpenAI-compatible endpoint (Hermes' CUSTOM_BASE_URL; implies --provider custom)")
     ap.add_argument("--api-key-file", help="file holding that endpoint's key, read at run time (keep it 0600)")
+    ap.add_argument("--stall-timeout", type=int, default=300,
+                    help="seconds without streamed tokens before Hermes retries a model call (default 300)")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     home = Path(a.holon_home).expanduser().resolve()

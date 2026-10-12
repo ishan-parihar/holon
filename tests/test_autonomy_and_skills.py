@@ -206,6 +206,10 @@ class Skills(KernelCase):
         self.assertIn("profile light", out)
         rc, out = run("charter", "autonomy")
         self.assertIn("supervised", out)
+        rc, out = run("skill", "export", "--to", str(self.tmp / "exp"), "--name", "holon-executor")
+        text = (self.tmp / "exp" / "holon-executor" / "briefs" / "execute.md").read_text()
+        self.assertIn("${HOLON:-holon} run heartbeat", text, "exported skills must not name one instance")
+        self.assertNotIn(str(self.home.root), text)
 
 
 if __name__ == "__main__":
