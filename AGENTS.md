@@ -25,6 +25,7 @@ agents changing the kernel itself: where things are, and the laws every change m
 | `holon/cli.py` | the command registry and its actor classes |
 | `adapters/<harness>/` | everything harness-specific: driver, installer, identity and skills sync |
 | `adapters/systemd/` | the heartbeat timer (`holon tick` every 2 minutes) |
+| `adapters/notion/` | the Chair's dashboard: a live Notion mirror (not a harness); tested against `tests/fake_notion.py` |
 | `docs/` | INTENT, GENOME, CONTRACT; `docs/design/` holds dated design records |
 
 ## Laws (enforced by `holon lint`, `holon doctor` and the tests)
