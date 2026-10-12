@@ -1,0 +1,10 @@
+# Reference driver: hermes-agent (headless one-shot).
+# The agent reads BRIEF.md (passed as the query file) and writes result.json itself.
+# Copy to $HOLON_HOME/config/drivers/ to customize (model, toolsets, skills).
+name = "hermes"
+command = "hermes --in {workdir} chat --query-file {brief_md} --oneshot -Q --yolo"
+cwd = "{workdir}"
+timeout_s = 3600
+result = "file"
+read_only = ""   # hermes has no plan-only flag; planner read-only is enforced by the kernel's post-run check
+roles = ["planner", "executor", "verifier"]

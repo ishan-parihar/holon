@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "holon planner result",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "findings",
+        "steps"
+      ],
+      "properties": {
+        "kind": {
+          "const": "plan"
+        },
+        "findings": {
+          "type": "string",
+          "minLength": 1
+        },
+        "steps": {
+          "oneOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": [
+                  "string",
+                  "object"
+                ]
+              }
+            }
+          ]
+        },
+        "writes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "risks": {
+          "type": "string"
+        },
+        "rollback": {
+          "type": "string"
+        },
+        "estimate": {
+          "type": "string"
+        },
+        "acceptance": {
+          "type": "string"
+        },
+        "context_refs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "rationale",
+        "children"
+      ],
+      "properties": {
+        "kind": {
+          "const": "decompose"
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "children": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": [
+              "title",
+              "intent"
+            ],
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "intent": {
+                "type": "string",
+                "minLength": 1
+              },
+              "acceptance": {
+                "type": "string"
+              },
+              "priority": {
+                "type": "integer"
+              },
+              "task_class": {
+                "type": "string"
+              },
+              "risk": {
+                "enum": [
+                  "low",
+                  "normal",
+                  "high",
+                  "irreversible"
+                ]
+              },
+              "workdir": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "kind",
+        "question"
+      ],
+      "properties": {
+        "kind": {
+          "const": "needs_input"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  ]
+}

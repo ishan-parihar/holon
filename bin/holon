@@ -1,0 +1,4 @@
+#!/bin/sh
+# Run Holon from a checkout without installing it.
+ROOT=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)
+PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m holon "$@"

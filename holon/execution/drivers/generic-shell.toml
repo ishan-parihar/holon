@@ -1,0 +1,10 @@
+# Template for any harness: point `command` at whatever runs one agent turn on a prompt
+# file and lets the agent write {result_path}. Every placeholder value is shell-quoted.
+# Literal braces in the command must be doubled: {{ }}.
+name = "generic-shell"
+command = "my-agent --prompt-file {brief_md} --cwd {workdir}"
+cwd = "{workdir}"
+timeout_s = 1800
+result = "stdout-json"   # accept a JSON object printed on stdout if no result.json is written
+read_only = ""
+roles = ["planner", "executor", "verifier"]
