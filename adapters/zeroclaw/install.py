@@ -129,6 +129,7 @@ def main() -> int:
         if rc != 0:
             print(f"skills: export failed — {out[-300:]}")
         for d in sorted(p for p in export.iterdir() if (p / "SKILL.md").exists()) if rc == 0 else []:
+            sh(["zeroclaw", "skills", "remove", d.name])  # replace an older copy; re-runs update in place
             rc2, out2 = sh(["zeroclaw", "skills", "install", str(d)])
             print(f"skill {d.name}: {'installed' if rc2 == 0 else 'NOT installed — ' + out2[-200:]}")
 
