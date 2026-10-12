@@ -198,3 +198,27 @@ Each phase ends with the test suite, `holon lint` and `holon doctor` green. No V
 Order rationale: the linters (R1) make every later phase checkable, and identity (R3) has to
 come before the loops (R5) let the organization change itself. Plugins come last, because they
 consume the registry, tokens and identity renderer built before them.
+
+## 6. Status (2026-10-12, after execution)
+
+All six phases are implemented on `main`; 99 tests pass; `holon lint --strict` reports
+0 errors and 0 warnings on the distribution; `holon doctor` is clean on a fresh instance.
+
+| Finding | Closed by |
+|---|---|
+| A1, A6, E2 | `holon/execution/security.py` (Chair key, employee keys, run tokens) + the command registry's actor classes |
+| A2, A3 | ZeroClaw adapter v2: roots exclude instance state; observer has no git/sqlite3; the kernel guard stays on unless trusted |
+| A4 | hash-chained events (`core/db.log_event`), verified by `holon doctor` |
+| A5, F4 | Hermes adapter: real flags (the old driver's flags no longer existed), posture toolsets, no `--yolo` while observing |
+| B1, B3 | the work graph (migration 0004): seven stages, one per role; learnings from every stage |
+| B2 | triggers: retros, incidents, probation confirmations, department retros over proposals; `holon metrics` |
+| B4, B5, B6 | lint SCHEMA (profile on every department, profile versions); dead paths removed |
+| C1–C5 | `core/vocab.py`, `core/contract.py` (schemas generated), lint DRY and SCHEMA |
+| D1–D4 | docs rewritten; lint REF, BIND and DEPTH |
+| E1, E3, E4 | registry-based CLI, `holon help --json`, `holon lint`, `holon doctor` |
+| F1, F2, F3, F5 | ZeroClaw `holon` skill bundle, identity in every message, `--config-dir`, `holon adapter test` |
+| G1 | `holon doctor` (backup/restore remains open) |
+| G2 | partially: cost per verified result in `holon metrics`; budget caps remain open |
+
+Not yet done: a real-harness conformance run (`holon adapter test zeroclaw|hermes`), the VPS
+migration to the new kernel, backup/restore, and budget caps.

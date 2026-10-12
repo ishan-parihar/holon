@@ -111,3 +111,20 @@ key (`HOLON_KEY`, issued with `holon hr key`) does the same for pull-mode sessio
 `~/.config/holon/keys/<instance>.chair`) is created by `holon init` outside the instance. Adapters
 must keep it out of every agent's reach: deny `~/.config` to the harness, or run the kernel's
 timer as another user. `holon help --json` lists the actor class each command requires.
+
+## 7. Adapters
+
+An adapter is everything one harness needs, kept in `adapters/<harness>/` so the kernel never
+names it. Every adapter has the same five parts:
+
+| Part | What it provides |
+|---|---|
+| Driver | `driver.toml` (§3), installed into the instance's `config/drivers/` |
+| Identity | the employee's identity card reaches the agent: `{briefing}`, `{identity}` or `{identity_md}` |
+| Skills | the skills library exported where the harness loads skills (`holon skill export --to …`) |
+| Posture map | observe stages get a harness setting that cannot write; execute gets the approved plan's reach |
+| Conformance | `holon adapter test <driver>` passes every clause: driver, plan, approve, execute, verify |
+
+Shipped adapters: `zeroclaw` (posture aliases, its own skill bundle, observe profile without
+write tools), `hermes` (skills as a Hermes category, posture toolsets) and `claude-code` (plan
+mode for observe stages). `generic-shell` in the kernel is a template for anything else.

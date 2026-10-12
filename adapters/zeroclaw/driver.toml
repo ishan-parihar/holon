@@ -1,11 +1,11 @@
-# Holon driver for ZeroClaw. Installed to $HOLON_HOME/config/drivers/zeroclaw.toml.
-# Each duty runs as its own ZeroClaw agent alias (holon-plan / holon-execute / holon-verify /
-# holon-review), so plan/verify/review runs get the read-only "holon-observer" risk profile and
-# only execute runs get the "holon-worker" profile. See adapters/zeroclaw/README.md.
+# Holon driver for ZeroClaw. Installed to $HOLON_HOME/config/drivers/zeroclaw.toml by install.py.
+# One agent alias per posture: holon-observe (research, shape, plan, approve, verify, retro: no write
+# tools) and holon-act (execute). The message carries the employee's identity card and the stage brief.
 name = "zeroclaw"
-command = "zeroclaw agent -a holon-{duty} -m {prompt}"
+command = "zeroclaw agent -a holon-{posture} -m {briefing}"
 cwd = "{workdir}"
 timeout_s = 3600
-result = "stdout-json"   # result.json if the agent wrote it; else the last JSON object it printed
+result = "stdout-json"     # result.json when the agent wrote it, else the last JSON object it printed
 read_only = ""
-read_only_enforced = true   # holon-observer profile has no write tools; see README
+read_only_enforced = true  # holon-observe has no write tools; the kernel still checks unless the
+                           # instance sets [planner] trust_harness_read_only = true

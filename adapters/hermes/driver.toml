@@ -1,11 +1,13 @@
-# Reference driver: hermes-agent (headless one-shot).
-# The agent reads BRIEF.md (passed as the query file) and writes result.json itself.
-# Copy to $HOLON_HOME/config/drivers/ to customize (model, toolsets, skills).
-# Skills: `holon skill export --to ~/.hermes/skills/holon`, then add `-s holon-employee` to the command
-# so every employee session preloads the protocol (its role skill is named in the brief).
+# Holon driver for Hermes Agent (one-shot `hermes chat -q`). Installed by adapters/hermes/install.py.
+# The query carries the employee's identity card and the stage brief; the holon-employee skill is
+# preloaded. Observe stages get no --yolo, so Hermes keeps asking (and, unattended, refusing)
+# dangerous commands; execute gets --yolo because its plan was approved. Hermes has no read-only
+# mode, so the kernel's working-directory guard is the read-only check for observe stages.
 name = "hermes"
-command = "hermes --in {workdir} chat --query-file {brief_md} --oneshot -Q --yolo"
+command = "hermes chat -Q -q {briefing} -s holon-employee --max-turns 60 {read_only}{act_args}"
 cwd = "{workdir}"
 timeout_s = 3600
-result = "file"
-read_only = ""   # hermes has no plan-only flag; planner read-only is enforced by the kernel's post-run check
+result = "stdout-json"   # result.json when the agent wrote it, else the last JSON object it printed
+read_only = "-t file,terminal,skills,web,clarify"
+act_args = "-t file,terminal,skills,web,clarify,code_execution --yolo"
+read_only_enforced = false

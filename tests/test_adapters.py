@@ -1,0 +1,72 @@
+"""R6: the adapter shape. Shipped drivers load, installers produce valid configuration, and the
+conformance suite tells a compliant harness from a broken one."""
+
+import io
+import subprocess
+import sys
+import tomllib
+from contextlib import redirect_stdout
+from pathlib import Path
+
+from holon import cli
+from holon.core import vocab
+from holon.execution.drivers import Driver
+from holon.integrity import conformance
+from tests.helpers import KernelCase
+
+ADAPTERS = Path(__file__).resolve().parents[1] / "adapters"
+
+
+class Shipped(KernelCase):
+    def test_every_adapter_driver_loads_and_reaches_the_brief(self):
+        found = sorted(ADAPTERS.glob("*/driver.toml"))
+        self.assertEqual({p.parent.name for p in found}, {"zeroclaw", "hermes", "claude-code"})
+        for p in found:
+            d = Driver.from_toml(p.read_text(), str(p))
+            self.assertEqual(d.stages, list(vocab.STAGES), p)
+            self.assertIn("{briefing}", d.command, p)
+
+    def test_zeroclaw_installer_produces_valid_config_with_safe_roots(self):
+        zc = self.tmp / "zeroclaw"
+        zc.mkdir()
+        (zc / "config.toml").write_text('[providers.models.openai.main]\nuri = "http://x"\nmodel = "m"\n\n'
+                                        '[agents.assistant]\nmodel_provider = "openai.main"\n')
+        p = subprocess.run([sys.executable, str(ADAPTERS / "zeroclaw" / "install.py"), "--holon-home",
+                            str(self.home.root), "--config-dir", str(zc), "--allow", str(self.workdir),
+                            "--model", "free-stack", "--dry-run"], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        block = p.stdout[p.stdout.index("# ── Holon"):]
+        cfg = tomllib.loads((zc / "config.toml").read_text() + "\n" + block)
+        observer = cfg["risk_profiles"]["holon-observer"]
+        self.assertNotIn("git", observer["allowed_commands"])
+        self.assertNotIn("sqlite3", observer["allowed_commands"])
+        self.assertIn("file_write", observer["excluded_tools"])
+        roots = observer["allowed_roots"]
+        self.assertFalse(any(r == str(self.home.root) for r in roots), "agents must not reach the instance root")
+        self.assertIn(str(self.home.root / "execution" / "runtime" / "work.db"), observer["forbidden_paths"])
+        self.assertEqual(cfg["agents"]["holon-observe"]["skill_bundles"], ["holon"])
+        self.assertEqual(cfg["providers"]["models"]["openai"]["holon"]["model"], "free-stack")
+
+
+class Conformance(KernelCase):
+    def test_a_compliant_harness_passes_every_clause(self):
+        report = conformance.run(self.k, "fake")
+        self.assertEqual(report["passed"], len(conformance.CLAUSES), report)
+
+    def test_a_harness_that_writes_while_observing_fails(self):
+        self.install_fake_driver("fake", mode="dirty-planner")
+        report = {c["clause"]: c for c in conformance.run(self.k, "fake")["clauses"]}
+        self.assertFalse(report["plan"]["ok"])
+        self.assertIn("read-only", report["plan"]["detail"])
+
+    def test_a_harness_that_ignores_the_contract_fails(self):
+        self.install_fake_driver("fake", mode="garbage")
+        report = {c["clause"]: c for c in conformance.run(self.k, "fake")["clauses"]}
+        self.assertFalse(report["plan"]["ok"])
+
+    def test_cli(self):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cli.main(["--home", str(self.home.root), "adapter", "test", "fake", "--clauses", "driver,plan"])
+        self.assertEqual(rc, 0, buf.getvalue())
+        self.assertIn("2/2 passed", buf.getvalue())

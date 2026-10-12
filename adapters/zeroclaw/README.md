@@ -1,36 +1,36 @@
-# Holon plugin for ZeroClaw
+# Holon adapter for ZeroClaw
 
-Makes ZeroClaw a body that Holon employees can run in. Holon stays harness-agnostic: this
-directory is the *only* place that knows ZeroClaw exists.
+Makes ZeroClaw a body that Holon employees run in. Holon stays harness-agnostic: this directory
+is the only place that knows ZeroClaw exists. It implements the adapter shape in
+`docs/CONTRACT.md` §7.
 
-| Piece | What it does |
+| Part | Here |
 |---|---|
-| `driver.toml` | Runs each duty as its own agent alias: `zeroclaw agent -a holon-{duty} -m <brief>` |
-| `config.snippet.toml` | Four agent aliases + two risk profiles (below), appended to `~/.zeroclaw/config.toml` between markers |
-| (skills) | The installer exports the Holon skills library (`holon skill export`) and installs every skill, so any ZeroClaw session can work as a Holon employee |
-| `install.py` | Idempotent installer with automatic config backup and TOML validation |
-| `../systemd/holon-tick.*` | The heartbeat timer (harness-neutral; any timer works) |
+| Driver | `driver.toml`: `zeroclaw agent -a holon-{posture} -m {briefing}` (identity card + stage brief) |
+| Identity | carried in every message (`{briefing}`), so it works whatever ZeroClaw does with workspace identity files |
+| Skills | `holon skill export` → `$HOLON_HOME/adapters/zeroclaw/skills`, loaded as the `holon` skill bundle |
+| Posture map | `holon-observe` (no write tools, read-only shell) for every stage but execute; `holon-act` for execute |
+| Conformance | `holon adapter test zeroclaw` |
 
 ## Safety model
 
-| Alias | Risk profile | Can |
-|---|---|---|
-| `holon-plan`, `holon-review`, `holon-verify` | `holon-observer` | read files, read-only shell (`ls cat grep find git jq sqlite3 holon …`); **no write tools** |
-| `holon-execute` | `holon-worker` | the approved plan's work, within `allowed_roots`; forbidden paths blocked |
-
-Defense in depth: Holon also fails any plan or review run that changed its working
-directory, verifies every execution with a different employee, and gates all work behind
-graded approval. Known limits: `git`, `sqlite3` and shell redirection can still write on the
-observer profile; the workdir hash catches writes *inside* the workdir only.
-
-Observer runs can't write `result.json`, so they print the result JSON as their final message;
-the driver uses `result = "stdout-json"` to pick it up (and still prefers `result.json` when present).
+- **Observe stages** run on `holon-observer`: write, upload, download and skill-writing tools are
+  excluded, and the shell allows only commands that cannot write (no `git`, no `sqlite3`, no
+  interpreters). The kernel also fingerprints the working directory and fails a run that changed it.
+- **Execute** runs on `holon-worker`, within the allowed roots.
+- **Roots.** Agents reach only the run directories and the `--allow` paths. The instance's
+  databases, `holon.toml`, drivers, skills and genome, and `~/.config` (where the Chair key lives),
+  are forbidden paths. Agents change the organization only through `holon` with their run token.
 
 ## Install
 
 ```sh
-ln -sf ~/src/holon/bin/holon ~/.local/bin/holon        # lets agents run `holon` (allowlisted)
-python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/.hermes/organism --dry-run
-python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/.hermes/organism
-holon hr hire ... --driver zeroclaw                     # employees now run on ZeroClaw
+python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/src/repo --dry-run
+python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/src/repo [--model free-stack]
+holon adapter test zeroclaw          # conformance: a few real runs in a scratch organization
+holon hr hire … --driver zeroclaw     # employees now run on ZeroClaw
 ```
+
+`--config-dir DIR` writes the block into a separate ZeroClaw config instead of `~/.zeroclaw`.
+Upgrading from the pre-graph adapter (aliases `holon-plan`, `holon-execute`, …): re-run with
+`--force`. Re-run without `--force` after tailoring skills, to re-export them.

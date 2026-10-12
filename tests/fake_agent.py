@@ -41,7 +41,8 @@ elif stage == "execute":
     if mode == "fail":
         env = {"outcome": "failure", "summary": "could not write", "documentation": "disk said no"}
     else:
-        (workdir / "hello.txt").write_text("hi\n")
+        target = "conformance.txt" if "conformance.txt" in Path(brief["context_md"]).read_text() else "hello.txt"
+        (workdir / target).write_text("ok\n" if target == "conformance.txt" else "hi\n")
         env = {"outcome": "success", "summary": "wrote hello.txt",
                "documentation": "# Done\n\nCreated `hello.txt` containing `hi`.",
                "artifacts": [str(workdir / "hello.txt")],
@@ -50,8 +51,8 @@ elif stage == "execute":
                "decisions": ["use plain text, no markdown"], "next_intent": "translate the greeting",
                "proposals": ["add a greeting style guide"]}
 elif stage == "verify":
-    ok = (workdir / "hello.txt").exists()
-    env = {"verdict": "pass" if ok else "fail", "note": "hello.txt " + ("exists" if ok else "missing")}
+    ok = (workdir / "hello.txt").exists() or (workdir / "conformance.txt").exists()
+    env = {"verdict": "pass" if ok else "fail", "note": "the file " + ("exists" if ok else "is missing")}
 else:  # retro
     env = {"summary": "a write failed", "cause": "the disk was full", "learnings": ["check disk space first"],
            "actions": [{"title": "Add a disk check", "intent": "fail fast when the disk is full"}]}

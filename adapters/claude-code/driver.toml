@@ -1,8 +1,10 @@
-# Example driver: Claude Code headless (`claude -p`).
-# Plan/verify/review runs get plan mode (no edits); executors get edit permissions.
+# Holon driver for Claude Code headless (`claude -p`). Observe stages run in plan mode (no edits);
+# execute gets edit permissions. The prompt carries the identity card and the stage brief.
 name = "claude-code"
-command = "claude -p {prompt} {read_only} --output-format json"
+command = "claude -p {briefing} {read_only}{act_args} --output-format json"
 cwd = "{workdir}"
 timeout_s = 3600
-result = "file"   # the agent writes result.json; stdout JSON is the fallback either way
+result = "stdout-json"   # result.json when written; else the JSON in Claude's reply
 read_only = "--permission-mode plan"
+act_args = "--permission-mode acceptEdits"
+read_only_enforced = true

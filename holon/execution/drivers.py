@@ -6,6 +6,7 @@
     timeout_s = 1800
     result    = "file"                 # "file": agent writes {result_path}; "stdout-json": last JSON object on stdout
     read_only = "--plan-only"   # substituted as {read_only} for observe-posture stages, else ""
+    act_args  = "--yes"         # substituted as {act_args} for the execute stage (act posture), else ""
     stages    = ["plan", "execute"]    # optional restriction (default: every stage)
     read_only_enforced = false   # true if the harness itself denies writes on observe stages (an
                                  # observe alias/profile); the kernel's workdir guard still runs unless
@@ -15,7 +16,9 @@
 
 Placeholders: {brief_dir} {brief_md} {context_md} {identity_md} {result_path} {workdir} {run_id}
 {task_id} {stage} {role} {posture} (observe | act) {employee_id} {employee_slug} {read_only}
-{prompt} (= the BRIEF.md text) {spawn} (= a one-line spawn message pointing at BRIEF.md)
+{prompt} (= the BRIEF.md text) {identity} (= the identity card) {briefing} (= identity card + BRIEF.md,
+for harnesses that take one message) {spawn} (= a one-line spawn message pointing at BRIEF.md)
+{act_args}
 {holon} (= kernel command). `duty` is accepted as an alias of `stage`.
 Search order: $HOLON_HOME/config/drivers/*.toml, then the examples shipped with the kernel.
 """
@@ -50,6 +53,7 @@ class Driver:
     timeout_s: int = 3600
     result: str = "file"
     read_only: str = ""
+    act_args: str = ""
     read_only_enforced: bool = False   # the harness itself denies writes on observe stages
     stages: list[str] = field(default_factory=lambda: list(vocab.STAGES))
     env: dict[str, str] = field(default_factory=dict)
@@ -58,8 +62,8 @@ class Driver:
     @classmethod
     def from_toml(cls, text: str, source: str) -> "Driver":
         data = tomllib.loads(text)
-        unknown = set(data) - {"name", "command", "cwd", "timeout_s", "result", "read_only", "read_only_enforced",
-                               "stages", "duties", "env"}
+        unknown = set(data) - {"name", "command", "cwd", "timeout_s", "result", "read_only", "act_args",
+                               "read_only_enforced", "stages", "duties", "env"}
         if "duties" in data:  # pre-graph drivers named four duties; observe-capable ones serve every observe stage
             stages = {LEGACY_STAGE.get(d, d) for d in data.pop("duties")}
             data["stages"] = sorted(stages | ({"research", "shape", "retro"} if "plan" in stages else set()))
@@ -111,11 +115,14 @@ def render(driver: Driver, brief: dict) -> tuple[str, str]:
         "employee_slug": brief.get("employee_slug") or "", "holon": brief["holon"],
         "prompt": Path(brief["brief_md"]).read_text(), "spawn": spawn_message(brief),
     }
+    values["identity"] = Path(brief["identity_md"]).read_text() if brief.get("identity_md") else ""
+    values["briefing"] = (values["identity"] + "\n\n---\n\n" if values["identity"] else "") + values["prompt"]
     quoted = {k: shlex.quote(v) for k, v in values.items()}
     quoted["holon"] = values["holon"]  # already a shell-ready command
     for k in ("stage", "duty", "role", "posture", "employee_slug"):
         quoted[k] = values[k]  # identifiers: safe, and used inside larger tokens (e.g. alias names)
     quoted["read_only"] = driver.read_only if vocab.POSTURE[stage] == "observe" else ""
+    quoted["act_args"] = driver.act_args if vocab.POSTURE[stage] == "act" else ""
     try:
         cmd = driver.command.format(**quoted)
         cwd = driver.cwd.format(**values)

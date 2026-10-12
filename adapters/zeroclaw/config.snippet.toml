@@ -1,56 +1,49 @@
 
 # ── Holon (agentic OS) employees: appended by adapters/zeroclaw/install.py ──
-# One agent alias per duty; provider, allowed roots and (optionally) a pinned model are filled in by the installer.
+# Two agent aliases, one per posture; provider, allowed roots and the skills directory are filled in.
 
 @PROVIDER_BLOCK@
 [runtime_profiles.holon]
 # Planning and execution need room to explore; the ZeroClaw default stops a turn after 10 tool calls.
 max_tool_iterations = 40
 
+[skill_bundles.holon]
+# Holon's skills library, exported (rendered for this instance) by `holon skill export`.
+directory = "@SKILLS_DIR@"
+
 [risk_profiles.holon-observer]
-# plan / verify / review: look, never touch. Write tools are excluded and the shell is limited
-# to read-only commands; Holon additionally fails any plan/review run that changed its workdir.
+# research, shape, plan, approve, verify, retro: look, never touch. No write tools; the shell is
+# limited to commands that cannot write (no git, no sqlite3, no interpreters).
 level = "full"
 block_high_risk_commands = true
 auto_approve = ["*"]
 excluded_tools = ["file_write", "file_edit", "file_upload", "file_upload_bundle", "file_download", "skill_manage"]
 allowed_roots = [@ALLOWED_ROOTS@]
-forbidden_paths = ["/etc", "/root", "/usr", "/sbin", "/boot", "/dev", "/sys", "/var/run", "~/.ssh", "~/.gnupg", "~/.aws", "~/.config", "/proc/kcore"]
-allowed_commands = ["holon", "ls", "cat", "grep", "find", "head", "tail", "wc", "stat", "du", "df", "date", "pwd", "echo", "sort", "uniq", "cut", "tr", "git", "jq", "sqlite3", "uname", "uptime", "free", "hostname"]
+forbidden_paths = [@FORBIDDEN_PATHS@]
+allowed_commands = ["holon", "ls", "cat", "grep", "find", "head", "tail", "wc", "stat", "du", "df", "date", "pwd", "sort", "uniq", "cut", "tr", "jq", "uname", "uptime", "free", "hostname"]
 
 [risk_profiles.holon-worker]
-# execute: does the approved plan. Same forbidden paths; broader commands.
-# skill_manage is excluded on both profiles: an employee's learning belongs in Holon memory
-# (deduplicated, promoted, inherited), not in harness-local skills.
+# execute: does the approved plan. Same roots and forbidden paths; broader commands.
+# skill_manage is excluded: an employee's learning belongs in Holon memory, not harness-local skills.
 level = "full"
 block_high_risk_commands = true
 auto_approve = ["*"]
 excluded_tools = ["skill_manage"]
 allowed_roots = [@ALLOWED_ROOTS@]
-forbidden_paths = ["/etc", "/root", "/usr", "/sbin", "/boot", "/dev", "/sys", "/var/run", "~/.ssh", "~/.gnupg", "~/.aws", "~/.config", "/proc/kcore"]
-allowed_commands = ["holon", "git", "npm", "cargo", "ls", "cat", "grep", "find", "echo", "pwd", "wc", "head", "tail", "date", "df", "du", "uname", "uptime", "hostname", "python", "python3", "pip", "node", "free", "timeout", "sort", "awk", "sleep", "mkdir", "bash", "sh", "env", "cut", "tr", "uniq", "tee", "cp", "mv", "ln", "sed", "jq", "sqlite3", "stat", "touch", "rm"]
+forbidden_paths = [@FORBIDDEN_PATHS@]
+allowed_commands = ["holon", "git", "npm", "cargo", "ls", "cat", "grep", "find", "echo", "pwd", "wc", "head", "tail", "date", "df", "du", "uname", "uptime", "hostname", "python", "python3", "pip", "node", "free", "timeout", "sort", "awk", "sleep", "mkdir", "bash", "sh", "env", "cut", "tr", "uniq", "tee", "cp", "mv", "ln", "sed", "jq", "stat", "touch", "rm"]
 
-[agents.holon-plan]
+[agents.holon-observe]
 model_provider = "@MODEL_PROVIDER@"
 runtime_profile = "holon"
 risk_profile = "holon-observer"
+skill_bundles = ["holon"]
 enabled = true
 
-[agents.holon-review]
-model_provider = "@MODEL_PROVIDER@"
-runtime_profile = "holon"
-risk_profile = "holon-observer"
-enabled = true
-
-[agents.holon-verify]
-model_provider = "@MODEL_PROVIDER@"
-runtime_profile = "holon"
-risk_profile = "holon-observer"
-enabled = true
-
-[agents.holon-execute]
+[agents.holon-act]
 model_provider = "@MODEL_PROVIDER@"
 runtime_profile = "holon"
 risk_profile = "holon-worker"
+skill_bundles = ["holon"]
 enabled = true
 # ── end Holon ──
