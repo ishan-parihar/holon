@@ -6,7 +6,7 @@
 1. backs up ~/.zeroclaw/config.toml, appends the holon-* agents and risk profiles between
    markers (or replaces them with --force), re-parses the TOML, and restores the backup if invalid
 2. installs the driver to $HOLON_HOME/config/drivers/zeroclaw.toml
-3. installs the holon-employee skill with `zeroclaw skills install`
+3. exports the Holon skills library (`holon skill export`) and installs each skill with `zeroclaw skills install`
 4. verifies the agent aliases are visible to `zeroclaw agents list`
 Uninstall: restore the printed backup (or delete the marked block) and remove the driver file.
 """
@@ -26,9 +26,9 @@ BEGIN = "# ── Holon (agentic OS) employees"
 END = "# ── end Holon ──"
 
 
-def sh(cmd: list[str]) -> tuple[int, str]:
+def sh(cmd: list[str], cwd: str | None = None) -> tuple[int, str]:
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=60, cwd=cwd)
         return p.returncode, (p.stdout + p.stderr).strip()
     except (OSError, subprocess.TimeoutExpired) as e:
         return 127, str(e)
@@ -121,8 +121,16 @@ def main() -> int:
     print(f"driver: {drivers_dir / 'zeroclaw.toml'}")
 
     if not a.skip_skill:
-        rc, out = sh(["zeroclaw", "skills", "install", str(HERE / "skill" / "holon-employee")])
-        print(f"skill: {'installed' if rc == 0 else 'NOT installed'}{'' if rc == 0 else ' — ' + out[-300:]}")
+        # the skills library is exported from the kernel (resolved layers, rendered for this instance),
+        # so ZeroClaw loads exactly what `holon skill show` serves to any other harness
+        export = home / "exported-skills"
+        rc, out = sh([sys.executable, "-m", "holon", "--home", str(home), "skill", "export", "--to", str(export)],
+                     cwd=str(HERE.parents[1]))
+        if rc != 0:
+            print(f"skills: export failed — {out[-300:]}")
+        for d in sorted(p for p in export.iterdir() if (p / "SKILL.md").exists()) if rc == 0 else []:
+            rc2, out2 = sh(["zeroclaw", "skills", "install", str(d)])
+            print(f"skill {d.name}: {'installed' if rc2 == 0 else 'NOT installed — ' + out2[-200:]}")
 
     rc, out = sh(["zeroclaw", "agents", "list"])
     missing = [x for x in ("holon-plan", "holon-execute", "holon-verify", "holon-review") if x not in out]

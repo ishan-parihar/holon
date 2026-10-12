@@ -33,10 +33,10 @@ write changed) are replanned; dead runs are recovered by `holon tick`.
 ```sh
 export HOLON_HOME=~/holon
 bin/holon init
-bin/holon hr hire --dept executive --head --name Ada --title CEO --duties plan,review \
+bin/holon hr hire --dept executive --slot ceo --name Ada --title CEO \
      --driver zeroclaw --jd @jd/ceo.md --reason "founding CEO" --status active
-bin/holon dept create it --name "IT" --mission "Keep hosts, tools and credentials healthy"
-bin/holon hr hire --dept it --head --name Bo --title "Head of IT" --duties plan,review,verify \
+bin/holon dept create it --name "IT" --mission "Keep hosts, tools and credentials healthy" --profile light
+bin/holon hr hire --dept it --slot lead --name Bo --title "Head of IT" \
      --driver zeroclaw --jd @jd/head-of-it.md --reason "founding HOD"
 bin/holon task add "Free disk space on the VPS" --intent "Get / under 75% used" --dept it
 bin/holon schedule add --kind plan    --cron "*/10 * * * *" --as <hod-id>
@@ -48,12 +48,17 @@ bin/holon plan queue                   # plans routed to you (G2+ until authorit
 bin/holon plan approve <plan> --note "…" | bin/holon plan reject <plan> --note "what to change"
 bin/holon audit samples                # spot-check approvals your CEO/HODs made
 bin/holon org                          # the org chart
+bin/holon dept roles it                # the department's role slots and who fills them
+bin/holon skill list --as <emp-id>     # the skills an employee works with; `skill invoke` renders one
+bin/holon charter autonomy             # how much each department may decide without you
 ```
 
 ## Instance layout (`$HOLON_HOME`)
 
 ```
-holon.toml                            config: grading floors, authority, memory promotion, context budget
+holon.toml                            config: autonomy, grading floors, memory promotion, context budget
+skills/[@<dept>/]<skill>/             skills tailored for the organization or one department (override holon/skills)
+genome/<profile>.toml                 instance genome profiles (override holon/genome)
 config/drivers/*.toml                 harness drivers
 execution/runtime/work.db             departments, employees, authority, tasks, plans, runs, results, messages
 execution/runtime/runs/<run>/         BRIEF.md, brief.json, context.md, result.json, driver.log
@@ -62,7 +67,7 @@ capabilities/strategy/trajectory.db   goals tree (read-only to the kernel)
 capabilities/logbook/logbook.db       the Chair's logbook (read-only to the kernel)
 ```
 
-Docs: [INTENT](docs/INTENT.md) · [CONTRACT](docs/CONTRACT.md) (for harness authors) · [NAMING](docs/NAMING.md)
+Docs: [INTENT](docs/INTENT.md) · [GENOME](docs/GENOME.md) (roles, profiles, skills, autonomy) · [CONTRACT](docs/CONTRACT.md) (for harness authors) · [NAMING](docs/NAMING.md)
 
 ## Tests
 

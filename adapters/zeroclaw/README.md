@@ -7,7 +7,7 @@ directory is the *only* place that knows ZeroClaw exists.
 |---|---|
 | `driver.toml` | Runs each duty as its own agent alias: `zeroclaw agent -a holon-{duty} -m <brief>` |
 | `config.snippet.toml` | Four agent aliases + two risk profiles (below), appended to `~/.zeroclaw/config.toml` between markers |
-| `skill/holon-employee/` | A skill so any ZeroClaw session can work as a Holon employee in pull mode (`holon claim` / `holon submit`) |
+| (skills) | The installer exports the Holon skills library (`holon skill export`) and installs every skill, so any ZeroClaw session can work as a Holon employee |
 | `install.py` | Idempotent installer with automatic config backup and TOML validation |
 | `../systemd/holon-tick.*` | The heartbeat timer (harness-neutral; any timer works) |
 

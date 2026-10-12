@@ -15,11 +15,14 @@ file is for agents changing the kernel itself.
 | `holon/execution/schedules.py` | operations/work | schedules and recurring plans |
 | `holon/execution/service.py` | execution/runtime | claim → brief → driver → ingest; `tick` |
 | `holon/execution/{briefs,drivers,envelopes,findings,cron}.py` | execution/runtime | the harness contract |
-| `holon/execution/templates/` | execution/runtime | role instructions (planner/executor/verifier) |
+| `holon/execution/autonomy.py` | governance | autonomy policy: presets, per-department overrides, sampling |
+| `holon/execution/genome.py` + `holon/genome/*.toml` | governance | the six standard roles and the profiles (slots) departments follow |
+| `holon/skills/` | capabilities/skills | the standard skills library; role skills hold the duty briefs (`briefs/<duty>.md`) |
+| `holon/capabilities/skills.py` | capabilities/skills | skill layers (dept → instance → stdlib), invoke, fork, check, export |
 | `holon/capabilities/memory.py` | capabilities/memory | **only writer of memory.db** |
 | `holon/capabilities/context.py` | capabilities/memory | context bundles (reads trajectory/logbook read-only) |
 | `holon/migrations/<db>/` | — | forward-only SQL; `.fts.` files are optional (FTS5) |
-| `holon/governance/` | governance | reserved: law (genome.db), observatory (P5) |
+| `holon/governance/` | governance | reserved: observatory (P5) |
 | `schemas/`, `docs/CONTRACT.md` | — | the published harness contract |
 
 ## Laws (enforced by `tests/test_core.py::Agnosticism` and the state machine)

@@ -20,10 +20,11 @@ from holon.capabilities.context import DEFAULT_BUDGET_CHARS, compile_context
 from holon.capabilities.memory import Memory
 from holon.core.db import connect, migrate, now, write_txn
 from holon.core.paths import Home
-from holon.execution import briefs, drivers, grading
+from holon.capabilities.skills import Library
+from holon.execution import autonomy, briefs, drivers, grading
 from holon.execution.briefs import kernel_env
 from holon.execution.envelopes import VALIDATORS, EnvelopeError
-from holon.execution.org import CHAIR, EXECUTIVE, AuthorityConfig, Org
+from holon.execution.org import CHAIR, EXECUTIVE, Org, approver_ref
 from holon.execution.schedules import Schedules
 from holon.execution.staleness import _hash_dir
 from holon.execution.work import Claimant, TransitionError, Work
@@ -32,7 +33,7 @@ DEFAULT_CONFIG = {
     "context": {"budget_chars": DEFAULT_BUDGET_CHARS},
     "planner": {"enforce_read_only": True},
     "grading": {},
-    "authority": {},
+    "autonomy": {},
     "memory": {"promotion_threshold": 2},
 }
 
@@ -67,7 +68,11 @@ class Kernel:
         self.config = load_config(home)
         self.work = Work(self.wconn, actor)
         self.memory = Memory(self.mconn)
-        self.org = Org(self.wconn, actor, AuthorityConfig.from_config(self.config))
+        self.org = Org(self.wconn, actor, self.config)
+        autonomy.policy(self.config)  # fail fast on a bad [autonomy] section
+        self.work.appliers["authority"] = lambda a: self.org.write_authority(
+            a["approver"], a["task_class"], a["max_grade"], a["reason"])
+        self.skills = Library(home)
         self.schedules = Schedules(self.wconn, actor)
         self.org.bootstrap()
 
@@ -97,7 +102,7 @@ class Kernel:
         out = self.work.approve(plan_id, note, recurring, review_run)
         task, plan = out["task"], out["plan"]
         self.memory.record_review(task, plan, "approved", note, self._dept_scope(task["dept_id"]))
-        if out["decider"] != CHAIR and self.org.should_sample(plan_id):
+        if out["decider"] != CHAIR and self.org.should_sample(plan_id, task["dept_id"]):
             with write_txn(self.wconn):
                 self.wconn.execute("INSERT OR IGNORE INTO audit_samples (plan_id, approver, sampled_at) VALUES (?,?,?)",
                                    (plan_id, out["decider"], now()))
@@ -130,8 +135,45 @@ class Kernel:
         plan = self.work.latest_plan(task_id, "approved") or self.work.latest_plan(task_id)
         change = None
         if plan and plan["decided_by"] and plan["decided_by"].startswith("emp:"):
-            change = self.org.update_earned_authority(plan["decided_by"], task.get("task_class"))
+            change = self._earned_authority(plan["decided_by"], task.get("task_class"))
         return {"task": task, "authority_change": change}
+
+    # ── authority: narrowing applies at once, widening needs the approver the autonomy policy names ──
+    def _approver_dept(self, approver: str) -> str | None:
+        return self.org.employee(approver[4:])["dept"] if approver.startswith("emp:") else None
+
+    def _earned_authority(self, approver: str, task_class: str | None) -> dict | None:
+        pol = self.org.policy(self._approver_dept(approver))
+        change = self.org.earned_authority_change(approver, task_class, pol["promote_after"], pol["auto_promote_cap"])
+        if change:
+            change.update(self.set_authority(change["approver"], change["task_class"], change["to"], change["reason"],
+                                             requested_by="kernel"))
+        return change
+
+    def set_authority(self, approver: str, task_class: str, max_grade: int, reason: str,
+                      requested_by: str | None = None) -> dict:
+        """The one way authority changes. The Chair sets it directly; for anyone else (including the kernel's
+        earned-authority loop) a widening becomes a proposal for the approver the autonomy policy names,
+        unless that policy is 'auto'. Nobody approves their own widening."""
+        requested_by = requested_by or self.actor
+        current = self.org.authority_of(approver, None if task_class == "*" else task_class)
+        widen_approver = self.org.policy(self._approver_dept(approver))["widen_approver"]
+        if requested_by == CHAIR or max_grade <= current or widen_approver == "auto":
+            self.org.set_authority(approver, task_class, max_grade, reason)
+            return {"applied": True}
+        decider = CHAIR
+        ceo = self.org.ceo()
+        if widen_approver == "ceo" and ceo and approver_ref(ceo["id"]) not in (approver, requested_by):
+            decider = approver_ref(ceo["id"])
+        plan = self.work.propose(
+            title=f"Widen authority: {approver} on {task_class} G{current} -> G{max_grade}",
+            intent=f"{reason}. Requested by {requested_by}.",
+            steps=f"On approval the kernel sets {approver}'s approval authority for task class '{task_class}' "
+                  f"from G{current} to G{max_grade}. Review: {approver}'s record (holon hr review), audit samples.",
+            apply={"kind": "authority", "approver": approver, "task_class": task_class, "max_grade": max_grade,
+                   "reason": f"{reason} (approved proposal)"},
+            approver=decider, grade=max_grade, task_class="authority-change", dept=EXECUTIVE, author=requested_by)
+        return {"applied": False, "proposal": plan["id"], "approver": decider}
 
     def judge_sample(self, plan_id: str, verdict: str, note: str) -> dict:
         """The Chair re-judges a sampled employee approval; a disagreement costs the approver authority."""
@@ -144,8 +186,7 @@ class Kernel:
             self.wconn.execute("UPDATE audit_samples SET verdict=?, note=?, judged_at=? WHERE plan_id=?",
                                (verdict, note, now(), plan_id))
         task = self.work.get_task(self.work.get_plan(plan_id)["task_id"])
-        change = self.org.update_earned_authority(row["approver"], task.get("task_class")) \
-            if verdict == "disagree" else None
+        change = self._earned_authority(row["approver"], task.get("task_class")) if verdict == "disagree" else None
         return {"plan_id": plan_id, "verdict": verdict, "authority_change": change}
 
     def audit_samples(self, pending_only: bool = True) -> list[dict]:
@@ -204,9 +245,29 @@ class Kernel:
                                 budget=int(self.config["context"]["budget_chars"]), run_id=run["id"],
                                 employee=emp, predecessors=self.org.predecessors(emp["id"]) if emp else None,
                                 plan_id=plan["id"] if (plan and duty == "review") else None)
-        bdir = briefs.build(self.home, run, task, md)
+        dept = self.org.dept(task["dept_id"])["slug"] if task.get("dept_id") else None
+        bdir = briefs.build(self.home, run, task, md, self.skills, dept)
         self.work.set_run_paths(run["id"], str(bdir), str(bdir / "driver.log"))
         return Claimed(run=self.work.get_run(run["id"]), task=task, brief_dir=bdir, plan=plan, employee=emp)
+
+    # ── skills ────────────────────────────────────────────────────────────
+    def invoke_skill(self, name: str, file: str = "SKILL.md", employee_id: str | None = None,
+                     dept: str | None = None) -> dict:
+        """Resolve a skill (department → organization → standard library), render it for the employee, and
+        record the use: which skills are used, by whom, is what the steward's evolution loop measures."""
+        emp = self.org.employee(employee_id) if employee_id else None
+        dept = dept or (emp["dept"] if emp else None)
+        layer, path = self.skills.resolve(name, file, dept)
+        text = self.skills.render(path.read_text(), {
+            "holon": briefs.holon_command(self.home), "emp_id": emp["id"] if emp else None,
+            "emp_name": emp["name"] if emp else None, "dept": dept,
+            "roles": ", ".join(emp["roles"]) if emp else None})
+        with write_txn(self.wconn):
+            self.wconn.execute(
+                "INSERT INTO events (ts, entity, entity_id, from_status, to_status, actor, note) VALUES (?,?,?,?,?,?,?)",
+                (now(), "skill", f"{name}/{file}", None, layer, f"emp:{emp['id']}" if emp else self.actor,
+                 f"invoked ({dept or 'org'})"))
+        return {"skill": name, "file": file, "layer": layer, "path": str(path), "text": text}
 
     # ── ingestion: the one place agent output enters the organization ─────
     def submit(self, run_id: str, envelope: dict | None = None, exit_code: int | None = 0,
@@ -244,12 +305,31 @@ class Kernel:
             mem = self.memory.consolidate(task, run_id, env, run["employee_id"],
                                           self._dept_scope(task["dept_id"]) or (f"dept:{emp['dept']}" if emp else None))
             mem["promotions"] = self._promote(mem.pop("lessons"), emp)
-            return {"kind": kind, **out, "memory": mem}
+            sampled_out = self._sample_verification(out["task"], run, env)
+            if sampled_out:
+                out["task"] = sampled_out
+            return {"kind": kind, **out, "memory": mem, "verification_skipped": bool(sampled_out)}
         if kind == "verify":
             return {"kind": kind, **self.verify(run["task_id"], env["verdict"], env["note"], run_id=run_id)}
         if env["decision"] == "approve":
             return {"kind": kind, **self.approve(run["plan_id"], env.get("note"), review_run=run_id)}
         return {"kind": kind, **self.reject(run["plan_id"], env["note"], review_run=run_id)}
+
+    def _sample_verification(self, task: dict, run: dict, env: dict) -> dict | None:
+        """Trusted G0 work is verified on a sample (autonomy.verify_sample_rate); the rest closes unverified.
+        Trusted = the executor's last `trusted_after` verified results in this task class all passed."""
+        if task["status"] != "verifying" or env["outcome"] != "success" or not run["employee_id"]:
+            return None
+        plan = self.work.get_plan(run["plan_id"]) if run.get("plan_id") else None
+        if not plan or plan["grade"] != 0:
+            return None
+        pol = self.org.policy(task["dept_id"])
+        streak = self.work.executor_streak(run["employee_id"], task.get("task_class"))
+        if streak < pol["trusted_after"] or autonomy.sampled(f"verify:{run['id']}", pol["verify_sample_rate"]):
+            return None
+        return self.work.skip_verification(
+            task["id"], f"verification sampled out: trusted G0 work ({streak} consecutive verified passes; "
+                        f"{pol['verify_sample_rate']:.0%} of such results are verified)")
 
     def _check_org_refs(self, env: dict) -> None:
         problems = []

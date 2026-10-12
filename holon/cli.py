@@ -52,7 +52,10 @@ def cmd_init(args):
         k.home.config_file.write_text(
             "# holon instance config\n[context]\nbudget_chars = 24000\n\n[planner]\nenforce_read_only = true\n\n"
             "[grading]\nnovelty_min_verified = 3\nsensitive_paths = []\n\n"
-            "[authority]\nceo_initial_max = 1\nauto_promote_cap = 2\npromote_after = 10\naudit_sample_permille = 100\n\n"
+            "[autonomy]\n# supervised (safe default) | delegated | autonomous; keys below override the preset\n"
+            "mode = \"supervised\"\n# verify_sample_rate = 0.2   # share of trusted G0 results still verified\n"
+            "# widen_approver = \"chair\" # who approves widening authority: chair | ceo | auto\n"
+            "# [autonomy.dept.<slug>]     # per department, once it has earned trust\n# mode = \"delegated\"\n\n"
             "[memory]\npromotion_threshold = 2\n")
     _out(args, {"home": str(k.home.root)}, f"holon initialized at {k.home.root} (executive department ready; "
                                            f"hire a CEO with: holon hr hire --dept executive --head ...)")
@@ -84,18 +87,43 @@ def cmd_org(args):
         lines.append(f"{d['slug']}  ({d['name']})" + (f" — {d['mission']}" if d["mission"] else ""))
         for e in sorted(emps, key=lambda e: not e["is_head"]):
             lines.append(f"  {'HOD ' if e['is_head'] else '    '}{e['id']}  {e['name']}, {e['title']}  "
-                         f"[{e['status']}] duties={','.join(e['duties'])} via {e['driver']}")
+                         f"[{e['status']}] roles={','.join(e['roles'])} via {e['driver']}")
     _out(args, out, "\n".join(lines) or "no departments")
 
 
 def cmd_dept(args):
     k = _kernel(args)
+    from holon.execution import genome
     if args.dept_cmd == "create":
-        d = k.org.create_dept(args.slug, args.name, _text_arg(args.mission), args.parent)
-        _out(args, d, f"{d['id']}  {d['slug']} created")
+        d = k.org.create_dept(args.slug, args.name, _text_arg(args.mission), args.parent,
+                              genome.load_profile(args.profile, k.home))
+        st = k.org.staffing(d["slug"])
+        _out(args, d, f"{d['id']}  {d['slug']} created with profile {d['profile']}; slots to fill: "
+                      + ", ".join(f"{s['slot']} ({'+'.join(s['roles'])})" for s in st["slots"]))
     elif args.dept_cmd == "list":
         ds = k.org.depts()
-        _out(args, ds, "\n".join(f"{d['slug']:<20} head={d['head_name'] or '-'}  {d['name']}" for d in ds))
+        _out(args, ds, "\n".join(f"{d['slug']:<20} {d.get('profile') or '-':<10} head={d['head_name'] or '-'}  {d['name']}"
+                                 for d in ds))
+    elif args.dept_cmd == "roles":
+        st = k.org.staffing(args.slug)
+        lines = [f"{st['dept']}: profile {st['profile']} — {'complete' if st['complete'] else 'INCOMPLETE'}"]
+        for s in st["slots"]:
+            lines.append(f"  {'ok ' if s['ok'] else '-- '} {s['slot']:<12} {'+'.join(s['roles']):<22} "
+                         + (", ".join(s["filled_by"]) or f"vacant (needs {s['min']})"))
+        lines += [f"  ! {w}" for w in st["warnings"]]
+        _out(args, st, "\n".join(lines))
+    elif args.dept_cmd == "profile":
+        if k.actor != "chair":
+            raise PermissionError("only the Chair changes a department's genome profile")
+        d = k.org.set_profile(args.slug, genome.load_profile(args.profile, k.home), args.reason)
+        _out(args, d, f"{d['slug']} now follows profile {d['profile']}")
+    elif args.dept_cmd == "profiles":
+        out = []
+        for name in sorted(genome.profile_paths(k.home)):
+            g = genome.load_profile(name, k.home)
+            out.append(g)
+        _out(args, out, "\n".join(f"{g['name']:<12} {g['description']}\n" + "\n".join(
+            f"    {s['name']:<12} {'+'.join(s['roles'])}" for s in g["slots"]) for g in out))
 
 
 def cmd_hr(args):
@@ -103,7 +131,9 @@ def cmd_hr(args):
     o = k.org
     if args.hr_cmd == "hire":
         e = o.hire(name=args.name, title=args.title, dept=args.dept, job_description=_text_arg(args.jd) or "",
-                   duties=args.duties.split(","), driver=args.driver, reason=args.reason, head=args.head,
+                   duties=args.duties.split(",") if args.duties else None,
+                   roles=args.roles.split(",") if args.roles else None, slot=args.slot,
+                   driver=args.driver, reason=args.reason, head=args.head,
                    reports_to=args.reports_to, task_classes=args.task_classes.split(",") if args.task_classes else None,
                    skills=args.skills.split(",") if args.skills else None, max_concurrency=args.max_concurrency,
                    status=args.status)
@@ -127,7 +157,8 @@ def cmd_emp(args):
     else:
         e = k.org.employee(args.employee)
         _out(args, e, f"{e['name']}, {e['title']} ({e['dept']}{', HOD' if e['is_head'] else ''}) [{e['status']}]\n"
-                      f"duties: {', '.join(e['duties'])} · driver: {e['driver']} · reports to: {e['reports_to'] or 'Chair'}"
+                      f"roles: {', '.join(e['roles'])} · duties: {', '.join(e['duties'])} · driver: {e['driver']}"
+                      f" · reports to: {e['reports_to'] or 'Chair'}"
                       f"\n\n{e['job_description']}")
 
 
@@ -355,10 +386,61 @@ def cmd_charter(args):
     k = _kernel(args)
     if args.charter_cmd == "authority":
         if args.set_for:
-            k.org.set_authority(args.set_for, args.task_class, int(args.max_grade.upper().lstrip("G")), args.reason)
+            r = k.set_authority(args.set_for, args.task_class, int(args.max_grade.upper().lstrip("G")), args.reason)
+            if not r["applied"]:
+                print(f"widening needs approval: proposal {r['proposal']} -> {r['approver']}", file=sys.stderr)
         rows = k.org.authority_table()
         _out(args, rows, "\n".join(f"{r['approver']:<34} {r['task_class']:<16} up to G{r['max_grade']}  ({r['reason']})"
                                    for r in rows))
+
+
+    elif args.charter_cmd == "autonomy":
+        rows = [{"dept": d["slug"], **k.org.policy(d["slug"])} for d in k.org.depts()]
+        org = {"dept": "(organization)", **k.org.policy()}
+        _out(args, [org] + rows, "\n".join(
+            f"{r['dept']:<16} {r['mode']:<11} widen→{r['widen_approver']:<6} earned≤G{r['auto_promote_cap']} "
+            f"after {r['promote_after']}  verify trusted G0: {r['verify_sample_rate']:.0%} (trusted after "
+            f"{r['trusted_after']})  audit {r['audit_sample_permille'] / 10:.0f}%" for r in [org] + rows))
+
+
+def cmd_skill(args):
+    k = _kernel(args)
+    lib = k.skills
+    dept = args.dept or (k.org.employee(args.as_)["dept"] if getattr(args, "as_", None) else None)
+    c = args.skill_cmd
+    if c == "list":
+        rows = lib.catalog(dept, args.role)
+        if getattr(args, "as_", None):
+            mine = {"holon-employee", "holon-collaboration", "holon-memory"} | {
+                f"holon-{r}" for r in k.org.employee(args.as_)["roles"]} | set(k.org.employee(args.as_)["skills"] or [])
+            rows = [m for m in rows if m["name"] in mine]
+        _out(args, rows, "\n".join(f"{m['name']:<24} {m.get('kind', '?'):<10} {m['source']:<14} "
+                                   f"{','.join(m.get('roles') or [])}\n    {m.get('description', '')[:140]}" for m in rows)
+             or "no skills")
+    elif c == "show":
+        layer, path = lib.resolve(args.name, args.file, dept)
+        _out(args, {"layer": layer, "path": str(path), "text": path.read_text()}, path.read_text())
+    elif c == "path":
+        layer, path = lib.resolve(args.name, args.file, dept)
+        _out(args, {"layer": layer, "path": str(path)}, str(path))
+    elif c == "invoke":
+        r = k.invoke_skill(args.name, args.file, getattr(args, "as_", None), args.dept)
+        _out(args, r, r["text"])
+    elif c == "fork":
+        written = lib.fork(args.name, args.dept, args.file)
+        _out(args, [str(p) for p in written], "\n".join(f"forked {p}" for p in written) or "nothing to fork (already tailored)")
+    elif c == "new":
+        p = lib.new(args.name, args.kind, args.description, args.roles.split(",") if args.roles else None, args.dept)
+        _out(args, {"path": str(p)}, f"created {p}")
+    elif c == "check":
+        from holon.execution.genome import ROLES
+        problems = lib.check(args.dept, list(ROLES))
+        _out(args, {"problems": problems}, "\n".join(problems) or f"{len(lib.names(args.dept))} skills ok")
+        return 1 if problems else 0
+    elif c == "export":
+        from holon.execution.briefs import holon_command
+        out = lib.export(Path(args.to).expanduser(), {"holon": holon_command(k.home)}, args.name or None, dept)
+        _out(args, [str(p) for p in out], "\n".join(f"exported {p}" for p in out))
 
 
 def cmd_audit(args):
@@ -417,7 +499,14 @@ def build_parser() -> argparse.ArgumentParser:
     dc.add_argument("--name", required=True)
     dc.add_argument("--mission", help="text, '-' for stdin, or @file")
     dc.add_argument("--parent", help="parent department slug (default: executive)")
+    dc.add_argument("--profile", default="light", help="genome profile: light | standard | <instance profile> | file.toml")
     cmd("list", cmd_dept, parent=d)
+    cmd("roles", cmd_dept, "the department's role slots and who fills them", parent=d).add_argument("slug")
+    dp = cmd("profile", cmd_dept, "change a department's genome profile (Chair)", parent=d)
+    dp.add_argument("slug")
+    dp.add_argument("profile")
+    dp.add_argument("--reason", required=True)
+    cmd("profiles", cmd_dept, "available genome profiles", parent=d)
 
     h = cmd("hr", cmd_hr, "hire, fire, review").add_subparsers(dest="hr_cmd", required=True)
     hi = cmd("hire", cmd_hr, parent=h)
@@ -425,7 +514,9 @@ def build_parser() -> argparse.ArgumentParser:
     hi.add_argument("--title", required=True)
     hi.add_argument("--dept", required=True)
     hi.add_argument("--jd", required=True, help="job description: text, '-' for stdin, or @file")
-    hi.add_argument("--duties", required=True, help="comma list of plan,execute,verify,review")
+    hi.add_argument("--slot", help="fill this slot of the department's profile (gives its roles)")
+    hi.add_argument("--roles", help="comma list of head,researcher,planner,executor,verifier,steward")
+    hi.add_argument("--duties", help="legacy: comma list of plan,execute,verify,review (derived from roles)")
     hi.add_argument("--driver", required=True, help="harness driver name (see `holon drivers`)")
     hi.add_argument("--reason", required=True)
     hi.add_argument("--head", action="store_true", help="make this employee the department's head")
@@ -576,6 +667,37 @@ def build_parser() -> argparse.ArgumentParser:
     au.add_argument("--max-grade", default="G1")
     au.add_argument("--reason", default="set by the Chair")
 
+    cmd("autonomy", cmd_charter, "effective autonomy policy per department (holon.toml [autonomy])", parent=ch)
+
+    sk = cmd("skill", cmd_skill, "the skills library: list, read, invoke, tailor, check, export").add_subparsers(
+        dest="skill_cmd", required=True)
+
+    def skill_cmd(name, help_):
+        sp = cmd(name, cmd_skill, help_, parent=sk)
+        sp.add_argument("--dept", help="resolve with this department's tailored layer")
+        return sp
+    sl = as_(skill_cmd("list", "skills available (to an employee with --as)"))
+    sl.add_argument("--role")
+    for name, help_ in (("show", "print a skill file"), ("path", "where a skill file resolves"),
+                        ("invoke", "render a skill for an employee and record the use")):
+        x = skill_cmd(name, help_)
+        x.add_argument("name")
+        x.add_argument("file", nargs="?", default="SKILL.md")
+        if name == "invoke":
+            as_(x)
+    sf = skill_cmd("fork", "copy a skill (or one file) into the instance or --dept layer to tailor it")
+    sf.add_argument("name")
+    sf.add_argument("--file")
+    sn = skill_cmd("new", "scaffold a new skill in the instance (or --dept) layer")
+    sn.add_argument("name")
+    sn.add_argument("--kind", required=True, choices=["protocol", "role", "operation"])
+    sn.add_argument("--description", required=True)
+    sn.add_argument("--roles")
+    skill_cmd("check", "validate every skill (frontmatter, links, roles)")
+    se = skill_cmd("export", "write resolved, rendered skills to a directory a harness loads skills from")
+    se.add_argument("--to", required=True)
+    se.add_argument("--name", action="append")
+
     ad = cmd("audit", cmd_audit, "holdout review of delegated approvals").add_subparsers(dest="audit_cmd", required=True)
     cmd("samples", cmd_audit, parent=ad).add_argument("--all", action="store_true")
     aj = cmd("judge", cmd_audit, parent=ad)
@@ -598,7 +720,7 @@ def main(argv: list[str] | None = None) -> int:
     except HomeNotSet as e:
         print(f"holon: {e}", file=sys.stderr)
         return 2
-    except (LookupError, ValueError, RuntimeError, OSError) as e:
+    except (LookupError, ValueError, RuntimeError, OSError, PermissionError) as e:
         if args.json:
             print(json.dumps({"error": type(e).__name__, "message": str(e)}))
         else:

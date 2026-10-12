@@ -1,0 +1,28 @@
+# Standard profile: one slot per role. Add employees to the busiest slot (raise its min);
+# split the department when its head has more than 7 direct reports.
+name = "standard"
+description = "6 slots, one per standard role, for systems with sustained load or high-risk work"
+
+[[slots]]
+name = "head"
+roles = ["head"]
+
+[[slots]]
+name = "researcher"
+roles = ["researcher"]
+
+[[slots]]
+name = "planner"
+roles = ["planner"]
+
+[[slots]]
+name = "executor"
+roles = ["executor"]
+
+[[slots]]
+name = "verifier"
+roles = ["verifier"]
+
+[[slots]]
+name = "steward"
+roles = ["steward"]

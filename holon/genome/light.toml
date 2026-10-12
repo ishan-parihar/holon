@@ -1,0 +1,17 @@
+# Light profile: three employees for small or new systems. Each slot combines two standard
+# roles without breaking separation (nobody verifies their own work; the planner's plans
+# go to the lead or the CEO).
+name = "light"
+description = "3 slots for small or new systems; grows into 'standard' as load and risk rise"
+
+[[slots]]
+name = "lead"
+roles = ["head", "steward"]
+
+[[slots]]
+name = "maker"
+roles = ["planner", "executor"]
+
+[[slots]]
+name = "checker"
+roles = ["researcher", "verifier"]

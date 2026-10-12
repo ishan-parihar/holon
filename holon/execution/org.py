@@ -5,19 +5,20 @@ Every org term is bound to data here (INTENT.md, law 3):
   HOD         -> departments.head_id
   employee    -> employees row (+ memory scope emp:<id>), persistent across tasks and harnesses
   hire / fire -> create / retire with reason; a successor inherits the predecessor's memory scope
+  role / slot -> employees.roles (the six standard roles) filling the slots of the department's genome profile
   authority   -> authority rows; earned and lost from verified outcomes, never from self-report
   review      -> computed from runs, plans, results, and audit samples (no stored counters to drift)
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
-from dataclasses import dataclass
 
 from holon.core.db import now, write_txn
 from holon.core.ids import new_id
+from holon.execution import autonomy
+from holon.execution import genome as gn
 
 DUTIES = ("plan", "execute", "verify", "review")
 CHAIR = "chair"
@@ -28,18 +29,7 @@ class OrgError(RuntimeError):
     pass
 
 
-@dataclass
-class AuthorityConfig:
-    chair_max: int = 4
-    ceo_initial_max: int = 1        # the CEO approves minor work (G0–G1) from day one
-    auto_promote_cap: int = 2       # earned authority rises automatically up to this grade
-    promote_after: int = 10         # consecutive verified successes in a class since the last change
-    audit_sample_permille: int = 100   # 10% of employee approvals go to the Chair's holdout queue
-
-    @classmethod
-    def from_config(cls, cfg: dict) -> "AuthorityConfig":
-        a = cfg.get("authority", {})
-        return cls(**{k: int(v) for k, v in a.items() if k in cls.__dataclass_fields__})
+CHAIR_MAX = 4
 
 
 def approver_ref(employee_id: str) -> str:
@@ -47,10 +37,14 @@ def approver_ref(employee_id: str) -> str:
 
 
 class Org:
-    def __init__(self, conn: sqlite3.Connection, actor: str = CHAIR, auth: AuthorityConfig | None = None):
+    def __init__(self, conn: sqlite3.Connection, actor: str = CHAIR, config: dict | None = None):
         self.conn = conn
         self.actor = actor
-        self.auth = auth or AuthorityConfig()
+        self.config = config or {}
+
+    def policy(self, dept: str | None = None) -> dict:
+        """The autonomy policy for a department (slug or id), or the organization's when None."""
+        return autonomy.policy(self.config, self.dept(dept)["slug"] if dept else None)
 
     def _event(self, entity: str, entity_id: str, frm: str | None, to: str | None, note: str | None = None) -> None:
         self.conn.execute(
@@ -63,25 +57,51 @@ class Org:
         with write_txn(self.conn):
             if self.conn.execute("SELECT 1 FROM departments WHERE slug=?", (EXECUTIVE,)).fetchone() is None:
                 did = new_id("dept")
+                g = gn.load_profile(EXECUTIVE)
                 self.conn.execute(
-                    "INSERT INTO departments (id, slug, name, mission, created_at) VALUES (?,?,?,?,?)",
+                    "INSERT INTO departments (id, slug, name, mission, profile, genome, created_at) VALUES (?,?,?,?,?,?,?)",
                     (did, EXECUTIVE, "Executive Office",
-                     "Turn the Chair's objectives into department mandates; arbitrate across departments.", now()))
+                     "Turn the Chair's objectives into department mandates; arbitrate across departments.",
+                     g["name"], json.dumps(g), now()))
                 self._event("dept", did, None, "active", "bootstrap")
             self.conn.execute(
                 "INSERT OR IGNORE INTO authority (approver, task_class, max_grade, updated_at, reason) VALUES (?,?,?,?,?)",
-                (CHAIR, "*", self.auth.chair_max, now(), "the Chair holds full authority"))
+                (CHAIR, "*", CHAIR_MAX, now(), "the Chair holds full authority"))
 
     # ── departments ───────────────────────────────────────────────────────
-    def create_dept(self, slug: str, name: str, mission: str | None = None, parent: str | None = None) -> dict:
+    def create_dept(self, slug: str, name: str, mission: str | None = None, parent: str | None = None,
+                    profile: dict | None = None) -> dict:
+        """`profile` is a validated genome profile (genome.load_profile); default: light."""
         parent_id = self.dept(parent)["id"] if parent else self.dept(EXECUTIVE)["id"]
+        g = profile or gn.load_profile("light")
         did = new_id("dept")
         with write_txn(self.conn):
             self.conn.execute(
-                "INSERT INTO departments (id, slug, name, mission, parent_id, created_at) VALUES (?,?,?,?,?,?)",
-                (did, slug, name, mission, parent_id, now()))
-            self._event("dept", did, None, "active", f"created {slug}")
+                "INSERT INTO departments (id, slug, name, mission, parent_id, profile, genome, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?)", (did, slug, name, mission, parent_id, g["name"], json.dumps(g), now()))
+            self._event("dept", did, None, "active", f"created {slug} with profile {g['name']}")
         return self.dept(slug)
+
+    def set_profile(self, dept: str, profile: dict, reason: str) -> dict:
+        d = self.dept(dept)
+        with write_txn(self.conn):
+            self.conn.execute("UPDATE departments SET profile=?, genome=? WHERE id=?",
+                              (profile["name"], json.dumps(profile), d["id"]))
+            self._event("dept", d["id"], d.get("profile"), profile["name"], f"profile: {reason}")
+        return self.dept(dept)
+
+    def staffing(self, dept: str) -> dict:
+        d = self.dept(dept)
+        g = json.loads(d["genome"]) if d.get("genome") else gn.load_profile("light")
+        return {"dept": d["slug"], **gn.staffing(g, self.employees(d["id"]))}
+
+    def slot_roles(self, dept: str, slot: str) -> list[str]:
+        st = self.staffing(dept)
+        for s in st["slots"]:
+            if s["slot"] == slot:
+                return s["roles"]
+        raise OrgError(f"department {st['dept']} (profile {st['profile']}) has no slot {slot!r}; "
+                       f"slots: {[s['slot'] for s in st['slots']]}")
 
     def dept(self, ref: str) -> dict:
         r = self.conn.execute("SELECT * FROM departments WHERE id=? OR slug=?", (ref, ref)).fetchone()
@@ -95,13 +115,22 @@ class Org:
             "WHERE d.status='active' ORDER BY d.slug='executive' DESC, d.slug")]
 
     # ── employees ─────────────────────────────────────────────────────────
-    def hire(self, *, name: str, title: str, dept: str, job_description: str, duties: list[str], driver: str,
-             reason: str, head: bool = False, reports_to: str | None = None, task_classes: list[str] | None = None,
+    def hire(self, *, name: str, title: str, dept: str, job_description: str, driver: str, reason: str,
+             duties: list[str] | None = None, roles: list[str] | None = None, slot: str | None = None,
+             head: bool = False, reports_to: str | None = None, task_classes: list[str] | None = None,
              skills: list[str] | None = None, max_concurrency: int = 1, employee_id: str | None = None,
              status: str = "probation") -> dict:
+        """Hire into a slot of the department's profile (`slot`), into explicit `roles`, or (legacy) with
+        raw `duties`. Duties are derived from roles; a slot or role list containing 'head' makes the hire the head."""
+        roles = sorted(set(roles or []) | set(self.slot_roles(dept, slot) if slot else []))
+        try:
+            duties = sorted(set(duties or []) | set(gn.duties_for(roles)))
+        except gn.GenomeError as e:
+            raise OrgError(str(e)) from None
+        head = head or "head" in roles
         bad = set(duties) - set(DUTIES)
-        if not duties or bad:
-            raise OrgError(f"duties must be a non-empty subset of {DUTIES}")
+        if bad or not (duties or roles):
+            raise OrgError(f"give roles (or a slot); duties must be a subset of {DUTIES}")
         if not job_description.strip():
             raise OrgError("an employee needs a job description")
         d = self.dept(dept)
@@ -117,17 +146,22 @@ class Org:
             if head and d["head_id"]:
                 raise OrgError(f"department {d['slug']} already has a head ({d['head_id']}); transfer or fire first")
             self.conn.execute(
-                "INSERT INTO employees (id, name, title, dept_id, reports_to, job_description, duties, task_classes,"
-                " skills, driver, max_concurrency, status, hired_at, hired_reason) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (eid, name, title, d["id"], reports_to, job_description.strip(), json.dumps(sorted(set(duties))),
+                "INSERT INTO employees (id, name, title, dept_id, reports_to, job_description, duties, roles,"
+                " task_classes, skills, driver, max_concurrency, status, hired_at, hired_reason)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (eid, name, title, d["id"], reports_to, job_description.strip(), json.dumps(duties),
+                 json.dumps(roles) if roles else None,
                  json.dumps(task_classes) if task_classes else None, json.dumps(skills) if skills else None,
                  driver, max_concurrency, status, now(), reason))
             if head:
                 self.conn.execute("UPDATE departments SET head_id=? WHERE id=?", (eid, d["id"]))
                 if d["slug"] == EXECUTIVE:
+                    initial = self.policy(EXECUTIVE)["ceo_initial_max"]
                     self.conn.execute(
                         "INSERT OR REPLACE INTO authority VALUES (?,?,?,?,?)",
-                        (approver_ref(eid), "*", self.auth.ceo_initial_max, now(), "initial CEO authority"))
+                        (approver_ref(eid), "*", initial, now(), "initial CEO authority"))
+                    self._event("authority", f"{approver_ref(eid)}/*", None, f"G{initial}",
+                                "initial CEO authority (autonomy.ceo_initial_max)")
                 # department members without a manager now report to the new head
                 self.conn.execute("UPDATE employees SET reports_to=? WHERE dept_id=? AND id<>? AND reports_to IS NULL",
                                   (eid, d["id"], eid))
@@ -145,6 +179,7 @@ class Org:
         out["task_classes"] = json.loads(out["task_classes"]) if out["task_classes"] else None
         out["skills"] = json.loads(out["skills"]) if out["skills"] else None
         out["is_head"] = bool(out["is_head"])
+        out["roles"] = json.loads(out["roles"]) if out["roles"] else gn.infer_roles(out["duties"], out["is_head"])
         return out
 
     def employees(self, dept: str | None = None, include_retired: bool = False) -> list[dict]:
@@ -215,13 +250,18 @@ class Org:
         return rows.get("*", -1)
 
     def set_authority(self, approver: str, task_class: str, max_grade: int, reason: str) -> None:
+        """Write authority directly. Callers decide whether a widening needed approval (service.Kernel)."""
+        with write_txn(self.conn):
+            self.write_authority(approver, task_class, max_grade, reason)
+
+    def write_authority(self, approver: str, task_class: str, max_grade: int, reason: str) -> None:
+        """Inside the caller's transaction."""
         if not -1 <= max_grade <= 4:
             raise OrgError("max_grade must be between -1 and 4")
         before = self.authority_of(approver, None if task_class == "*" else task_class)
-        with write_txn(self.conn):
-            self.conn.execute("INSERT OR REPLACE INTO authority VALUES (?,?,?,?,?)",
-                              (approver, task_class, max_grade, now(), reason))
-            self._event("authority", f"{approver}/{task_class}", f"G{before}", f"G{max_grade}", reason)
+        self.conn.execute("INSERT OR REPLACE INTO authority VALUES (?,?,?,?,?)",
+                          (approver, task_class, max_grade, now(), reason))
+        self._event("authority", f"{approver}/{task_class}", f"G{before}", f"G{max_grade}", reason)
 
     def authority_table(self) -> list[dict]:
         return [dict(r) for r in self.conn.execute("SELECT * FROM authority ORDER BY approver, task_class")]
@@ -243,9 +283,9 @@ class Org:
                 return approver_ref(emp["id"])
         return CHAIR
 
-    def should_sample(self, plan_id: str) -> bool:
-        h = int(hashlib.sha256(plan_id.encode()).hexdigest(), 16) % 1000
-        return h < self.auth.audit_sample_permille
+    def should_sample(self, plan_id: str, dept: str | None = None) -> bool:
+        """Holdout audit: a fixed share of employee approvals is re-judged by the Chair."""
+        return autonomy.sampled(f"audit:{plan_id}", self.policy(dept)["audit_sample_permille"] / 1000)
 
     def approver_track_record(self, approver: str, task_class: str | None) -> dict:
         """Outcomes of the plans this approver signed off, in one task class, since their authority last changed."""
@@ -269,8 +309,11 @@ class Org:
         return {"approved": len(rows), "verified_ok": verified_ok, "verification_failed": failed,
                 "audit_disagreements": disagreed, "since": since or None}
 
-    def update_earned_authority(self, approver: str, task_class: str | None) -> dict | None:
-        """Promote after a clean streak (up to the cap); demote on any incident. Chair is fixed."""
+    def earned_authority_change(self, approver: str, task_class: str | None, promote_after: int,
+                                cap: int) -> dict | None:
+        """What the record says the approver's authority should become: down one on any incident since the
+        last change, up one after `promote_after` clean verified successes (never above `cap`). The Chair is fixed.
+        Returns the proposed change; the caller applies demotions at once and routes promotions per autonomy policy."""
         if approver == CHAIR:
             return None
         key = task_class or "*"
@@ -280,12 +323,11 @@ class Org:
             new = max(-1, current - 1)
             reason = (f"demoted: {rec['verification_failed']} failed verification(s), "
                       f"{rec['audit_disagreements']} audit disagreement(s) since last change")
-        elif rec["verified_ok"] >= self.auth.promote_after and current < self.auth.auto_promote_cap:
+        elif rec["verified_ok"] >= promote_after and current < cap:
             new = current + 1
             reason = f"promoted: {rec['verified_ok']} verified successes with no incidents"
         else:
             return None
-        self.set_authority(approver, key, new, reason)
         return {"approver": approver, "task_class": key, "from": current, "to": new, "reason": reason}
 
     # ── reviews (evidence, not narrative) ─────────────────────────────────

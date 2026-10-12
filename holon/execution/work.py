@@ -82,6 +82,9 @@ class Work:
     def __init__(self, conn: sqlite3.Connection, actor: str = "chair"):
         self.conn = conn
         self.actor = actor
+        # kernel-applied decisions: a proposal plan carries {"apply": {"kind": k, ...}}; approving it calls
+        # appliers[k](payload) inside the approval transaction, so the decision and its effect commit together
+        self.appliers: dict[str, Any] = {}
 
     # ── primitives ────────────────────────────────────────────────────────
     def _event(self, entity: str, entity_id: str, frm: str | None, to: str | None, note: str | None = None,
@@ -413,6 +416,42 @@ class Work:
             self._event("plan", plan_id, f"G{plan['grade']}", f"G{grade}", f"regraded -> {approver}: {note}")
         return self.get_plan(plan_id)
 
+    # ── kernel proposals (decisions the organization applies itself once approved) ──
+    def propose(self, *, title: str, intent: str, steps: str, apply: dict, approver: str, grade: int,
+                task_class: str, dept: str | None = None, author: str | None = None) -> dict:
+        """A decision for an approver that needs no executor: the kernel applies `apply` on approval.
+        Idempotent by title while one is pending."""
+        if apply.get("kind") not in self.appliers:
+            raise ValueError(f"no applier for {apply.get('kind')!r}")
+        with write_txn(self.conn):
+            r = self.conn.execute(
+                "SELECT p.id FROM plans p JOIN tasks t ON t.id=p.task_id WHERE t.title=? AND p.status='awaiting_approval'",
+                (title,)).fetchone()
+            if r:
+                return self.get_plan(r["id"])
+            tid, pid, ts = new_id("task"), new_id("plan"), now()
+            self.conn.execute(
+                "INSERT INTO tasks (id, dept_id, requested_by, title, intent, acceptance, priority, source, task_class,"
+                " risk, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (tid, self._dept_id(dept), author or self.actor, title, intent, "applied by the kernel on approval",
+                 2, "audit", task_class, "normal", "awaiting_approval", ts, ts))
+            self._event("task", tid, None, "awaiting_approval", "kernel proposal")
+            self.conn.execute(
+                "INSERT INTO plans (id, task_id, version, kind, findings, steps, context_refs, grade_proposed,"
+                " grade_floor, grade, grade_reasons, approver, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (pid, tid, 1, "execute", intent, steps, _dumps({"apply": apply}), grade, grade, grade,
+                 _dumps([f"{task_class}: routed by the autonomy policy"]), approver, ts))
+            self._event("plan", pid, None, "awaiting_approval", f"proposal -> {approver}")
+        return self.get_plan(pid)
+
+    @staticmethod
+    def applied_payload(plan: dict) -> dict | None:
+        try:
+            refs = json.loads(plan.get("context_refs") or "null")
+        except json.JSONDecodeError:
+            return None
+        return refs.get("apply") if isinstance(refs, dict) else None
+
     # ── approval ──────────────────────────────────────────────────────────
     def _decider(self, plan: dict, review_run: str | None) -> str:
         decider = self.actor
@@ -459,6 +498,11 @@ class Work:
                     children.append(cid)
             else:
                 self._move(task["id"], "approved", f"plan {plan_id} approved", actor=decider)
+                payload = self.applied_payload(plan)
+                if payload:
+                    self.appliers[payload["kind"]](payload)
+                    for to in ("executing", "verifying", "done"):
+                        self._move(task["id"], to, "applied by the kernel", actor=decider)
         return {"plan": self.get_plan(plan_id), "task": self.get_task(task["id"]), "children": children,
                 "decider": decider}
 
@@ -473,7 +517,10 @@ class Work:
             self.conn.execute("UPDATE plans SET status='rejected', review_note=?, decided_by=?, decided_at=? WHERE id=?",
                               (note, decider, now(), plan_id))
             self._event("plan", plan_id, "awaiting_approval", "rejected", note, actor=decider)
-            task = self._move(plan["task_id"], "inbox", f"plan {plan_id} rejected: replan", actor=decider)
+            if self.applied_payload(plan):  # a rejected proposal is closed, not replanned
+                task = self._move(plan["task_id"], "cancelled", f"proposal {plan_id} rejected", actor=decider)
+            else:
+                task = self._move(plan["task_id"], "inbox", f"plan {plan_id} rejected: replan", actor=decider)
         return {"plan": self.get_plan(plan_id), "task": task, "decider": decider}
 
     def answer(self, task_id: str, answer: str) -> dict:
@@ -541,6 +588,32 @@ class Work:
                 self._close_parent_if_settled(task)
             else:
                 task = self._fail_or_retry(task, dict(exec_run), f"verification failed: {note}")
+        return task
+
+    def executor_streak(self, employee_id: str, task_class: str | None) -> int:
+        """Consecutive passed verifications of this executor's results in a task class, newest first."""
+        streak = 0
+        for r in self.conn.execute(
+                "SELECT r.verified FROM results r JOIN runs u ON u.id=r.run_id JOIN tasks t ON t.id=u.task_id "
+                "WHERE u.employee_id=? AND coalesce(t.task_class,'*')=? AND r.verified IS NOT NULL "
+                "ORDER BY r.created_at DESC", (employee_id, task_class or "*")):
+            if r[0] != 1:
+                break
+            streak += 1
+        return streak
+
+    def skip_verification(self, task_id: str, note: str) -> dict:
+        """Close trusted work without a verifier (sampled out). The result stays unverified (verified IS NULL),
+        so it never counts toward anyone's earned authority or trust."""
+        with write_txn(self.conn):
+            task = self.get_task(task_id)
+            if task["status"] != "verifying":
+                raise TransitionError(f"task {task_id} is '{task['status']}', not verifying")
+            self.conn.execute(
+                "UPDATE results SET verifier_note=?, verified_by='sampling' WHERE run_id=(SELECT id FROM runs "
+                "WHERE task_id=? AND kind='execute' ORDER BY started_at DESC LIMIT 1)", (note, task_id))
+            task = self._move(task_id, "done", note, actor="kernel")
+            self._close_parent_if_settled(task)
         return task
 
     # ── Chair controls ────────────────────────────────────────────────────

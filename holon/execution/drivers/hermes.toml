@@ -1,6 +1,8 @@
 # Reference driver: hermes-agent (headless one-shot).
 # The agent reads BRIEF.md (passed as the query file) and writes result.json itself.
 # Copy to $HOLON_HOME/config/drivers/ to customize (model, toolsets, skills).
+# Skills: `holon skill export --to ~/.hermes/skills/holon`, then add `-s holon-employee` to the command
+# so every employee session preloads the protocol (its role skill is named in the brief).
 name = "hermes"
 command = "hermes --in {workdir} chat --query-file {brief_md} --oneshot -Q --yolo"
 cwd = "{workdir}"

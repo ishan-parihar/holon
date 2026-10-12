@@ -119,7 +119,7 @@ class GradedApproval(KernelCase):
         p = self.k.submit(c.run["id"], self.plan_env(grade="G1", writes=[]))["plan"]
         self.assertEqual(p["approver"], f"emp:{self.ceo}", "the HOD authored it, so it skips to the CEO")
 
-    def test_earned_authority_promotes_after_clean_streak(self):
+    def _clean_streak(self):
         for i in range(2):
             t = self.add(f"tidy {i}", dept="eng", task_class="ops", risk="low")
             c = self.k.claim("plan", self.hod, task_id=t["id"])
@@ -131,8 +131,18 @@ class GradedApproval(KernelCase):
             c = self.k.claim("verify", self.dev2)
             out = self.k.submit(c.run["id"], {"verdict": "pass", "note": "ok"})
             self.assertEqual(p["approver"], f"emp:{self.ceo}")
-        self.assertEqual(out["authority_change"]["to"], 2)
+        return out
+
+    def test_earned_promotion_needs_the_chair_by_default(self):
+        out = self._clean_streak()
+        change = out["authority_change"]
+        self.assertEqual((change["to"], change["applied"], change["approver"]), (2, False, "chair"))
+        self.assertEqual(self.k.org.authority_of(f"emp:{self.ceo}", "ops"), 1, "not widened until approved")
+        proposal = self.k.work.awaiting_approval("chair")[0]
+        self.assertEqual(proposal["id"], change["proposal"])
+        self.k.approve(proposal["id"], "earned")
         self.assertEqual(self.k.org.authority_of(f"emp:{self.ceo}", "ops"), 2)
+        self.assertEqual(self.k.work.get_task(proposal["task_id"])["status"], "done")
 
     def test_chair_regrade_reroutes(self):
         self.add("tidy", dept="eng", task_class="ops", risk="low")

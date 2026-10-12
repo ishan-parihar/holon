@@ -17,4 +17,6 @@ include = ["holon*"]
 
 [tool.setuptools.package-data]
 "holon.migrations" = ["work/*.sql", "memory/*.sql"]
-"holon.execution" = ["templates/*.md", "drivers/*.toml"]
+"holon.execution" = ["drivers/*.toml"]
+"holon.genome" = ["*.toml"]
+"holon" = ["skills/*/*.md", "skills/*/*/*.md"]
