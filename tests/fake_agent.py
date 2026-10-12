@@ -6,6 +6,7 @@
   fail            executor reports outcome=failure
   self-submit     the agent submits its own result with its run token (pull-in-push)
   cron-writes     something else writes data/log.jsonl in the workdir while the agent observes
+  linger          self-submits, then keeps running for a long time (a harness writing a closing reply)
   wrapped         prints a harness summary {"text": <reply>, "usage": {...}} (jcode, Claude Code style)
 """
 
@@ -72,6 +73,12 @@ if mode == "wrapped":
 elif mode == "stdout":
     print("some chatter before the answer")
     print(json.dumps(env))
+elif "linger" in modes:
+    Path(brief["result_path"]).write_text(json.dumps(env))
+    subprocess.run([sys.executable, "-m", "holon", "--home", os.environ["HOLON_HOME"], "submit", brief["run_id"]],
+                   check=True, capture_output=True)
+    import time
+    time.sleep(60)
 elif "self-submit" in modes:
     Path(brief["result_path"]).write_text(json.dumps(env))
     subprocess.run([sys.executable, "-m", "holon", "--home", os.environ["HOLON_HOME"], "submit", brief["run_id"]],

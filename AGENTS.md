@@ -89,6 +89,7 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | System red team | the skill-evolution loop could not finish on a sandboxed harness | `test_a_verified_change_lands_in_the_department_layer_and_every_export` |
 | System red team | verification was only an LLM's judgment; nothing a command could decide was checked | `test_a_failing_check_is_rework_without_spending_a_verifier` |
 | System red team | doctor ran only when a person ran it | `test_a_doctor_error_becomes_one_incident_and_the_check_waits_its_interval` |
+| jcode, local conformance | the harness kept running a closing model turn (~12 min) after the agent had submitted | `test_a_harness_still_running_after_its_result_is_in_is_stopped` |
 | VPS deployment | an auto-committer sharing the tree tripped the read-only guard, so it was switched off | `test_a_shared_tree_others_commit_to_or_write_ignored_paths_in_is_not_a_breach` |
 | Red-team R1 | the Chair key reached a harness's environment | `test_the_chair_key_never_reaches_a_harness` |
 | Red-team R1 | a harness name leaked into the kernel | `test_no_harness_named_in_kernel` |

@@ -140,6 +140,19 @@ class PushMode(KernelCase):
         run = self.k.wconn.execute("SELECT tokens_in, tokens_out, cost FROM runs").fetchone()
         self.assertEqual(tuple(run), (120, 7, 0.01))
 
+    def test_a_harness_still_running_after_its_result_is_in_is_stopped(self):
+        import time
+        from unittest import mock
+        from holon.execution import drivers
+        self.install_fake_driver("fake", mode="linger")
+        self.add(dept="eng")
+        real = drivers.run
+        with mock.patch.object(drivers, "run", lambda *a, **kw: real(*a, **{**kw, "alive_every_s": 0.5})):
+            t0 = time.monotonic()
+            out = self.k.dispatch(self.hod, "plan")
+        self.assertTrue(out["submitted_by_agent"])
+        self.assertLess(time.monotonic() - t0, 30, "the dispatcher does not wait out the harness's closing turn")
+
     def test_concurrency_cap(self):
         self.add(dept="eng")
         self.add("second", dept="eng")

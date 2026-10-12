@@ -655,11 +655,12 @@ class Kernel:
         ignore = list(self.config["planner"].get("guard_ignore") or [])
         before = staleness.snapshot(Path(workdir), ignore) if guard else None
 
-        def alive() -> None:  # the harness is still working: keep its lease (a dead dispatcher stops renewing)
+        def alive() -> bool:  # the harness is still working: keep its lease (a dead dispatcher stops renewing)
             try:
                 self.work.heartbeat(claimed.run["id"])
-            except TransitionError:  # the agent already submitted, or the run was swept
-                pass
+                return True
+            except TransitionError:  # the agent already submitted, or the run was swept: stop the harness
+                return False
         out = drivers.run(self.home, drv, brief, claimed.token, alive=alive)
         if out.get("usage"):
             self.work.set_run_usage(claimed.run["id"], **out["usage"])

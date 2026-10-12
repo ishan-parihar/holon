@@ -152,7 +152,9 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive
         alive_every_s: float = 60.0) -> dict:
     """Invoke the harness and return {'exit_code', 'envelope' | None, 'log_path', 'stdout_tail'}.
     `alive()` is called every `alive_every_s` while the harness process runs (the kernel renews the
-    run's lease with it), so a lease expires only when the dispatcher itself has died."""
+    run's lease with it), so a lease expires only when the dispatcher itself has died. When it returns
+    False (the agent already handed in its result, or the run was reclaimed) the harness is stopped:
+    whatever it does after that cannot change the outcome and only holds the department's slot."""
     if brief["stage"] not in driver.stages:
         raise DriverError(f"driver {driver.name} does not serve the '{brief['stage']}' stage")
     cmd, cwd = render(driver, brief)
@@ -175,8 +177,15 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive
                 stdout, _ = proc.communicate()
                 exit_code, stderr = 124, f"driver timed out after {driver.timeout_s}s"
                 break
-            if alive:
-                alive()
+            if alive and alive() is False:
+                os.killpg(proc.pid, signal.SIGTERM)
+                try:
+                    stdout, stderr = proc.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    stdout, stderr = proc.communicate()
+                exit_code, stderr = 0, (stderr or "") + "\n[stopped: the run's result was already in]"
+                break
     log_path.write_text(f"$ {cmd}\n[cwd] {cwd}\n[exit] {exit_code}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n")
     envelope = None
     outer = extract_last_json(stdout) if driver.result == "stdout-json" else None
