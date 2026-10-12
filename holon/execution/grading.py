@@ -11,29 +11,19 @@ import fnmatch
 import sqlite3
 from pathlib import Path
 
-GRADE_NAMES = {0: "routine", 1: "minor", 2: "significant", 3: "major", 4: "critical"}
+from holon.core.contract import parse_grade
+from holon.core.vocab import GRADE_NAMES  # noqa: F401  (re-exported for callers)
+
 RISK_FLOOR = {"low": 0, "normal": 1, "high": 3, "irreversible": 4}
 DEFAULTS = {"novelty_min_verified": 3, "default_proposed": 2, "sensitive_paths": []}
-
-
-def parse_grade(v) -> int | None:
-    if v is None:
-        return None
-    if isinstance(v, str):
-        v = v.strip().upper().lstrip("G")
-    try:
-        g = int(v)
-    except (TypeError, ValueError):
-        return None
-    return g if 0 <= g <= 4 else None
 
 
 def verified_in_class(conn: sqlite3.Connection, task_class: str | None) -> int:
     if not task_class:
         return 0
     return conn.execute(
-        "SELECT count(DISTINCT t.id) FROM tasks t JOIN runs u ON u.task_id=t.id AND u.kind='execute' "
-        "JOIN results r ON r.run_id=u.id WHERE t.task_class=? AND r.verified=1", (task_class,)).fetchone()[0]
+        "SELECT count(DISTINCT t.parent_id) FROM outputs o JOIN tasks t ON t.id=o.task_id "
+        "WHERE o.kind='execute' AND o.verified=1 AND t.task_class=?", (task_class,)).fetchone()[0]
 
 
 def grade_plan(conn: sqlite3.Connection, task: dict, env: dict, cfg: dict | None = None) -> dict:

@@ -1,9 +1,11 @@
-"""The kernel service: wires the organization, work, memory, briefs, and drivers together.
+"""The kernel service: wires the organization, the work graph, memory, skills, briefs and drivers together.
 
 Two ways for any harness to take part, neither requiring an integration:
-  push  `holon dispatch`/`holon tick` claim work for an employee, write a brief, invoke its driver.
-  pull  an employee session running anywhere calls `holon claim --duty D --as <emp>`, does the
-        work, writes result.json, and calls `holon submit <run_id>`.
+  push  `holon dispatch`/`holon tick` claim a stage for an employee, write its brief, invoke its driver.
+  pull  an employee session running anywhere calls `holon claim --as <emp>` (with its employee key),
+        does the work, writes result.json, and calls `holon submit <run_id>` (with its run token).
+
+The kernel's Python API trusts its caller's `actor`; the CLI authenticates who that is (security.py).
 """
 
 from __future__ import annotations
@@ -14,28 +16,35 @@ import subprocess
 import sys
 import tomllib
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from holon.capabilities.context import DEFAULT_BUDGET_CHARS, compile_context
+from holon.capabilities.context import DEFAULT_BUDGET_CHARS, compile_context, identity_card
 from holon.capabilities.memory import Memory
+from holon.capabilities.skills import Library
+from holon.core import contract, vocab
+from holon.core.contract import EnvelopeError
 from holon.core.db import connect, migrate, now, write_txn
 from holon.core.paths import Home
-from holon.capabilities.skills import Library
-from holon.execution import autonomy, briefs, drivers, grading
+from holon.core.vocab import CHAIR, EXECUTIVE
+from holon.execution import autonomy, briefs, drivers, genome, grading, security
 from holon.execution.briefs import kernel_env
-from holon.execution.envelopes import VALIDATORS, EnvelopeError
-from holon.execution.org import CHAIR, EXECUTIVE, Org, approver_ref
+from holon.execution.org import Org, approver_ref
 from holon.execution.schedules import Schedules
 from holon.execution.staleness import _hash_dir
-from holon.execution.work import Claimant, TransitionError, Work
+from holon.execution.work import Claimant, Rules, TransitionError, Work
 
 DEFAULT_CONFIG = {
     "context": {"budget_chars": DEFAULT_BUDGET_CHARS},
-    "planner": {"enforce_read_only": True},
+    "planner": {"enforce_read_only": True, "trust_harness_read_only": False},
     "grading": {},
     "autonomy": {},
+    "pipeline": {},
     "memory": {"promotion_threshold": 2},
+    "healing": {"incident_dept": "it", "lease_expiries_for_incident": 2, "schedule_failures_for_incident": 3},
+    "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
 }
+CONFIG_KEYS = {s: set(v) for s, v in DEFAULT_CONFIG.items() if s not in ("grading", "autonomy", "pipeline")}
 
 
 def load_config(home: Home) -> dict:
@@ -50,10 +59,76 @@ def load_config(home: Home) -> dict:
 @dataclass
 class Claimed:
     run: dict
-    task: dict
+    node: dict
     brief_dir: Path
-    plan: dict | None = None
+    token: str
     employee: dict | None = None
+
+    @property
+    def task(self) -> dict:  # the claimed stage node
+        return self.node
+
+
+class KernelRules(Rules):
+    """The department genome deciding which optional stages a piece of work goes through, and the
+    feedback loops that fire when work goes wrong."""
+
+    def __init__(self, k: "Kernel"):
+        self.k = k
+
+    def _pipeline(self, work: dict) -> dict:
+        p = {**genome.PIPELINE_DEFAULTS, **self.k.config.get("pipeline", {})}
+        if work.get("dept_id"):
+            g = self.k.org.dept(work["dept_id"]).get("genome")
+            if g:
+                p.update(json.loads(g).get("pipeline") or {})
+        return p
+
+    def _has(self, dept_id: str | None, stage: str) -> bool:
+        return any(stage in e["stages"] and e["status"] in ("active", "probation")
+                   for e in (self.k.org.employees(dept_id) if dept_id else []))
+
+    def _wants(self, work: dict, stage: str, auto: bool) -> bool:
+        mode = self._pipeline(work)[stage]
+        return mode == "always" or (mode == "auto" and auto and self._has(work.get("dept_id"), stage))
+
+    def _done(self, work: dict, stage: str) -> bool:
+        return bool(self.k.work.stages(work["id"], stage, "done"))
+
+    def _needs_research(self, work: dict) -> bool:
+        novel = self.k.work.verified_in_class(work.get("task_class")) < int(
+            {**grading.DEFAULTS, **self.k.config.get("grading", {})}["novelty_min_verified"])
+        return self._wants(work, "research", novel or work["risk"] in ("high", "irreversible"))
+
+    def _needs_shape(self, work: dict) -> bool:
+        return self._wants(work, "shape", work["source"] in (CHAIR, "agent") and not work.get("parent_id"))
+
+    def first_stage(self, work: dict) -> str:
+        if self._needs_research(work):
+            return "research"
+        return "shape" if self._needs_shape(work) else "plan"
+
+    def after_research(self, work: dict) -> str:
+        return "shape" if self._needs_shape(work) and not self._done(work, "shape") else "plan"
+
+    def after_shape(self, work: dict, research_requested: bool) -> str:
+        if research_requested and not self._done(work, "research") and self._has(work.get("dept_id"), "research"):
+            return "research"
+        return "plan"
+
+    def _retro(self, work: dict, why: str) -> None:
+        if self._wants(work, "retro", True):
+            self.k.work.add_retro(work["id"], why)
+
+    def on_rework(self, work: dict, stage: dict, why: str) -> None:
+        if stage.get("stage") == "approve":
+            if len([s for s in self.k.work.stages(work["id"], "approve") if s["outcome"] == "reject"]) < 2:
+                return
+        self._retro(work, why)
+
+    def on_finished(self, work: dict) -> None:
+        if work["status"] == "failed":
+            self._retro(work, f"work failed: {work.get('blocked_reason') or ''}")
 
 
 class Kernel:
@@ -66,15 +141,17 @@ class Kernel:
         migrate(self.wconn, "work")
         migrate(self.mconn, "memory")
         self.config = load_config(home)
-        self.work = Work(self.wconn, actor)
+        autonomy.policy(self.config)  # fail fast on a bad [autonomy] section
+        self.work = Work(self.wconn, actor, KernelRules(self))
         self.memory = Memory(self.mconn)
         self.org = Org(self.wconn, actor, self.config)
-        autonomy.policy(self.config)  # fail fast on a bad [autonomy] section
         self.work.appliers["authority"] = lambda a: self.org.write_authority(
             a["approver"], a["task_class"], a["max_grade"], a["reason"])
+        self.work.appliers["employee_status"] = self._apply_status
         self.skills = Library(home)
         self.schedules = Schedules(self.wconn, actor)
         self.org.bootstrap()
+        self.auth = security.Auth(self.wconn, home)
 
     def close(self) -> None:
         self.wconn.close()
@@ -82,9 +159,10 @@ class Kernel:
 
     # ── helpers ───────────────────────────────────────────────────────────
     def _dept_scope(self, dept_id: str | None) -> str | None:
-        if not dept_id:
-            return None
-        return f"dept:{self.org.dept(dept_id)['slug']}"
+        return f"dept:{self.org.dept(dept_id)['slug']}" if dept_id else None
+
+    def _dept_slug(self, dept_id: str | None) -> str | None:
+        return self.org.dept(dept_id)["slug"] if dept_id else None
 
     def claimant(self, employee_id: str | None) -> tuple[Claimant, dict | None]:
         if not employee_id:
@@ -93,50 +171,61 @@ class Kernel:
         if e["status"] not in ("active", "probation"):
             raise TransitionError(f"employee {employee_id} is {e['status']}")
         ceo = self.org.ceo()
-        return Claimant(id=e["id"], dept_id=e["dept_id"], is_head=e["is_head"],
+        return Claimant(id=e["id"], dept_id=e["dept_id"], is_head=e["is_head"], stages=tuple(e["stages"]),
                         is_ceo=bool(ceo and ceo["id"] == e["id"]), in_executive=e["dept"] == EXECUTIVE), e
 
-    # ── the Chair's gate (and any delegated approver's) ───────────────────
-    def approve(self, plan_id: str, note: str | None = None, recurring: bool = False,
-                review_run: str | None = None) -> dict:
-        out = self.work.approve(plan_id, note, recurring, review_run)
-        task, plan = out["task"], out["plan"]
-        self.memory.record_review(task, plan, "approved", note, self._dept_scope(task["dept_id"]))
-        if out["decider"] != CHAIR and self.org.should_sample(plan_id, task["dept_id"]):
+    def identity(self, employee_id: str) -> str:
+        e = self.org.employee(employee_id)
+        mgr = self.org.employee(e["reports_to"]) if e.get("reports_to") else None
+        auth = [r for r in self.org.authority_table() if r["approver"] == approver_ref(e["id"])]
+        return identity_card(e, mgr, auth, self.org.review(e["id"]), self.org.predecessors(e["id"]))
+
+    # ── decisions (the Chair's gate, and any delegated approver's) ────────
+    def decide(self, ref: str, decision: str, note: str | None = None, recurring: bool = False,
+               review_run: str | None = None) -> dict:
+        out = self.work.decide(ref, decision, note, recurring, review_run)
+        work, approval = out["work"], out["approval"]
+        author = (self.work.output(out["plan"]["id"]) or {"body": {}})["body"].get("author")
+        self.memory.record_review(work, author, decision + "d", note, self._dept_scope(work["dept_id"]))
+        if decision == "approve" and out["decider"] != CHAIR and out["decider"] == approval["approver"] \
+                and self.org.should_sample(approval["id"], work["dept_id"]):
             with write_txn(self.wconn):
-                self.wconn.execute("INSERT OR IGNORE INTO audit_samples (plan_id, approver, sampled_at) VALUES (?,?,?)",
-                                   (plan_id, out["decider"], now()))
+                self.wconn.execute("INSERT OR IGNORE INTO audit_samples (task_id, approver, sampled_at) VALUES (?,?,?)",
+                                   (approval["id"], out["decider"], now()))
             out["audit_sampled"] = True
         return out
 
-    def reject(self, plan_id: str, note: str, review_run: str | None = None) -> dict:
-        out = self.work.reject(plan_id, note, review_run)
-        self.memory.record_review(out["task"], out["plan"], "rejected", note, self._dept_scope(out["task"]["dept_id"]))
-        return out
+    def approve(self, ref: str, note: str | None = None, recurring: bool = False, review_run: str | None = None):
+        return self.decide(ref, "approve", note, recurring, review_run)
 
-    def regrade(self, plan_id: str, grade: int, note: str) -> dict:
+    def reject(self, ref: str, note: str, review_run: str | None = None) -> dict:
+        return self.decide(ref, "reject", note, review_run=review_run)
+
+    def regrade(self, ref: str, grade: int, note: str) -> dict:
         if self.actor != CHAIR:
             raise TransitionError("only the Chair regrades plans")
-        plan = self.work.get_plan(plan_id)
-        task = self.work.get_task(plan["task_id"])
-        approver = self.org.resolve_approver(task, grade, plan["author"])
-        return self.work.set_grade(plan_id, grade, approver, note)
+        approval = self.work.resolve_approval(ref)
+        work = self.work.get(approval["parent_id"])
+        author = self.work.plan_for_approval(approval["id"])["output"]["body"].get("author")
+        approver = self.org.resolve_approver(work, grade, author)
+        return self.work.set_grade(approval["id"], grade, approver, note)
 
-    def answer(self, task_id: str, text: str) -> dict:
-        task = self.work.get_task(task_id)
-        question = task.get("blocked_reason") or "planner question"
-        task = self.work.answer(task_id, text)
-        scope = task.get("project_ref") or self._dept_scope(task["dept_id"]) or "org"
+    def answer(self, ref: str, text: str) -> dict:
+        work = self.work.work_of(ref)
+        question = work.get("blocked_reason") or "planner question"
+        work = self.work.answer(ref, text)
+        scope = work.get("project_ref") or self._dept_scope(work["dept_id"]) or "org"
         self.memory.add_item(scope, "decision", f"Q: {question}\nA: {text}", self.actor, confidence="high")
-        return task
+        return work
 
-    def verify(self, task_id: str, verdict: str, note: str, run_id: str | None = None) -> dict:
-        task = self.work.verify(task_id, verdict, note, run_id)
-        plan = self.work.latest_plan(task_id, "approved") or self.work.latest_plan(task_id)
+    def verify(self, ref: str, verdict: str, note: str, run_id: str | None = None) -> dict:
+        out = self.work.verify(ref, verdict, note, run_id)
+        plan = self.work.approved_plan(out["work"]["id"])
         change = None
-        if plan and plan["decided_by"] and plan["decided_by"].startswith("emp:"):
-            change = self._earned_authority(plan["decided_by"], task.get("task_class"))
-        return {"task": task, "authority_change": change}
+        decider = plan["approval"]["decided_by"] if plan else None
+        if decider and decider.startswith("emp:"):
+            change = self._earned_authority(decider, out["work"].get("task_class"))
+        return {**out, "authority_change": change}
 
     # ── authority: narrowing applies at once, widening needs the approver the autonomy policy names ──
     def _approver_dept(self, approver: str) -> str | None:
@@ -165,7 +254,7 @@ class Kernel:
         ceo = self.org.ceo()
         if widen_approver == "ceo" and ceo and approver_ref(ceo["id"]) not in (approver, requested_by):
             decider = approver_ref(ceo["id"])
-        plan = self.work.propose(
+        approval = self.work.propose(
             title=f"Widen authority: {approver} on {task_class} G{current} -> G{max_grade}",
             intent=f"{reason}. Requested by {requested_by}.",
             steps=f"On approval the kernel sets {approver}'s approval authority for task class '{task_class}' "
@@ -173,36 +262,43 @@ class Kernel:
             apply={"kind": "authority", "approver": approver, "task_class": task_class, "max_grade": max_grade,
                    "reason": f"{reason} (approved proposal)"},
             approver=decider, grade=max_grade, task_class="authority-change", dept=EXECUTIVE, author=requested_by)
-        return {"applied": False, "proposal": plan["id"], "approver": decider}
+        return {"applied": False, "proposal": approval["id"], "approver": decider}
 
-    def judge_sample(self, plan_id: str, verdict: str, note: str) -> dict:
+    def _apply_status(self, a: dict) -> None:
+        e = self.org.employee(a["employee_id"])
+        self.wconn.execute("UPDATE employees SET status=? WHERE id=?", (a["status"], e["id"]))
+        self.org._event("employee", e["id"], e["status"], a["status"], a.get("reason", "approved proposal"))
+
+    def judge_sample(self, ref: str, verdict: str, note: str) -> dict:
         """The Chair re-judges a sampled employee approval; a disagreement costs the approver authority."""
         if verdict not in ("agree", "disagree"):
             raise ValueError("verdict must be agree or disagree")
-        row = self.wconn.execute("SELECT * FROM audit_samples WHERE plan_id=?", (plan_id,)).fetchone()
+        approval = self.work.get(ref)
+        if approval["stage"] != "approve":
+            approval = self.work.resolve_approval(ref)
+        row = self.wconn.execute("SELECT * FROM audit_samples WHERE task_id=?", (approval["id"],)).fetchone()
         if row is None:
-            raise LookupError(f"plan {plan_id} is not an audit sample")
+            raise LookupError(f"{ref} is not an audit sample")
         with write_txn(self.wconn):
-            self.wconn.execute("UPDATE audit_samples SET verdict=?, note=?, judged_at=? WHERE plan_id=?",
-                               (verdict, note, now(), plan_id))
-        task = self.work.get_task(self.work.get_plan(plan_id)["task_id"])
-        change = self._earned_authority(row["approver"], task.get("task_class")) if verdict == "disagree" else None
-        return {"plan_id": plan_id, "verdict": verdict, "authority_change": change}
+            self.wconn.execute("UPDATE audit_samples SET verdict=?, note=?, judged_at=? WHERE task_id=?",
+                               (verdict, note, now(), approval["id"]))
+        change = self._earned_authority(row["approver"], approval.get("task_class")) if verdict == "disagree" else None
+        return {"approval": approval["id"], "verdict": verdict, "authority_change": change}
 
     def audit_samples(self, pending_only: bool = True) -> list[dict]:
-        q = ("SELECT a.*, p.grade, t.title FROM audit_samples a JOIN plans p ON p.id=a.plan_id "
-             "JOIN tasks t ON t.id=p.task_id" + (" WHERE a.verdict IS NULL" if pending_only else "")
+        q = ("SELECT a.*, t.grade, w.title FROM audit_samples a JOIN tasks t ON t.id=a.task_id "
+             "JOIN tasks w ON w.id=t.parent_id" + (" WHERE a.verdict IS NULL" if pending_only else "")
              + " ORDER BY a.sampled_at")
         return [dict(r) for r in self.wconn.execute(q)]
 
     # ── communication ─────────────────────────────────────────────────────
     def request(self, sender: str, dept: str, title: str, intent: str, **kw) -> dict:
-        """A cross-department ask: becomes a task in that department's inbox and a message to it."""
-        task = self.work.add_task(title, intent, dept=dept, source="agent" if sender != CHAIR else "chair",
+        """A cross-department ask: becomes work in that department (its head shapes it) and a message to it."""
+        work = self.work.add_work(title, intent, dept=dept, source="agent" if sender != CHAIR else CHAIR,
                                   requested_by=sender, **kw)
         self.work.post_message(sender, f"dept:{self.org.dept(dept)['slug']}", f"Request: {title}\n\n{intent}",
-                               kind="request", task_id=task["id"])
-        return task
+                               kind="request", task_id=work["id"])
+        return work
 
     def inbox(self, ref: str) -> list[dict]:
         refs = [ref]
@@ -212,62 +308,26 @@ class Kernel:
         return self.work.messages(to_refs=refs)
 
     # ── claiming ──────────────────────────────────────────────────────────
-    def claim(self, duty: str, employee_id: str | None = None, driver: str | None = None,
-              task_id: str | None = None) -> Claimed | None:
+    def claim(self, stage: str | list[str] | None = None, employee_id: str | None = None,
+              driver: str | None = None, task_id: str | None = None) -> Claimed | None:
         who, emp = self.claimant(employee_id)
-        if emp and duty not in emp["duties"]:
-            raise TransitionError(f"{emp['name']} ({employee_id}) does not have the '{duty}' duty")
-        driver = driver or (emp["driver"] if emp else None)
-        plan = None
-        if duty == "plan":
-            got = self.work.claim_for_planning(who, driver, task_id=task_id)
-            if got is None:
-                return None
-            task, run = got
-        elif duty == "execute":
-            got = self.work.claim_for_execution(who, driver, task_id=task_id)
-            if got is None:
-                return None
-            task, plan, run = got
-        elif duty == "verify":
-            got = self.work.claim_for_verification(who, driver)
-            if got is None:
-                return None
-            task, run = got
-        elif duty == "review":
-            got = self.work.claim_for_review(who, driver)
-            if got is None:
-                return None
-            task, plan, run = got
-        else:
-            raise ValueError(f"unknown duty {duty}")
-        md, _ = compile_context(self.home, self.work, self.memory, task["id"], duty,
+        stages = [stage] if isinstance(stage, str) else (stage or list(who.stages))
+        if emp:
+            missing = [s for s in stages if s not in emp["stages"]]
+            if isinstance(stage, str) and missing:
+                raise TransitionError(f"{emp['name']} ({employee_id}) has no role that performs the '{stage}' stage")
+        token, token_hash = security.new_token()
+        got = self.work.claim(who, stages, driver or (emp["driver"] if emp else None), task_id, token_hash)
+        if got is None:
+            return None
+        node, run = got
+        md, _ = compile_context(self.home, self.work, self.memory, node["id"],
                                 budget=int(self.config["context"]["budget_chars"]), run_id=run["id"],
-                                employee=emp, predecessors=self.org.predecessors(emp["id"]) if emp else None,
-                                plan_id=plan["id"] if (plan and duty == "review") else None)
-        dept = self.org.dept(task["dept_id"])["slug"] if task.get("dept_id") else None
-        bdir = briefs.build(self.home, run, task, md, self.skills, dept)
+                                employee=emp, predecessors=self.org.predecessors(emp["id"]) if emp else None)
+        bdir = briefs.build(self.home, run, node, md, self.skills, self._dept_slug(node["dept_id"]), emp,
+                            self.identity(emp["id"]) if emp else None, token)
         self.work.set_run_paths(run["id"], str(bdir), str(bdir / "driver.log"))
-        return Claimed(run=self.work.get_run(run["id"]), task=task, brief_dir=bdir, plan=plan, employee=emp)
-
-    # ── skills ────────────────────────────────────────────────────────────
-    def invoke_skill(self, name: str, file: str = "SKILL.md", employee_id: str | None = None,
-                     dept: str | None = None) -> dict:
-        """Resolve a skill (department → organization → standard library), render it for the employee, and
-        record the use: which skills are used, by whom, is what the steward's evolution loop measures."""
-        emp = self.org.employee(employee_id) if employee_id else None
-        dept = dept or (emp["dept"] if emp else None)
-        layer, path = self.skills.resolve(name, file, dept)
-        text = self.skills.render(path.read_text(), {
-            "holon": briefs.holon_command(self.home), "emp_id": emp["id"] if emp else None,
-            "emp_name": emp["name"] if emp else None, "dept": dept,
-            "roles": ", ".join(emp["roles"]) if emp else None})
-        with write_txn(self.wconn):
-            self.wconn.execute(
-                "INSERT INTO events (ts, entity, entity_id, from_status, to_status, actor, note) VALUES (?,?,?,?,?,?,?)",
-                (now(), "skill", f"{name}/{file}", None, layer, f"emp:{emp['id']}" if emp else self.actor,
-                 f"invoked ({dept or 'org'})"))
-        return {"skill": name, "file": file, "layer": layer, "path": str(path), "text": text}
+        return Claimed(run=self.work.get_run(run["id"]), node=node, brief_dir=bdir, token=token, employee=emp)
 
     # ── ingestion: the one place agent output enters the organization ─────
     def submit(self, run_id: str, envelope: dict | None = None, exit_code: int | None = 0,
@@ -282,53 +342,84 @@ class Kernel:
                     envelope = json.loads(path.read_text())
                 except json.JSONDecodeError as e:
                     envelope = {"_invalid_json": str(e)}
-        kind = run["kind"]
+        stage = run["kind"]
         try:
             if envelope is None:
                 raise EnvelopeError(["no result.json and no JSON output"])
-            env = VALIDATORS[kind](envelope)
-            if kind == "plan":
-                self._check_org_refs(env)
+            env = contract.validate(stage, envelope)
+            self._check_org_refs(env)
         except EnvelopeError as e:
             return self._contract_breach(run, e.problems, driver_output, exit_code)
-        if kind == "plan":
-            task = self.work.get_task(run["task_id"])
+        node = self.work.get(run["task_id"])
+        work = self.work.get(node["parent_id"])
+        emp = self.org.employee(run["employee_id"]) if run["employee_id"] else None
+        if stage == "research":
+            out = self.work.submit_research(run_id, env, exit_code)
+        elif stage == "shape":
+            out = self.work.submit_shape(run_id, env, exit_code)
+        elif stage == "plan":
             if env["kind"] == "needs_input":
-                return {"kind": kind, **self.work.submit_plan(run_id, env, exit_code=exit_code)}
-            g = grading.grade_plan(self.wconn, task, env, self.config)
-            approver = self.org.resolve_approver(task, g["grade"], run["employee_id"])
-            return {"kind": kind, **self.work.submit_plan(run_id, env, g, approver, exit_code)}
-        if kind == "execute":
-            out = self.work.submit_result(run_id, env, exit_code)
-            task = out["task"]
-            emp = self.org.employee(run["employee_id"]) if run["employee_id"] else None
-            mem = self.memory.consolidate(task, run_id, env, run["employee_id"],
-                                          self._dept_scope(task["dept_id"]) or (f"dept:{emp['dept']}" if emp else None))
-            mem["promotions"] = self._promote(mem.pop("lessons"), emp)
-            sampled_out = self._sample_verification(out["task"], run, env)
-            if sampled_out:
-                out["task"] = sampled_out
-            return {"kind": kind, **out, "memory": mem, "verification_skipped": bool(sampled_out)}
-        if kind == "verify":
-            return {"kind": kind, **self.verify(run["task_id"], env["verdict"], env["note"], run_id=run_id)}
-        if env["decision"] == "approve":
-            return {"kind": kind, **self.approve(run["plan_id"], env.get("note"), review_run=run_id)}
-        return {"kind": kind, **self.reject(run["plan_id"], env["note"], review_run=run_id)}
+                out = self.work.submit_plan(run_id, env, exit_code=exit_code)
+            else:
+                g = grading.grade_plan(self.wconn, work, env, self.config)
+                approver = self.org.resolve_approver(work, g["grade"], run["employee_id"])
+                out = self.work.submit_plan(run_id, env, g, approver, exit_code)
+        elif stage == "approve":
+            out = self.decide(node["id"], env["decision"], env.get("note"), review_run=run_id)
+        elif stage == "execute":
+            out = self.work.submit_execute(run_id, env, exit_code)
+            skipped = self._sample_verification(self.work.get(work["id"]), run, env)
+            out["verification_skipped"] = bool(skipped)
+            if skipped:
+                out["work"] = skipped
+        elif stage == "verify":
+            out = self.verify(node["id"], env["verdict"], env["note"], run_id=run_id)
+        else:
+            out = self.work.submit_retro(run_id, env, exit_code)
+            if work.get("task_class") == "retro" and work.get("dept_id"):
+                self._ack_proposals(work["dept_id"])
+        out["memory"] = self._consolidate(work, run, env, emp, stage)
+        out["proposals_routed"] = self._route_proposals(work, env, emp)
+        return {**out, "stage": stage}
 
-    def _sample_verification(self, task: dict, run: dict, env: dict) -> dict | None:
+    def _consolidate(self, work: dict, run: dict, env: dict, emp: dict | None, stage: str) -> dict:
+        if not any(env.get(k) for k in ("learnings", "decisions", "blockers", "terrain", "open_questions")) \
+                and stage != "execute":
+            return {"items": [], "promotions": []}
+        dept_scope = self._dept_scope(work["dept_id"]) or (f"dept:{emp['dept']}" if emp else None)
+        mem = self.memory.consolidate(work, run["id"], env, run["employee_id"], dept_scope, stage=stage)
+        mem["promotions"] = self._promote(mem.pop("lessons"), emp)
+        return mem
+
+    def _route_proposals(self, work: dict, env: dict, emp: dict | None) -> int:
+        """Proposals from any stage go to the department's steward as messages; the steward's retro consumes them."""
+        props = env.get("proposals") or []
+        dept = self._dept_slug(work["dept_id"]) or (emp["dept"] if emp else EXECUTIVE)
+        for p in props:
+            body = p if isinstance(p, str) else f"{p['title']}: {p['intent']}"
+            self.work.post_message(f"emp:{emp['id']}" if emp else self.actor, f"dept:{dept}", body,
+                                   kind="proposal", task_id=work["id"])
+        return len(props)
+
+    def _ack_proposals(self, dept_id: str) -> None:
+        props = self.work.messages(to_refs=[f"dept:{self._dept_slug(dept_id)}"], kind="proposal", unacked=True,
+                                   limit=500)
+        self.work.ack([m["id"] for m in props])
+
+    def _sample_verification(self, work: dict, run: dict, env: dict) -> dict | None:
         """Trusted G0 work is verified on a sample (autonomy.verify_sample_rate); the rest closes unverified.
         Trusted = the executor's last `trusted_after` verified results in this task class all passed."""
-        if task["status"] != "verifying" or env["outcome"] != "success" or not run["employee_id"]:
+        if work["status"] != "open" or env["outcome"] != "success" or not run["employee_id"]:
             return None
-        plan = self.work.get_plan(run["plan_id"]) if run.get("plan_id") else None
+        plan = self.work.approved_plan(work["id"])
         if not plan or plan["grade"] != 0:
             return None
-        pol = self.org.policy(task["dept_id"])
-        streak = self.work.executor_streak(run["employee_id"], task.get("task_class"))
+        pol = self.org.policy(work["dept_id"])
+        streak = self.work.executor_streak(run["employee_id"], work.get("task_class"))
         if streak < pol["trusted_after"] or autonomy.sampled(f"verify:{run['id']}", pol["verify_sample_rate"]):
             return None
         return self.work.skip_verification(
-            task["id"], f"verification sampled out: trusted G0 work ({streak} consecutive verified passes; "
+            work["id"], f"verification sampled out: trusted G0 work ({streak} consecutive verified passes; "
                         f"{pol['verify_sample_rate']:.0%} of such results are verified)")
 
     def _check_org_refs(self, env: dict) -> None:
@@ -341,16 +432,22 @@ class Kernel:
             except LookupError:
                 problems.append(f"{where}: no employee {eid}")
 
+        def dept_ok(slug: str, where: str) -> None:
+            try:
+                self.org.dept(slug)
+            except LookupError:
+                problems.append(f"{where}: no department {slug}")
+
         if env.get("assignee"):
             emp_ok(env["assignee"], "assignee")
-        for i, c in enumerate(env.get("children") or []):
-            if c.get("dept"):
-                try:
-                    self.org.dept(c["dept"])
-                except LookupError:
-                    problems.append(f"children[{i}]: no department {c['dept']}")
-            if c.get("assignee"):
-                emp_ok(c["assignee"], f"children[{i}].assignee")
+        if env.get("dept"):
+            dept_ok(env["dept"], "dept")
+        for key in ("children", "actions"):
+            for i, c in enumerate(env.get(key) or []):
+                if c.get("dept"):
+                    dept_ok(c["dept"], f"{key}[{i}]")
+                if c.get("assignee"):
+                    emp_ok(c["assignee"], f"{key}[{i}].assignee")
         if problems:
             raise EnvelopeError(problems)
 
@@ -373,46 +470,62 @@ class Kernel:
 
     def _contract_breach(self, run: dict, problems: list[str], driver_output: dict | None,
                          exit_code: int | None) -> dict:
-        """An employee that did not honor the result contract. Plan/verify/review runs fail and the
-        work returns to the queue; execution output is wrapped as 'partial' for an independent verifier."""
+        """An employee that did not honor the result contract. Observe-stage runs fail and the stage returns
+        to ready; execution output is wrapped as 'partial' for an independent verifier to judge."""
         note = "result contract breach: " + "; ".join(problems)
         tail = (driver_output or {}).get("stdout_tail", "")
         if run["kind"] == "execute":
             env = {"outcome": "partial", "summary": f"Output did not satisfy the result contract ({problems[0]}).",
                    "documentation": f"**{note}**\n\nDriver stdout (tail):\n\n```\n{tail or '(none)'}\n```",
                    "blockers": [note]}
-            out = self.work.submit_result(run["id"], env, exit_code)
-            return {"kind": "execute", "breach": problems, **out}
+            out = self.work.submit_execute(run["id"], env, exit_code)
+            return {"stage": "execute", "breach": problems, **out}
+        node = self.work.release(run["id"], "failed", note)
+        return {"stage": run["kind"], "breach": problems, "node": node, "work": self.work.work_of(node)}
+
+    # ── skills ────────────────────────────────────────────────────────────
+    def invoke_skill(self, name: str, file: str = "SKILL.md", employee_id: str | None = None,
+                     dept: str | None = None) -> dict:
+        """Resolve a skill (department → organization → standard library), render it for the employee, and
+        record the use: which skills are used, by whom, is what the steward's evolution loop measures."""
+        emp = self.org.employee(employee_id) if employee_id else None
+        dept = dept or (emp["dept"] if emp else None)
+        layer, path = self.skills.resolve(name, file, dept)
+        text = self.skills.render(path.read_text(), {
+            "holon": briefs.holon_command(self.home), "emp_id": emp["id"] if emp else None,
+            "emp_name": emp["name"] if emp else None, "dept": dept,
+            "roles": ", ".join(emp["roles"]) if emp else None})
         with write_txn(self.wconn):
-            self.work._close_run(run["id"], "failed", exit_code)
-            task = self.work.get_task(run["task_id"])
-            if run["kind"] == "plan" and task["status"] == "planning":
-                task = self.work._move(task["id"], "inbox", note,
-                                       actor=f"emp:{run['employee_id']}" if run["employee_id"] else None)
-        return {"kind": run["kind"], "breach": problems, "task": task}
+            self.work._event("skill", f"{name}/{file}", None, layer, f"invoked ({dept or 'org'})",
+                             actor=f"emp:{emp['id']}" if emp else self.actor)
+        return {"skill": name, "file": file, "layer": layer, "path": str(path), "text": text}
 
     # ── push mode ─────────────────────────────────────────────────────────
     def run_driver(self, claimed: Claimed, driver_name: str) -> dict:
         drv = drivers.get(self.home, driver_name)
         brief = briefs.load(self.home, claimed.run["id"])
-        workdir = claimed.task.get("workdir")
-        guard = (claimed.run["kind"] in ("plan", "review") and workdir and Path(workdir).is_dir()
-                 and self.config["planner"]["enforce_read_only"] and not drv.read_only_enforced
+        workdir = claimed.node.get("workdir")
+        trusted = drv.read_only_enforced and self.config["planner"].get("trust_harness_read_only")
+        guard = (vocab.POSTURE[claimed.run["kind"]] == "observe" and workdir and Path(workdir).is_dir()
+                 and self.config["planner"]["enforce_read_only"] and not trusted
                  and not claimed.brief_dir.resolve().is_relative_to(Path(workdir).resolve()))
         before = _hash_dir(Path(workdir)) if guard else None
-        out = drivers.run(self.home, drv, brief, claimed.run["kind"])
+        out = drivers.run(self.home, drv, brief, claimed.token)
         if guard and _hash_dir(Path(workdir)) != before:
             return self._contract_breach(self.work.get_run(claimed.run["id"]),
                                          [f"{claimed.run['kind']} run modified the working directory (must be read-only)"],
                                          out, out["exit_code"])
+        if self.work.get_run(claimed.run["id"])["status"] != "running":  # the agent submitted itself (pull-in-push)
+            return {"stage": claimed.run["kind"], "submitted_by_agent": True,
+                    "work": self.work.work_of(claimed.node["id"])}
         return self.submit(claimed.run["id"], out["envelope"], out["exit_code"], driver_output=out)
 
-    def dispatch(self, duty: str, employee_id: str, task_id: str | None = None) -> dict | None:
+    def dispatch(self, employee_id: str, stage: str | None = None, task_id: str | None = None) -> dict | None:
         emp = self.org.employee(employee_id)
         if self.wconn.execute("SELECT count(*) FROM runs WHERE employee_id=? AND status='running'",
                               (employee_id,)).fetchone()[0] >= emp["max_concurrency"]:
             return None
-        claimed = self.claim(duty, employee_id, emp["driver"], task_id)
+        claimed = self.claim(stage, employee_id, emp["driver"], task_id)
         if claimed is None:
             return None
         return self.run_driver(claimed, emp["driver"])
@@ -420,30 +533,171 @@ class Kernel:
     def tick(self, foreground: bool = False) -> dict:
         """Idempotent heartbeat; call it from any timer (systemd, cron, a harness scheduler)."""
         swept = self.work.sweep_leases()
+        triggered = self.triggers(swept)
         fired = []
         for s in self.schedules.take_due():
             if s["kind"] == "recurring":
-                task = self.schedules.instantiate_recurring(s["plan_id"])
-                fired.append({"schedule": s["id"], "recurring_task": task["id"]})
+                work = self.work.instantiate_recurring(s["template_id"])
+                fired.append({"schedule": s["id"], "recurring_work": work["id"]})
                 continue
             if foreground:
                 try:
-                    res = self.dispatch(s["kind"], s["employee_id"])
+                    res = self.dispatch(s["employee_id"], s["stage"])
                     self.schedules.record_outcome(s["id"], True)
                     fired.append({"schedule": s["id"], "dispatched": bool(res)})
                 except Exception as e:  # one failing employee must not stop the organization's heartbeat
                     self.schedules.record_outcome(s["id"], False)
                     fired.append({"schedule": s["id"], "error": str(e)})
             else:
-                self._spawn_dispatch(s["kind"], s["employee_id"], s["id"])
+                self._spawn_dispatch(s["employee_id"], s["stage"], s["id"])
                 fired.append({"schedule": s["id"], "spawned": True})
-        return {"swept": swept, "fired": fired}
+        return {"swept": swept, "triggered": triggered, "fired": fired}
 
-    def _spawn_dispatch(self, duty: str, employee_id: str, schedule_id: str) -> None:
+    def _spawn_dispatch(self, employee_id: str, stage: str | None, schedule_id: str) -> None:
         log = self.home.runtime_dir / "dispatch.log"
+        cmd = [sys.executable, "-m", "holon", "--home", str(self.home.root), "dispatch", "--as", employee_id,
+               "--schedule", schedule_id] + (["--stage", stage] if stage else [])
         with open(log, "a") as fh:
-            subprocess.Popen(
-                [sys.executable, "-m", "holon", "--home", str(self.home.root), "--actor", f"schedule:{schedule_id}",
-                 "dispatch", "--duty", duty, "--as", employee_id, "--schedule", schedule_id],
-                stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
-                env={**os.environ, **kernel_env(self.home)})
+            subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
+                             env={**os.environ, **kernel_env(self.home)})
+
+    # ── feedback loops (R5): sensors that post work when something needs attention ──
+    def triggers(self, swept: list[dict] | None = None) -> list[dict]:
+        out = []
+        out += self._incidents(swept or [])
+        out += self._probation_reviews()
+        out += self._department_retros()
+        return out
+
+    def _incident(self, title: str, intent: str) -> dict | None:
+        dept = self.config["healing"]["incident_dept"]
+        try:
+            self.org.dept(dept)
+        except LookupError:
+            dept = EXECUTIVE
+        if self.wconn.execute("SELECT 1 FROM tasks WHERE stage IS NULL AND title=? AND status IN "
+                              "('blocked','open','waiting','needs_input')", (title,)).fetchone():
+            return None
+        w = self.work.add_work(title, intent, dept=dept, source="kernel", requested_by="kernel", priority=1,
+                               task_class="incident", acceptance="the cause is fixed and the failing path works again")
+        return {"incident": w["id"], "title": title}
+
+    def _incidents(self, swept: list[dict]) -> list[dict]:
+        h = self.config["healing"]
+        out = []
+        for s in swept:
+            n = self.wconn.execute("SELECT count(*) FROM runs WHERE task_id=? AND status='timeout'",
+                                   (s["task"],)).fetchone()[0]
+            if n >= int(h["lease_expiries_for_incident"]):
+                r = self._incident(f"Incident: runs keep dying on {s['task']}",
+                                   f"{n} runs of the {s['stage']} stage {s['task']} expired their lease (last employee "
+                                   f"{s['employee']}). Find why the harness run dies and fix it.")
+                if r:
+                    out.append(r)
+        for sc in self.wconn.execute("SELECT * FROM schedules WHERE enabled=1 AND failure_streak>=?",
+                                     (int(h["schedule_failures_for_incident"]),)).fetchall():
+            r = self._incident(f"Incident: schedule {sc['id']} keeps failing",
+                               f"Schedule {sc['id']} ({sc['kind']} for {sc['employee_id']}) failed "
+                               f"{sc['failure_streak']} times in a row. See {self.home.runtime_dir / 'dispatch.log'}.")
+            if r:
+                out.append(r)
+        return out
+
+    def _probation_reviews(self) -> list[dict]:
+        days = int(self.config["cadence"]["probation_days"])
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        out = []
+        for r in self.wconn.execute("SELECT id FROM employees WHERE status='probation' AND hired_at<?", (cutoff,)):
+            e = self.org.employee(r["id"])
+            head = self.org.head_of(e["dept_id"])
+            approver = approver_ref(head["id"]) if head and head["id"] != e["id"] else None
+            if approver is None:
+                ceo = self.org.ceo()
+                approver = approver_ref(ceo["id"]) if ceo and ceo["id"] != e["id"] else CHAIR
+            rec = self.org.review(e["id"])
+            a = self.work.propose(
+                title=f"Confirm {e['name']} ({e['id']}) after probation",
+                intent=f"{e['name']}, {e['title']}, has been on probation for over {days} days. Record: "
+                       f"{json.dumps({k: rec[k] for k in ('execution', 'planning')})}. Approve to make them active; "
+                       "reject and then pause or fire them if the record does not justify it.",
+                steps=f"On approval the kernel sets {e['id']} to active.",
+                apply={"kind": "employee_status", "employee_id": e["id"], "status": "active",
+                       "reason": "probation passed (approved proposal)"},
+                approver=approver, grade=1, task_class="staffing", dept=e["dept"], author="kernel")
+            out.append({"probation_review": a["id"], "employee": e["id"]})
+        return out
+
+    def _department_retros(self) -> list[dict]:
+        c = self.config["cadence"]
+        out = []
+        for d in self.org.depts():
+            if not any("retro" in e["stages"] for e in self.org.employees(d["id"])):
+                continue
+            props = self.work.messages(to_refs=[f"dept:{d['slug']}"], kind="proposal", unacked=True, limit=500)
+            props = [m for m in props if m["to_ref"] == f"dept:{d['slug']}"]
+            if len(props) < int(c["dept_retro_min_proposals"]):
+                continue
+            last = self.wconn.execute("SELECT max(created_at) FROM tasks WHERE stage IS NULL AND task_class='retro' "
+                                      "AND dept_id=?", (d["id"],)).fetchone()[0]
+            open_ = self.wconn.execute("SELECT 1 FROM tasks WHERE stage IS NULL AND task_class='retro' AND dept_id=? "
+                                       "AND status='open'", (d["id"],)).fetchone()
+            due = last is None or last < (datetime.now(timezone.utc) - timedelta(days=int(c["dept_retro_days"]))
+                                          ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            if open_ or not (due or len(props) >= 5):
+                continue
+            with write_txn(self.wconn):
+                w = self.work._add_work(f"Department retro: {d['slug']} {now()[:10]}",
+                                        f"Review {len(props)} pending proposals and the department's metrics "
+                                        "(`holon metrics --dept " + d["slug"] + "`); turn what should change into actions.",
+                                        dept=d["id"], source="kernel", requested_by="kernel", task_class="retro",
+                                        expand=False)
+                self.work._add_stage(w, "retro", [])
+            out.append({"dept_retro": w["id"], "dept": d["slug"], "proposals": len(props)})
+        return out
+
+    # ── sensors for the loops: what stewards, heads and the Chair steer by ──
+    def metrics(self, dept: str | None = None, days: int = 30) -> dict:
+        """Each metric is paired with its counter-metric so a department cannot improve one by damaging another."""
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        dept_id = self.org.dept(dept)["id"] if dept else None
+        where, args = "t.created_at>?", [since]
+        if dept_id:
+            where += " AND t.dept_id=?"
+            args.append(dept_id)
+        q = lambda sql, extra=(): self.wconn.execute(sql.format(where=where), [*args, *extra]).fetchone()  # noqa: E731
+        verifies = q("SELECT count(*), sum(t.outcome='pass') FROM tasks t WHERE t.stage='verify' AND t.status='done' "
+                     "AND {where}")
+        first = q("SELECT count(*), sum(t.attempt=1) FROM tasks t WHERE t.stage='verify' AND t.outcome='pass' AND {where}")
+        execs = q("SELECT count(DISTINCT t.parent_id), sum(t.attempt>1) FROM tasks t WHERE t.stage='execute' AND {where}")
+        gates = q("SELECT count(*), avg((julianday(t.decided_at)-julianday(t.created_at))*24), "
+                  "sum(t.outcome='reject') FROM tasks t WHERE t.stage='approve' AND t.decided_at IS NOT NULL AND {where}")
+        backlog = q("SELECT count(*), min(t.created_at) FROM tasks t WHERE t.stage IS NOT NULL AND t.status='ready' "
+                    "AND {where}")
+        cost = q("SELECT sum(r.cost), sum(coalesce(r.tokens_in,0)+coalesce(r.tokens_out,0)) FROM runs r JOIN tasks t "
+                 "ON t.id=r.task_id WHERE {where}")
+        verified = q("SELECT count(*) FROM outputs o JOIN tasks t ON t.id=o.task_id WHERE o.verified=1 AND {where}")[0]
+        cycle = {r[0]: round(r[1], 2) for r in self.wconn.execute(
+            "SELECT t.stage, avg((julianday(r.ended_at)-julianday(r.started_at))*24) FROM runs r JOIN tasks t "
+            f"ON t.id=r.task_id WHERE r.status='succeeded' AND {where} GROUP BY t.stage", args) if r[1] is not None}
+        terrain = self.memory.conn.execute(
+            "SELECT count(*), sum(uses>0) FROM items WHERE provenance LIKE 'terrain:%' AND superseded_by IS NULL"
+            + (" AND scope=?" if dept else ""), ([f"dept:{dept}"] if dept else [])).fetchone()
+        ratio = lambda a, b: round(a / b, 3) if b else None  # noqa: E731
+        backlog_age_h = None
+        if backlog[1]:
+            backlog_age_h = round((datetime.now(timezone.utc) - datetime.strptime(
+                backlog[1], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)).total_seconds() / 3600, 1)
+        return {
+            "dept": dept or "(organization)", "days": days,
+            "first_pass_rate": {"value": ratio(first[1] or 0, first[0]), "counter": "verify_pass_rate"},
+            "verify_pass_rate": {"value": ratio(verifies[1] or 0, verifies[0]), "counter": "rework_rate"},
+            "rework_rate": {"value": ratio(execs[1] or 0, execs[0]), "counter": "first_pass_rate"},
+            "gate_latency_h": {"value": round(gates[1], 2) if gates[1] is not None else None,
+                               "counter": "rejection_rate"},
+            "rejection_rate": {"value": ratio(gates[2] or 0, gates[0]), "counter": "gate_latency_h"},
+            "cycle_time_h_by_stage": cycle,
+            "backlog": {"ready_stages": backlog[0], "oldest_age_h": backlog_age_h},
+            "research_reuse": {"value": ratio(terrain[1] or 0, terrain[0]), "counter": "first_pass_rate"},
+            "cost_per_verified_result": {"value": ratio(cost[0] or 0, verified), "tokens": cost[1] or 0,
+                                         "counter": "verify_pass_rate"},
+        }

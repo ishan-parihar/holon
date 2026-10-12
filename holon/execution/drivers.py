@@ -5,16 +5,18 @@
     cwd       = "{workdir}"            # default
     timeout_s = 1800
     result    = "file"                 # "file": agent writes {result_path}; "stdout-json": last JSON object on stdout
-    read_only = "--plan-only"   # substituted as {read_only} for plan/verify/review runs, else ""
-    duties    = ["plan", "execute", "verify", "review"]   # optional restriction
-    read_only_enforced = false   # true if the harness itself denies writes on plan/verify/review runs;
-                                 # Holon then skips its workdir fingerprint guard (which cannot attribute
-                                 # changes in a working tree other processes are also writing)
+    read_only = "--plan-only"   # substituted as {read_only} for observe-posture stages, else ""
+    stages    = ["plan", "execute"]    # optional restriction (default: every stage)
+    read_only_enforced = false   # true if the harness itself denies writes on observe stages (an
+                                 # observe alias/profile); the kernel's workdir guard still runs unless
+                                 # the instance sets [planner] trust_harness_read_only = true
     [env]                              # optional extra environment
     FOO = "bar"
 
-Placeholders: {brief_dir} {brief_md} {context_md} {result_path} {workdir} {run_id}
-{task_id} {duty} {role} {read_only} {prompt} (= the BRIEF.md text) {holon} (= kernel command).
+Placeholders: {brief_dir} {brief_md} {context_md} {identity_md} {result_path} {workdir} {run_id}
+{task_id} {stage} {role} {posture} (observe | act) {employee_id} {employee_slug} {read_only}
+{prompt} (= the BRIEF.md text) {spawn} (= a one-line spawn message pointing at BRIEF.md)
+{holon} (= kernel command). `duty` is accepted as an alias of `stage`.
 Search order: $HOLON_HOME/config/drivers/*.toml, then the examples shipped with the kernel.
 """
 
@@ -29,9 +31,11 @@ from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
 
+from holon.core import vocab
 from holon.core.paths import Home
-from holon.execution.envelopes import extract_last_json
-from holon.execution.briefs import ROLE_OF_KIND, kernel_env
+from holon.execution.briefs import kernel_env
+
+LEGACY_STAGE = {"review": "approve"}
 
 
 class DriverError(RuntimeError):
@@ -46,8 +50,8 @@ class Driver:
     timeout_s: int = 3600
     result: str = "file"
     read_only: str = ""
-    read_only_enforced: bool = False   # the harness itself denies writes on plan/verify/review runs
-    duties: list[str] = field(default_factory=lambda: ["plan", "execute", "verify", "review"])
+    read_only_enforced: bool = False   # the harness itself denies writes on observe stages
+    stages: list[str] = field(default_factory=lambda: list(vocab.STAGES))
     env: dict[str, str] = field(default_factory=dict)
     source: str = ""
 
@@ -55,7 +59,13 @@ class Driver:
     def from_toml(cls, text: str, source: str) -> "Driver":
         data = tomllib.loads(text)
         unknown = set(data) - {"name", "command", "cwd", "timeout_s", "result", "read_only", "read_only_enforced",
-                               "duties", "env"}
+                               "stages", "duties", "env"}
+        if "duties" in data:  # pre-graph drivers named four duties; observe-capable ones serve every observe stage
+            stages = {LEGACY_STAGE.get(d, d) for d in data.pop("duties")}
+            data["stages"] = sorted(stages | ({"research", "shape", "retro"} if "plan" in stages else set()))
+        bad = set(data.get("stages", [])) - set(vocab.STAGES)
+        if bad:
+            raise DriverError(f"{source}: unknown stages {sorted(bad)}")
         if unknown:
             raise DriverError(f"{source}: unknown keys {sorted(unknown)}")
         if not data.get("name") or not data.get("command"):
@@ -85,17 +95,27 @@ def get(home: Home, name: str) -> Driver:
     return drivers[name]
 
 
-def render(driver: Driver, brief: dict, kind: str) -> tuple[str, str]:
-    role = ROLE_OF_KIND[kind]
+def spawn_message(brief: dict) -> str:
+    return (f"You are {brief.get('employee_name') or 'a Holon employee'} ({brief.get('employee_id') or 'unaffiliated'}). "
+            f"Load the holon-employee skill, then do the {brief['stage']} stage described in {brief['brief_md']}.")
+
+
+def render(driver: Driver, brief: dict) -> tuple[str, str]:
+    stage = brief["stage"]
     values = {
         "brief_dir": str(Path(brief["brief_md"]).parent), "brief_md": brief["brief_md"],
-        "context_md": brief["context_md"], "result_path": brief["result_path"], "workdir": brief["workdir"],
-        "run_id": brief["run_id"], "task_id": brief["task_id"], "role": role, "duty": kind, "holon": brief["holon"],
-        "prompt": Path(brief["brief_md"]).read_text(),
+        "context_md": brief["context_md"], "identity_md": brief.get("identity_md") or "",
+        "result_path": brief["result_path"], "workdir": brief["workdir"], "run_id": brief["run_id"],
+        "task_id": brief["task_id"], "stage": stage, "duty": stage, "role": vocab.STAGE_ROLE[stage],
+        "posture": vocab.POSTURE[stage], "employee_id": brief.get("employee_id") or "",
+        "employee_slug": brief.get("employee_slug") or "", "holon": brief["holon"],
+        "prompt": Path(brief["brief_md"]).read_text(), "spawn": spawn_message(brief),
     }
     quoted = {k: shlex.quote(v) for k, v in values.items()}
     quoted["holon"] = values["holon"]  # already a shell-ready command
-    quoted["read_only"] = driver.read_only if kind in ("plan", "verify", "review") else ""
+    for k in ("stage", "duty", "role", "posture", "employee_slug"):
+        quoted[k] = values[k]  # identifiers: safe, and used inside larger tokens (e.g. alias names)
+    quoted["read_only"] = driver.read_only if vocab.POSTURE[stage] == "observe" else ""
     try:
         cmd = driver.command.format(**quoted)
         cwd = driver.cwd.format(**values)
@@ -104,16 +124,27 @@ def render(driver: Driver, brief: dict, kind: str) -> tuple[str, str]:
     return cmd, cwd
 
 
-def run(home: Home, driver: Driver, brief: dict, kind: str) -> dict:
+def run_env(home: Home, brief: dict, token: str | None) -> dict[str, str]:
+    """The environment every push-mode run gets (docs/CONTRACT.md §1 lists it; `holon lint` checks that)."""
+    stage = brief["stage"]
+    env = {**kernel_env(home), "HOLON_RUN_ID": brief["run_id"], "HOLON_TASK_ID": brief["task_id"],
+           "HOLON_STAGE": stage, "HOLON_ROLE": vocab.STAGE_ROLE[stage], "HOLON_POSTURE": vocab.POSTURE[stage],
+           "HOLON_EMPLOYEE_ID": brief.get("employee_id") or "", "HOLON_BRIEF_DIR": str(Path(brief["brief_md"]).parent),
+           "HOLON_RESULT_PATH": brief["result_path"]}
+    if token:
+        env["HOLON_RUN_TOKEN"] = token
+    return env
+
+
+def run(home: Home, driver: Driver, brief: dict, token: str | None = None) -> dict:
     """Invoke the harness and return {'exit_code', 'envelope' | None, 'log_path', 'stdout_tail'}."""
-    if kind not in driver.duties:
-        raise DriverError(f"driver {driver.name} does not serve the '{kind}' duty")
-    cmd, cwd = render(driver, brief, kind)
+    if brief["stage"] not in driver.stages:
+        raise DriverError(f"driver {driver.name} does not serve the '{brief['stage']}' stage")
+    cmd, cwd = render(driver, brief)
     if not Path(cwd).is_dir():
         cwd = str(Path(brief["brief_md"]).parent)
-    env = {**os.environ, **kernel_env(home), "HOLON_RUN_ID": brief["run_id"], "HOLON_TASK_ID": brief["task_id"],
-           "HOLON_DUTY": kind, "HOLON_ROLE": ROLE_OF_KIND[kind], "HOLON_BRIEF_DIR": str(Path(brief["brief_md"]).parent),
-           "HOLON_RESULT_PATH": brief["result_path"], **driver.env}
+    clean = {k: v for k, v in os.environ.items() if k not in ("HOLON_CHAIR_KEY", "HOLON_KEY")}
+    env = {**clean, **run_env(home, brief, token), **driver.env}
     log_path = Path(brief["brief_md"]).parent / "driver.log"
     try:
         proc = subprocess.run(cmd, shell=True, cwd=cwd, env=env, capture_output=True, text=True,
@@ -138,3 +169,21 @@ def run(home: Home, driver: Driver, brief: dict, kind: str) -> dict:
             envelope = extract_last_json(envelope["result"]) or envelope
     return {"exit_code": exit_code, "envelope": envelope, "log_path": str(log_path), "stdout_tail": stdout[-4000:],
             "stderr_tail": stderr[-2000:]}
+
+
+def extract_last_json(text: str) -> dict | None:
+    """Best effort for harnesses that print instead of writing result.json: the last top-level JSON
+    object in the text."""
+    decoder = json.JSONDecoder()
+    found, i = None, 0
+    while True:
+        start = text.find("{", i)
+        if start < 0:
+            return found
+        try:
+            obj, end = decoder.raw_decode(text, start)
+            if isinstance(obj, dict):
+                found = obj
+            i = end
+        except json.JSONDecodeError:
+            i = start + 1

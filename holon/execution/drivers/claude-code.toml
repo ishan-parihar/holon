@@ -6,4 +6,3 @@ cwd = "{workdir}"
 timeout_s = 3600
 result = "file"   # the agent writes result.json; stdout JSON is the fallback either way
 read_only = "--permission-mode plan"
-duties = ["plan", "execute", "verify", "review"]

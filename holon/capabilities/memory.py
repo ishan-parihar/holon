@@ -22,14 +22,15 @@ import re
 import sqlite3
 from typing import Any, Iterable
 
+from holon.core import vocab
 from holon.core.db import now, write_txn
 from holon.core.ids import new_id
 
-KINDS = ("fact", "decision", "constraint", "preference", "lesson", "open_question", "glossary", "artifact")
-STEERING_KINDS = ("constraint", "decision", "preference")
+KINDS = vocab.MEMORY_KINDS
+STEERING_KINDS = vocab.STEERING_KINDS
+PERSONAL_KINDS = vocab.PERSONAL_KINDS
 NEAR_DUP_JACCARD = 0.85
 PROMOTION_JACCARD = 0.6   # lessons phrased differently by different employees still count as the same
-PERSONAL_KINDS = ("lesson", "preference")
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -235,14 +236,22 @@ class Memory:
 
     # ── consolidation (the write path after every run) ────────────────────
     def consolidate(self, task: dict, run_id: str, env: dict, employee_id: str | None = None,
-                    dept_scope: str | None = None) -> dict:
-        """Deterministic consolidation of an executor result into memory. Lessons become the
-        employee's own; facts, decisions and constraints belong to the project (or department).
-        An optional scribe can enrich `project_state.summary` later; nothing here needs an LLM."""
+                    dept_scope: str | None = None, stage: str = "execute") -> dict:
+        """Deterministic consolidation of any stage's result into memory. Lessons become the employee's
+        own; facts, decisions and constraints belong to the project (or department); research terrain
+        becomes sourced facts. Nothing here needs an LLM."""
         work_scope = task.get("project_ref") or dept_scope or "org"
         personal = f"emp:{employee_id}" if employee_id else work_scope
         prov = f"work:{run_id}"
         written, lessons = [], []
+        for t in env.get("terrain") or []:
+            item = self.add_item(work_scope, t.get("kind", "fact"), t["content"],
+                                 f"terrain:{task['id']} {t.get('source', '')}".strip(),
+                                 confidence=t.get("confidence", "medium"))
+            written.append({"id": item["id"], "scope": work_scope, "action": item["action"]})
+        for q in env.get("open_questions") or []:
+            item = self.add_item(work_scope, "open_question", q, prov)
+            written.append({"id": item["id"], "scope": work_scope, "action": item["action"]})
         for entries, default_kind in ((env.get("learnings") or [], "lesson"), (env.get("decisions") or [], "decision")):
             for e in entries:
                 if isinstance(e, str):
@@ -257,6 +266,9 @@ class Memory:
             text = b if isinstance(b, str) else json.dumps(b)
             item = self.add_item(work_scope, "open_question", f"Blocker on '{task['title']}': {text}", prov)
             written.append({"id": item["id"], "scope": work_scope, "action": item["action"]})
+        if stage != "execute":
+            return {"scope": work_scope, "personal_scope": personal, "items": written, "lessons": lessons,
+                    "episode": None, "state": None}
         digest = f"[{env['outcome']}] {task['title']}: {env['summary']}"
         if env.get("next_intent"):
             digest += f"\nNext: {env['next_intent']}"
@@ -286,7 +298,7 @@ class Memory:
                                       (f"mem:{promoted['id']}", f"mem:{sid}", "derived_from"))
         return {**promoted, "from_scopes": sorted(scopes)}
 
-    def record_review(self, task: dict, plan: dict, decision: str, note: str | None,
+    def record_review(self, task: dict, author: str | None, decision: str, note: str | None,
                       dept_scope: str | None = None) -> list[dict]:
         """Plan-review notes are the richest learning signal: store them where future planners
         will read them: the project (or department), the task class, and the author's own memory."""
@@ -298,8 +310,8 @@ class Memory:
         if task.get("task_class"):
             out.append(self.add_item(f"class:{task['task_class']}", "preference", note.strip(), "chair",
                                      confidence="high"))
-        if plan.get("author"):
-            out.append(self.add_item(f"emp:{plan['author']}", "lesson", content, "chair", confidence="high"))
+        if author:
+            out.append(self.add_item(f"emp:{author}", "lesson", content, "chair", confidence="high"))
         return out
 
 

@@ -1,7 +1,7 @@
-"""When employees wake up, and recurring plans. One schedule table, one writer.
+"""When employees wake up, and recurring work. One schedule table, one writer.
 
-kind = a duty ('plan' | 'execute' | 'verify' | 'review') performed by an employee, or
-'recurring' = fire an approved recurring plan as a fresh, pre-approved task.
+kind = 'wake'      an employee wakes and claims the next ready stage its roles allow (optionally one stage)
+       'recurring' fire an approved recurring plan as fresh work that starts at execute
 """
 
 from __future__ import annotations
@@ -10,13 +10,13 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
+from holon.core import vocab
 from holon.core.db import now, write_txn
 from holon.core.ids import new_id
 from holon.execution.cron import Cron
-from holon.execution.staleness import fingerprint
 from holon.execution.work import NotFound, TransitionError, Work
 
-KINDS = ("plan", "execute", "verify", "review", "recurring")
+KINDS = vocab.SCHEDULE_KINDS
 
 
 def _iso(dt: datetime) -> str:
@@ -28,26 +28,29 @@ class Schedules:
         self.conn = conn
         self.work = Work(conn, actor)
 
-    def add(self, kind: str, cron: str, *, employee_id: str | None = None, plan_id: str | None = None) -> dict:
+    def add(self, kind: str, cron: str, *, employee_id: str | None = None, stage: str | None = None,
+            template_id: str | None = None) -> dict:
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}")
         c = Cron(cron)
         if kind == "recurring":
-            plan = self.work.get_plan(plan_id) if plan_id else None
-            if plan is None or plan["status"] != "approved" or not plan["recurring"]:
+            t = self.work.get(template_id) if template_id else None
+            if t is None or t["stage"] != "plan" or not t["recurring"]:
                 raise TransitionError("a recurring schedule needs a plan approved with --recurring")
         else:
-            row = self.conn.execute("SELECT duties, status FROM employees WHERE id=?", (employee_id,)).fetchone() \
+            row = self.conn.execute("SELECT roles, status FROM employees WHERE id=?", (employee_id,)).fetchone() \
                 if employee_id else None
             if row is None or row["status"] == "retired":
-                raise NotFound(f"a {kind} schedule needs an active employee")
-            if kind not in json.loads(row["duties"]):
-                raise ValueError(f"employee {employee_id} does not have the '{kind}' duty")
+                raise NotFound("a wake schedule needs an active employee")
+            stages = {s for r in json.loads(row["roles"] or "[]") for s in vocab.ROLE_STAGES[r]}
+            if stage and stage not in stages:
+                raise ValueError(f"employee {employee_id} has no role that performs the '{stage}' stage")
         sid = new_id("schedule")
         with write_txn(self.conn):
             self.conn.execute(
-                "INSERT INTO schedules (id, kind, cron, employee_id, plan_id, next_run_at, created_at) VALUES (?,?,?,?,?,?,?)",
-                (sid, kind, cron, employee_id, plan_id, _iso(c.next_after(datetime.now(timezone.utc))), now()))
+                "INSERT INTO schedules (id, kind, cron, employee_id, stage, template_id, next_run_at, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (sid, kind, cron, employee_id, stage, template_id, _iso(c.next_after(datetime.now(timezone.utc))), now()))
             self.work._event("schedule", sid, None, "enabled", f"{kind} '{cron}'")
         return self.get(sid)
 
@@ -84,32 +87,3 @@ class Schedules:
         with write_txn(self.conn):
             self.conn.execute("UPDATE schedules SET failure_streak=CASE WHEN ? THEN 0 ELSE failure_streak+1 END "
                               "WHERE id=?", (1 if ok else 0, sid))
-
-    def instantiate_recurring(self, plan_id: str, label: str | None = None) -> dict:
-        """One firing of a recurring plan: a fresh task carrying a copy of the approved plan,
-        entering the pipeline at 'approved'. The approval it inherits is recorded."""
-        tmpl = self.work.get_plan(plan_id)
-        if tmpl["status"] != "approved" or not tmpl["recurring"]:
-            raise TransitionError(f"plan {plan_id} is not an approved recurring plan")
-        src = self.work.get_task(tmpl["task_id"])
-        tid, pid, ts = new_id("task"), new_id("plan"), now()
-        with write_txn(self.conn):
-            self.conn.execute(
-                "INSERT INTO tasks (id, project_ref, dept_id, assignee, requested_by, title, intent, acceptance, priority,"
-                " source, task_class, risk, workdir, status, max_attempts, created_at, updated_at)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (tid, src["project_ref"], src["dept_id"], src["assignee"], f"recurring:{plan_id}",
-                 f"{src['title']} — {label or ts[:16]}", src["intent"], src["acceptance"], src["priority"], "schedule",
-                 src["task_class"], src["risk"], src["workdir"], "approved", src["max_attempts"], ts, ts))
-            writes = json.loads(tmpl["writes"] or "[]")
-            self.conn.execute(
-                "INSERT INTO plans (id, task_id, version, kind, author, findings, writes_fingerprint, steps, writes,"
-                " external_effects, assignee, risks, rollback, estimate, context_refs, grade_proposed, grade_floor,"
-                " grade, grade_reasons, approver, status, review_note, decided_by, decided_at, created_at)"
-                " VALUES (?,?,1,'execute',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'approved',?,?,?,?)",
-                (pid, tid, tmpl["author"], tmpl["findings"], fingerprint(src["workdir"], writes), tmpl["steps"],
-                 tmpl["writes"], tmpl["external_effects"], tmpl["assignee"], tmpl["risks"], tmpl["rollback"],
-                 tmpl["estimate"], tmpl["context_refs"], tmpl["grade_proposed"], tmpl["grade_floor"], tmpl["grade"],
-                 tmpl["grade_reasons"], tmpl["approver"], tmpl["review_note"], f"recurring:{plan_id}", ts, ts))
-            self.work._event("task", tid, None, "approved", f"recurring plan {plan_id}")
-        return self.work.get_task(tid)

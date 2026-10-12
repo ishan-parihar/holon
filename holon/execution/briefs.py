@@ -1,10 +1,11 @@
 """Briefs: the harness-neutral handoff between the kernel and an agent.
 
-The brief for a duty is rendered from its role skill (BRIEF_OF_KIND), resolved through the skill
+The brief for a stage is rendered from its role skill (`BRIEF_OF_STAGE`), resolved through the skill
 layers, so a department's tailored playbook is what its employees receive.
 
-    runs/<run_id>/BRIEF.md     role instructions (any harness can read markdown)
-    runs/<run_id>/brief.json   the same, machine-readable
+    runs/<run_id>/BRIEF.md      stage instructions (any harness can read markdown)
+    runs/<run_id>/brief.json    the same, machine-readable (includes the run token: mode 0600)
+    runs/<run_id>/identity.md   who the employee is (for harnesses that put it in the system prompt)
     runs/<run_id>/context.md    compiled context bundle
     runs/<run_id>/result.json   WRITTEN BY THE AGENT: the result envelope
     runs/<run_id>/driver.log    driver stdout/stderr (push mode only)
@@ -23,10 +24,9 @@ from holon.capabilities.skills import Library
 from holon.core.db import now
 from holon.core.paths import Home
 
-ROLE_OF_KIND = {"plan": "planner", "execute": "executor", "verify": "verifier", "review": "reviewer"}
-BRIEF_OF_KIND = {"plan": ("holon-planner", "briefs/plan.md"), "execute": ("holon-executor", "briefs/execute.md"),
-                 "verify": ("holon-verifier", "briefs/verify.md"), "review": ("holon-head", "briefs/review.md")}
-KIND_OF_ROLE = {v: k for k, v in ROLE_OF_KIND.items()}
+from holon.core import vocab
+
+BRIEF_OF_STAGE = {s: (f"holon-{vocab.STAGE_ROLE[s]}", f"briefs/{s}.md") for s in vocab.STAGES}
 
 
 def holon_command(home: Home) -> str:
@@ -42,28 +42,42 @@ def kernel_env(home: Home) -> dict[str, str]:
     return {"HOLON_HOME": str(home.root), "PYTHONPATH": pythonpath, "HOLON": holon_command(home)}
 
 
-def build(home: Home, run: dict, task: dict, context_md: str, library: Library | None = None,
-          dept: str | None = None) -> Path:
-    kind = run["kind"]
+def build(home: Home, run: dict, node: dict, context_md: str, library: Library | None = None,
+          dept: str | None = None, employee: dict | None = None, identity_md: str | None = None,
+          token: str | None = None) -> Path:
+    stage = run["kind"]
     d = home.run_dir(run["id"])
     d.mkdir(parents=True, exist_ok=True)
     result_path = d / "result.json"
     if result_path.exists():
         result_path.unlink()
-    workdir = task.get("workdir") or str(d)
+    workdir = node.get("workdir") or str(d)
     (d / "context.md").write_text(context_md)
-    skill, file = BRIEF_OF_KIND[kind]
+    if identity_md:
+        (d / "identity.md").write_text(identity_md)
+    skill, file = BRIEF_OF_STAGE[stage]
     lib = library or Library(home)
+    holon = holon_command(home)
     md = lib.render(lib.read(skill, file, dept), dict(
-        run_id=run["id"], task_id=task["id"], context_md=str(d / "context.md"), result_path=str(result_path),
-        workdir=workdir, holon=holon_command(home)))
+        run_id=run["id"], task_id=node["id"], work_id=node["parent_id"] or node["id"], stage=stage,
+        context_md=str(d / "context.md"), result_path=str(result_path), workdir=workdir, holon=holon))
     (d / "BRIEF.md").write_text(md)
-    (d / "brief.json").write_text(json.dumps({
-        "run_id": run["id"], "task_id": task["id"], "kind": kind, "role": ROLE_OF_KIND[kind],
-        "brief_md": str(d / "BRIEF.md"), "context_md": str(d / "context.md"), "result_path": str(result_path),
-        "workdir": workdir, "holon": holon_command(home), "lease_until": run.get("lease_until"),
-        "envelope": f"schemas/{kind}-result.schema.json", "skill": skill, "created_at": now()}, indent=2))
+    bj = d / "brief.json"
+    bj.write_text(json.dumps({
+        "run_id": run["id"], "task_id": node["id"], "work_id": node["parent_id"], "stage": stage,
+        "role": vocab.STAGE_ROLE[stage], "posture": vocab.POSTURE[stage],
+        "employee_id": employee["id"] if employee else None, "employee_name": employee["name"] if employee else None,
+        "employee_slug": slug(employee["name"]) if employee else None,
+        "brief_md": str(d / "BRIEF.md"), "context_md": str(d / "context.md"),
+        "identity_md": str(d / "identity.md") if identity_md else None, "result_path": str(result_path),
+        "workdir": workdir, "holon": holon, "lease_until": run.get("lease_until"), "token": token,
+        "envelope": f"schemas/{stage}-result.schema.json", "skill": skill, "created_at": now()}, indent=2))
+    bj.chmod(0o600)
     return d
+
+
+def slug(name: str) -> str:
+    return "".join(c if c.isalnum() else "-" for c in name.lower()).strip("-") or "employee"
 
 
 def load(home: Home, run_id: str) -> dict:

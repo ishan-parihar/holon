@@ -1,6 +1,6 @@
-# Duty: VERIFY — run $run_id
+# Stage: VERIFY — run $run_id
 
-You are independently verifying task **$task_id**. You did not do the work; judge it.
+You are independently verifying task **$work_id**. You did not do the work; judge it.
 
 ## Inputs
 - `$context_md`: the task and its **acceptance criteria**, the approved plan, and the

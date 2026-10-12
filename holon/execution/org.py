@@ -7,7 +7,7 @@ Every org term is bound to data here (INTENT.md, law 3):
   hire / fire -> create / retire with reason; a successor inherits the predecessor's memory scope
   role / slot -> employees.roles (the six standard roles) filling the slots of the department's genome profile
   authority   -> authority rows; earned and lost from verified outcomes, never from self-report
-  review      -> computed from runs, plans, results, and audit samples (no stored counters to drift)
+  review      -> computed from runs, stage outputs and audit samples (no stored counters to drift)
 """
 
 from __future__ import annotations
@@ -15,14 +15,11 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from holon.core.db import now, write_txn
+from holon.core.db import log_event, now, write_txn
 from holon.core.ids import new_id
+from holon.core.vocab import CHAIR, EXECUTIVE
 from holon.execution import autonomy
 from holon.execution import genome as gn
-
-DUTIES = ("plan", "execute", "verify", "review")
-CHAIR = "chair"
-EXECUTIVE = "executive"
 
 
 class OrgError(RuntimeError):
@@ -47,9 +44,7 @@ class Org:
         return autonomy.policy(self.config, self.dept(dept)["slug"] if dept else None)
 
     def _event(self, entity: str, entity_id: str, frm: str | None, to: str | None, note: str | None = None) -> None:
-        self.conn.execute(
-            "INSERT INTO events (ts, entity, entity_id, from_status, to_status, actor, note) VALUES (?,?,?,?,?,?,?)",
-            (now(), entity, entity_id, frm, to, self.actor, note))
+        log_event(self.conn, entity, entity_id, frm, to, self.actor, note)
 
     # ── bootstrap ─────────────────────────────────────────────────────────
     def bootstrap(self) -> None:
@@ -116,21 +111,22 @@ class Org:
 
     # ── employees ─────────────────────────────────────────────────────────
     def hire(self, *, name: str, title: str, dept: str, job_description: str, driver: str, reason: str,
-             duties: list[str] | None = None, roles: list[str] | None = None, slot: str | None = None,
+             roles: list[str] | None = None, slot: str | None = None,
              head: bool = False, reports_to: str | None = None, task_classes: list[str] | None = None,
              skills: list[str] | None = None, max_concurrency: int = 1, employee_id: str | None = None,
              status: str = "probation") -> dict:
-        """Hire into a slot of the department's profile (`slot`), into explicit `roles`, or (legacy) with
-        raw `duties`. Duties are derived from roles; a slot or role list containing 'head' makes the hire the head."""
+        """Hire into a slot of the department's profile (`slot`) or into explicit `roles`. The stages an
+        employee may claim follow from its roles; a slot or role list containing 'head' makes the hire the head."""
         roles = sorted(set(roles or []) | set(self.slot_roles(dept, slot) if slot else []))
         try:
-            duties = sorted(set(duties or []) | set(gn.duties_for(roles)))
+            gn.stages_for(roles)
         except gn.GenomeError as e:
             raise OrgError(str(e)) from None
-        head = head or "head" in roles
-        bad = set(duties) - set(DUTIES)
-        if bad or not (duties or roles):
-            raise OrgError(f"give roles (or a slot); duties must be a subset of {DUTIES}")
+        if head and "head" not in roles:
+            roles = sorted({*roles, "head"})
+        head = "head" in roles
+        if not roles:
+            raise OrgError("an employee needs at least one role (give --slot or --roles)")
         if not job_description.strip():
             raise OrgError("an employee needs a job description")
         d = self.dept(dept)
@@ -146,11 +142,10 @@ class Org:
             if head and d["head_id"]:
                 raise OrgError(f"department {d['slug']} already has a head ({d['head_id']}); transfer or fire first")
             self.conn.execute(
-                "INSERT INTO employees (id, name, title, dept_id, reports_to, job_description, duties, roles,"
+                "INSERT INTO employees (id, name, title, dept_id, reports_to, job_description, roles,"
                 " task_classes, skills, driver, max_concurrency, status, hired_at, hired_reason)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (eid, name, title, d["id"], reports_to, job_description.strip(), json.dumps(duties),
-                 json.dumps(roles) if roles else None,
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (eid, name, title, d["id"], reports_to, job_description.strip(), json.dumps(roles),
                  json.dumps(task_classes) if task_classes else None, json.dumps(skills) if skills else None,
                  driver, max_concurrency, status, now(), reason))
             if head:
@@ -175,11 +170,12 @@ class Org:
         if r is None:
             raise LookupError(f"no employee {eid}")
         out = dict(r)
-        out["duties"] = json.loads(out["duties"])
         out["task_classes"] = json.loads(out["task_classes"]) if out["task_classes"] else None
         out["skills"] = json.loads(out["skills"]) if out["skills"] else None
         out["is_head"] = bool(out["is_head"])
-        out["roles"] = json.loads(out["roles"]) if out["roles"] else gn.infer_roles(out["duties"], out["is_head"])
+        out["roles"] = json.loads(out["roles"] or "[]")
+        out["stages"] = gn.stages_for(out["roles"])
+        out.pop("key_hash", None)
         return out
 
     def employees(self, dept: str | None = None, include_retired: bool = False) -> list[dict]:
@@ -223,8 +219,10 @@ class Org:
             if e["is_head"]:
                 self.conn.execute("UPDATE departments SET head_id=? WHERE id=?", (successor, e["dept_id"]))
             self.conn.execute("UPDATE employees SET reports_to=? WHERE reports_to=?", (successor, eid))
-            self.conn.execute("UPDATE tasks SET assignee=? WHERE assignee=? AND status NOT IN ('done','cancelled')",
-                              (successor, eid))
+            self.conn.execute("UPDATE tasks SET assignee=? WHERE assignee=? AND status IN "
+                              "('blocked','open','waiting','needs_input','ready')", (successor, eid))
+            self.conn.execute("UPDATE tasks SET approver=?, assignee=? WHERE approver=? AND status='ready'",
+                              (approver_ref(successor) if successor else CHAIR, successor, approver_ref(eid)))
             self.conn.execute("DELETE FROM authority WHERE approver=?", (approver_ref(eid),))
             self._event("employee", eid, e["status"], "retired", f"{reason}" + (f"; successor {successor}" if successor else ""))
         return self.employee(eid)
@@ -277,7 +275,7 @@ class Org:
         if ceo and ceo["status"] in ("active", "probation") and all(c["id"] != ceo["id"] for c in chain):
             chain.append(ceo)
         for emp in chain:
-            if emp["id"] == author or "review" not in emp["duties"]:
+            if emp["id"] == author or "approve" not in emp["stages"]:
                 continue
             if self.authority_of(approver_ref(emp["id"]), task.get("task_class")) >= grade:
                 return approver_ref(emp["id"])
@@ -294,16 +292,15 @@ class Org:
             "SELECT coalesce(max(ts), '') FROM events WHERE entity='authority' AND entity_id IN (?, ?)",
             (f"{approver}/{key}", f"{approver}/*")).fetchone()[0]
         rows = self.conn.execute(
-            "SELECT t.status, p.decided_at, (SELECT r.verified FROM runs u JOIN results r ON r.run_id=u.id "
-            "  WHERE u.plan_id=p.id AND u.kind='execute' AND r.verified IS NOT NULL"
-            "  ORDER BY r.created_at DESC LIMIT 1) AS verified "
-            "FROM plans p JOIN tasks t ON t.id=p.task_id "
-            "WHERE p.decided_by=? AND p.status='approved' AND coalesce(t.task_class,'*')=? AND p.decided_at>? "
-            "ORDER BY p.decided_at", (approver, key, since)).fetchall()
+            "SELECT a.id, a.decided_at, (SELECT o.verified FROM tasks e JOIN outputs o ON o.task_id=e.id "
+            "  WHERE e.parent_id=a.parent_id AND e.stage='execute' AND o.verified IS NOT NULL "
+            "  ORDER BY o.created_at DESC LIMIT 1) AS verified "
+            "FROM tasks a WHERE a.stage='approve' AND a.decided_by=? AND a.outcome='approve' "
+            "AND coalesce(a.task_class,'*')=? AND a.decided_at>? ORDER BY a.decided_at", (approver, key, since)).fetchall()
         verified_ok = sum(1 for r in rows if r["verified"] == 1)
         failed = sum(1 for r in rows if r["verified"] == 0)
         disagreed = self.conn.execute(
-            "SELECT count(*) FROM audit_samples a JOIN plans p ON p.id=a.plan_id JOIN tasks t ON t.id=p.task_id "
+            "SELECT count(*) FROM audit_samples a JOIN tasks t ON t.id=a.task_id "
             "WHERE a.approver=? AND a.verdict='disagree' AND coalesce(t.task_class,'*')=? AND a.judged_at>?",
             (approver, key, since)).fetchone()[0]
         return {"approved": len(rows), "verified_ok": verified_ok, "verification_failed": failed,
@@ -338,15 +335,20 @@ class Org:
             " AS failed, sum(coalesce(tokens_in,0)+coalesce(tokens_out,0)) AS tokens, max(started_at) AS last_run "
             "FROM runs WHERE employee_id=? GROUP BY kind", (eid,))}
         executed = self.conn.execute(
-            "SELECT count(*), sum(r.verified=1), sum(r.verified=0) FROM runs u JOIN results r ON r.run_id=u.id "
-            "WHERE u.employee_id=? AND u.kind='execute'", (eid,)).fetchone()
-        authored = self.conn.execute(
-            "SELECT count(*), sum(version=1 AND status='approved'), sum(status='rejected') FROM plans WHERE author=?",
-            (eid,)).fetchone()
+            "SELECT count(*), sum(o.verified=1), sum(o.verified=0) FROM runs u JOIN outputs o ON o.run_id=u.id "
+            "WHERE u.employee_id=? AND o.kind='execute'", (eid,)).fetchone()
+        plans = self.conn.execute(
+            "SELECT (SELECT a.outcome FROM task_needs n JOIN tasks a ON a.id=n.task_id WHERE n.needs_id=p.id "
+            "  AND a.stage='approve') AS decision, (SELECT count(*) FROM tasks q WHERE q.parent_id=p.parent_id "
+            "  AND q.stage='plan' AND q.rowid<p.rowid) AS prior "
+            "FROM tasks p JOIN runs r ON r.task_id=p.id WHERE r.employee_id=? AND p.stage='plan' AND r.status='succeeded'",
+            (eid,)).fetchall()
+        authored = (len(plans), sum(1 for p in plans if p["decision"] == "approve" and p["prior"] == 0),
+                    sum(1 for p in plans if p["decision"] == "reject"))
         approved = self.approver_track_record(approver_ref(eid), None)
         return {
             "employee": {k: e[k] for k in ("id", "name", "title", "dept", "status", "is_head", "hired_at")},
-            "runs_by_duty": runs,
+            "runs_by_stage": runs,
             "execution": {"results": executed[0], "verified_ok": executed[1] or 0, "verified_failed": executed[2] or 0},
             "planning": {"plans": authored[0], "approved_first_try": authored[1] or 0, "rejected": authored[2] or 0},
             "approving": approved,

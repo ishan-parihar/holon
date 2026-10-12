@@ -88,6 +88,35 @@ def _logbook(home: Home, text: str, bundle: Bundle, limit: int = 5) -> None:
                    "\n".join(f"- {r['date']} [{r['channel']}] {r['title']}: {(r['body'] or '').strip()}" for r in rows))
 
 
+def _render_output(node: dict, out: dict) -> str:
+    body = dict(out["body"])
+    lines = []
+    for k, v in body.items():
+        if v in (None, "", [], {}) or k in ("writes_fingerprint", "author"):
+            continue
+        if isinstance(v, list):
+            v = "\n" + "\n".join(f"  - {x if isinstance(x, str) else json.dumps(x, ensure_ascii=False)}" for x in v)
+        elif isinstance(v, dict):
+            v = json.dumps(v, ensure_ascii=False)
+        lines.append(f"**{k}:** {v}")
+    if body.get("author"):
+        lines.append(f"**author:** emp:{body['author']}")
+    if out.get("documentation"):
+        lines.append(f"\n{out['documentation']}")
+    return "\n".join(lines)
+
+
+def _history(work: Work, work_id: str) -> str:
+    lines = []
+    for s in work.stages(work_id):
+        o = work.output(s["id"])
+        summary = (o or {}).get("summary") or ""
+        lines.append(f"- {s['created_at'][:16]} {s['stage']} [{s['status']}{'/' + s['outcome'] if s['outcome'] else ''}]"
+                     + (f" by {s['decided_by']}" if s["decided_by"] else "") + (f": {summary[:300]}" if summary else "")
+                     + (f" — note: {s['decision_note']}" if s["decision_note"] else ""))
+    return "\n".join(lines)
+
+
 def _dept_slug(work: Work, dept_id: str | None) -> str | None:
     if not dept_id:
         return None
@@ -95,11 +124,36 @@ def _dept_slug(work: Work, dept_id: str | None) -> str | None:
     return r["slug"] if r else None
 
 
-def compile_context(home: Home, work: Work, memory: Memory, task_id: str, role: str,
+def identity_card(employee: dict, manager: dict | None, authority: list[dict], record: dict | None = None,
+                  predecessors: list[str] | None = None) -> str:
+    """Who an employee is, in one page: what a harness puts in the system prompt (L1 of the injection)."""
+    grants = ", ".join(f"G{a['max_grade']} on {a['task_class']}" for a in authority if a["max_grade"] >= 0) or "none yet"
+    rec = ""
+    if record:
+        ex, pl = record.get("execution", {}), record.get("planning", {})
+        rec = (f"\nRecord: {ex.get('verified_ok', 0)} verified results, {ex.get('verified_failed', 0)} failed verification; "
+               f"{pl.get('approved_first_try', 0)}/{pl.get('plans', 0)} plans approved first try.")
+    return (f"# You are {employee['name']}, {employee['title']}\n\n"
+            f"Holon employee `{employee['id']}` in the **{employee['dept']}** department"
+            + (" (head of department)" if employee.get("is_head") else "")
+            + (f", reporting to {manager['name']} ({manager['title']})" if manager else ", reporting to the Chair")
+            + f". Status: {employee['status']}.\n"
+            f"Roles: {', '.join(employee['roles'])}. Stages you perform: {', '.join(employee['stages'])}.\n"
+            f"Approval authority: {grants}.{rec}\n"
+            f"Memory scope: `emp:{employee['id']}`"
+            + (f" (inherited from {', '.join(predecessors)})" if predecessors else "") + ".\n\n"
+            f"## Job description\n\n{employee['job_description']}\n\n"
+            "You are a persistent employee: your memory, record and colleagues outlive this session. "
+            "Load the `holon-employee` skill and follow its protocol.\n")
+
+
+def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
                     budget: int = DEFAULT_BUDGET_CHARS, run_id: str | None = None,
-                    employee: dict | None = None, predecessors: list[str] | None = None,
-                    plan_id: str | None = None) -> tuple[str, dict]:
-    task = work.get_task(task_id)
+                    employee: dict | None = None, predecessors: list[str] | None = None) -> tuple[str, dict]:
+    node = work.get(node_id)
+    stage = node["stage"] or "work"
+    task = work.work_of(node)
+    task_id = task["id"]
     task_dept = _dept_slug(work, task.get("dept_id"))
     dept_scope = f"dept:{task_dept}" if task_dept else None
     scope = scope_for(task, dept_scope)
@@ -118,57 +172,66 @@ def compile_context(home: Home, work: Work, memory: Memory, task_id: str, role: 
               f"You are **{employee['name']}**, {employee['title']} in the **{employee['dept']}** department"
               + (" (head of department)" if employee.get("is_head") else "")
               + (f", reporting to {mgr['name']} ({mgr['title']})" if mgr else ", reporting to the Chair")
-              + f". Employee id `{employee['id']}`; your memory scope is `emp:{employee['id']}`."
+              + f". Employee id `{employee['id']}`; roles: {', '.join(employee['roles'])}; "
+              f"memory scope `emp:{employee['id']}`."
               + (f" You inherited the role and memory of {', '.join(predecessors)}." if predecessors else "")
               + f"\n\n### Job description\n\n{employee['job_description']}")
 
-    # 1. the task itself
-    meta = [f"- id: {task['id']}", f"- status: {task['status']}", f"- priority: {task['priority']}",
-            f"- risk: {task['risk']}"]
+    # 1. the work itself
+    meta = [f"- work: {task_id} ({task['status']})", f"- this stage: {stage} `{node_id}`",
+            f"- priority: P{task['priority']}", f"- risk: {task['risk']}"]
     for k in ("project_ref", "task_class", "workdir", "due"):
         if task.get(k):
             meta.append(f"- {k}: {task[k]}")
     body = f"**{task['title']}**\n\n{task['intent']}\n\n" + "\n".join(meta)
     if task.get("acceptance"):
         body += f"\n\n**Acceptance criteria:** {task['acceptance']}"
+    if node.get("blocked_reason") and node["stage"]:
+        body += f"\n\n**Why this stage exists:** {node['blocked_reason']}"
     b.add("Task", body)
 
-    # 2. role-specific working material
-    if role == "review" and plan_id:
-        p = work.get_plan(plan_id)
-        reasons = json.loads(p["grade_reasons"] or "[]")
-        b.add(f"Plan to review (v{p['version']}, {p['id']}, grade G{p['grade']})",
-              f"Author: {p['author'] or '-'}  ·  kind: {p['kind']}  ·  proposed assignee: {p['assignee'] or '-'}\n\n"
-              f"Findings:\n{p['findings'] or '-'}\n\nSteps:\n{p['steps']}"
-              + (f"\n\nWrites: {p['writes']}" if p["writes"] else "")
-              + (f"\n\nExternal effects: {p['external_effects']}" if p["external_effects"] else "")
-              + (f"\n\nRisks: {p['risks']}" if p["risks"] else "")
-              + (f"\n\nRollback: {p['rollback']}" if p["rollback"] else "")
-              + "\n\nWhy this grade:\n" + "\n".join(f"- {r}" for r in reasons))
-    approved = work.latest_plan(task_id, "approved")
-    if role in ("execute", "verify") and approved:
-        b.add(f"Approved plan (v{approved['version']}, {approved['id']})",
-              f"{approved['steps']}\n\nFindings at planning time:\n{approved['findings'] or '-'}"
-              + (f"\n\nRisks: {approved['risks']}" if approved['risks'] else "")
-              + (f"\n\nRollback: {approved['rollback']}" if approved['rollback'] else "")
-              + (f"\n\nReviewer note: {approved['review_note']}" if approved['review_note'] else ""))
-    if role == "verify":
-        res = work.latest_result(task_id)
-        if res:
-            b.add("Result to verify", f"Outcome: {res['outcome']}\n\nSummary: {res['summary']}\n\n{res['documentation']}")
+    # 2. stage material: what the stages before this one produced
+    for prev_id in work.needs(node_id):
+        prev = work.get(prev_id)
+        out = work.output(prev_id)
+        if not out or not prev["stage"]:
+            continue
+        b.add(f"From the {prev['stage']} stage ({prev['outcome'] or prev['status']}, {prev_id})", _render_output(prev, out))
+    if stage == "approve":
+        plan = work.plan_for_approval(node_id)
+        reasons = json.loads(plan["grade_reasons"] or "[]")
+        b.add(f"Plan to review ({plan['id']}, grade G{plan['grade']})",
+              _render_output(plan, plan["output"]) + "\n\nWhy this grade:\n" + "\n".join(f"- {r}" for r in reasons))
+    if stage in ("execute", "verify"):
+        approved = work.approved_plan(task_id)
+        if approved:
+            a = approved["approval"]
+            b.add(f"Approved plan ({approved['id']}, G{approved['grade']})",
+                  _render_output(approved, approved["output"])
+                  + (f"\n\nApprover's note ({a['decided_by']}): {a['decision_note']}" if a["decision_note"] else ""))
+    if stage == "retro":
+        b.add("History of this work", _history(work, task_id))
+        if task.get("task_class") == "retro" and task_dept:
+            props = work.messages(to_refs=[f"dept:{task_dept}"], kind="proposal", unacked=True, limit=30)
+            if props:
+                b.add("Pending proposals from the department",
+                      "\n".join(f"- {m['id']} from {m['sender']}: {m['body']}" for m in props))
 
-    # 3. previous attempts and your feedback on them (replans must see this)
-    prior = [p for p in work.plans_for(task_id) if p["status"] in ("rejected", "superseded")]
-    if prior:
-        b.add("Previous plans and review notes", "\n\n".join(
-            f"- v{p['version']} {p['status']}" + (f" — reviewer: {p['review_note']}" if p["review_note"] else "")
-            + f"\n  steps: {(p['steps'] or '')[:600]}" for p in prior))
+    # 3. previous attempts and your feedback on them (replans and rework must see this)
+    if stage in ("plan", "execute", "research", "shape"):
+        decided = [s for s in work.stages(task_id, "approve") if s["outcome"] == "reject"]
+        failed_verify = [s for s in work.stages(task_id, "verify") if s["outcome"] == "fail"]
+        notes = [f"- plan rejected by {s['decided_by']}: {s['decision_note']}" for s in decided]
+        notes += [f"- verification failed: {(work.output(s['id']) or {'body': {}})['body'].get('note', '')}"
+                  for s in failed_verify]
+        if notes:
+            b.add("Earlier feedback on this work (answer each point)", "\n".join(notes))
     msgs = work.messages(task_id)
     if msgs:
-        b.add("Conversation on this task", "\n".join(f"- {m['ts'][:16]} {m['sender']}: {m['body']}" for m in msgs))
+        b.add("Conversation on this work", "\n".join(f"- {m['ts'][:16]} {m['sender']}: {m['body']}" for m in msgs))
     prev_runs = memory.episodes(task_id=task_id, limit=5)
     if prev_runs:
-        b.add("Earlier runs of this task", "\n".join(f"- {e['ts'][:16]} {e['digest']}" for e in prev_runs))
+        b.add("Earlier runs of this work", "\n".join(f"- {e['ts'][:16]} {e['digest']}" for e in prev_runs))
 
     # 4. project checkpoint + steering memory
     state = memory.get_state(scope)
@@ -182,18 +245,18 @@ def compile_context(home: Home, work: Work, memory: Memory, task_id: str, role: 
         b.add("Constraints, decisions, preferences (follow these)", _fmt_items(pinned + steering))
         b.used_items += [i["id"] for i in pinned + steering]
 
-    # 5. why: goal lineage + task ancestry
+    # 5. why: goal lineage + the work's place in the holarchy
     _lineage(home, task.get("project_ref"), b)
     anc = work.ancestry(task_id)
     if anc:
-        b.add("Parent tasks", "\n".join(f"- {a['title']} [{a['status']}]: {a['intent'][:300]}" for a in anc))
-        siblings = [s for s in work.list_tasks(parent_id=task["parent_id"], limit=30) if s["id"] != task_id]
+        b.add("Parent work", "\n".join(f"- {a['title']} [{a['status']}]: {a['intent'][:300]}" for a in anc))
+        siblings = [s for s in work.list(parent_id=task["parent_id"], limit=30) if s["id"] != task_id]
         if siblings:
             lines = []
             for s in siblings:
-                r = work.latest_result(s["id"])
-                lines.append(f"- {s['title']} [{s['status']}]" + (f": {r['summary'][:200]}" if r else ""))
-            b.add("Sibling tasks", "\n".join(lines))
+                r = work.last_execute_output(s["id"])
+                lines.append(f"- {s['title']} [{s['status']}]" + (f": {(r['summary'] or '')[:200]}" if r else ""))
+            b.add("Sibling work", "\n".join(lines))
 
     # 6. recall: relevant memory and episodes, then logbook
     text = f"{task['title']} {task['intent']}"
@@ -213,7 +276,7 @@ def compile_context(home: Home, work: Work, memory: Memory, task_id: str, role: 
     _logbook(home, text, b)
 
     # render within budget, in priority order
-    out, used, kept = [f"# Context for {role} run on {task_id}\n"], 0, []
+    out, used, kept = [f"# Context for the {stage} stage of {task_id}\n"], 0, []
     for title, body in b.sections:
         block = f"\n## {title}\n\n{body}\n"
         remaining = budget - used

@@ -1,6 +1,6 @@
-# Duty: EXECUTE — run $run_id
+# Stage: EXECUTE — run $run_id
 
-You are executing task **$task_id** according to an approved plan. You are a persistent
+You are executing task **$work_id** according to an approved plan. You are a persistent
 employee: what you learn here stays in your memory and, when colleagues learn the same,
 becomes your department's and the organization's knowledge.
 

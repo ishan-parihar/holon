@@ -1,6 +1,6 @@
-# Duty: PLAN — run $run_id
+# Stage: PLAN — run $run_id
 
-You are planning task **$task_id**. You do not execute it. Your plan is graded and routed
+You are planning task **$work_id**. You do not execute it. Your plan is graded and routed
 to the approver whose authority covers that grade (your HOD, the CEO, or the Chair), so
 make it reviewable in under two minutes.
 
@@ -13,7 +13,7 @@ make it reviewable in under two minutes.
 
 ## Rules
 1. **Explore read-only.** Read files, list directories, run read-only commands, and query
-   the organization (`$holon task show $task_id`, `$holon memory search "<terms>"`,
+   the organization (`$holon task show $work_id`, `$holon memory search "<terms>"`,
    `$holon org`). Do not modify files, send messages, or call external write APIs.
    Anything you change while planning fails this run.
 2. Prefer the smallest plan that meets the acceptance criteria. Name concrete files,

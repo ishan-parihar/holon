@@ -6,6 +6,7 @@ each in its own transaction, recorded in `schema_migrations`.
 
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -56,25 +57,66 @@ def has_fts5(conn: sqlite3.Connection) -> bool:
         return False
 
 
-def migrate(conn: sqlite3.Connection, db_name: str) -> list[str]:
-    conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT)")
-    done = {r[0] for r in conn.execute("SELECT name FROM schema_migrations")}
+def migration_files(db_name: str) -> list:
     pkg = resources.files("holon.migrations").joinpath(db_name)
-    files = sorted(p for p in pkg.iterdir() if p.name.endswith(".sql"))
+    return sorted((p for p in pkg.iterdir() if p.name.endswith((".sql", ".py")) and p.name[0].isdigit()),
+                  key=lambda p: p.name)
+
+
+def checksum(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()
+
+
+def migrate(conn: sqlite3.Connection, db_name: str) -> list[str]:
+    """Apply pending migrations in order, each in its own transaction. `.sql` files are scripts;
+    `.py` files define `up(conn)` for conversions SQL cannot express. Checksums are recorded so
+    `holon lint` can prove no applied migration was edited."""
+    conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT)")
+    if "checksum" not in {r[1] for r in conn.execute("PRAGMA table_info(schema_migrations)")}:
+        conn.execute("ALTER TABLE schema_migrations ADD COLUMN checksum TEXT")
+    done = {r[0] for r in conn.execute("SELECT name FROM schema_migrations")}
     applied = []
     fts = has_fts5(conn)
-    for f in files:
+    for f in migration_files(db_name):
         if f.name in done:
             continue
-        sql = f.read_text()
-        if ".fts." in f.name and not fts:
-            sql = ""  # FTS migrations are optional; search falls back to LIKE
-        script = f"BEGIN IMMEDIATE;\n{sql}\nINSERT INTO schema_migrations VALUES ('{f.name}', '{now()}');\nCOMMIT;"
+        text = f.read_text()
         try:
-            conn.executescript(script)
+            if f.name.endswith(".py"):
+                ns: dict = {}
+                exec(compile(text, f.name, "exec"), ns)
+                conn.execute("PRAGMA foreign_keys=OFF")
+                conn.execute("BEGIN IMMEDIATE")
+                ns["up"](conn)
+                conn.execute("INSERT INTO schema_migrations VALUES (?,?,?)", (f.name, now(), checksum(text)))
+                conn.execute("COMMIT")
+                conn.execute("PRAGMA foreign_keys=ON")
+            else:
+                sql = "" if ".fts." in f.name and not fts else text  # FTS is optional; search falls back to LIKE
+                conn.executescript(f"BEGIN IMMEDIATE;\n{sql}\nINSERT INTO schema_migrations VALUES "
+                                   f"('{f.name}', '{now()}', '{checksum(text)}');\nCOMMIT;")
         except BaseException:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
+            conn.execute("PRAGMA foreign_keys=ON")
             raise
         applied.append(f.name)
     return applied
+
+
+def log_event(conn: sqlite3.Connection, entity: str, entity_id: str, frm: str | None, to: str | None,
+              actor: str | None, note: str | None = None) -> None:
+    """Append to the audit trail. Each event carries the hash of the previous one, so any edit or
+    deletion breaks the chain (`holon doctor` verifies it). Call inside a write transaction."""
+    prev = conn.execute("SELECT hash FROM events WHERE hash IS NOT NULL ORDER BY seq DESC LIMIT 1").fetchone()
+    prev_hash = prev[0] if prev else ""
+    ts = now()
+    h = event_hash(prev_hash, ts, entity, entity_id, frm, to, actor, note)
+    conn.execute("INSERT INTO events (ts, entity, entity_id, from_status, to_status, actor, note, prev_hash, hash)"
+                 " VALUES (?,?,?,?,?,?,?,?,?)", (ts, entity, entity_id, frm, to, actor, note, prev_hash, h))
+
+
+def event_hash(prev_hash: str, ts: str, entity: str, entity_id: str, frm: str | None, to: str | None,
+               actor: str | None, note: str | None) -> str:
+    fields = [prev_hash, ts, entity, entity_id, frm or "", to or "", actor or "", note or ""]
+    return hashlib.sha256("\x1f".join(fields).encode()).hexdigest()

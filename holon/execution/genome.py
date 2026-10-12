@@ -11,45 +11,34 @@ import tomllib
 from importlib import resources
 from pathlib import Path
 
+from holon.core import vocab
 from holon.core.paths import Home
 
-# role -> (duties it performs in today's pipeline, its skill, its function)
-ROLES: dict[str, dict] = {
-    "head": {"duties": ["review"], "skill": "holon-head",
-             "function": "owns outcomes: shapes work, approves within authority, assigns, staffs, reviews the department"},
-    "researcher": {"duties": [], "skill": "holon-researcher",
-                   "function": "maps the terrain and writes it to the department knowledge base"},
-    "planner": {"duties": ["plan"], "skill": "holon-planner",
-                "function": "turns shaped work and terrain into a graded plan or a decomposition"},
-    "executor": {"duties": ["execute"], "skill": "holon-executor",
-                 "function": "does the approved plan and documents it"},
-    "verifier": {"duties": ["verify"], "skill": "holon-verifier",
-                 "function": "independently checks results against acceptance criteria"},
-    "steward": {"duties": [], "skill": "holon-steward",
-                "function": "keeps the department healthy and learning: retros, memory, playbooks, genome"},
+ROLE_FUNCTION = {
+    "head": "owns outcomes: shapes work, approves within authority, assigns, staffs, reviews the department",
+    "researcher": "maps the terrain and writes it to the department knowledge base",
+    "planner": "turns shaped work and terrain into a graded plan or a decomposition",
+    "executor": "does the approved plan and documents it",
+    "verifier": "independently checks results against acceptance criteria",
+    "steward": "keeps the department healthy and learning: retros, memory, playbooks, genome",
 }
-# for employees hired before roles existed
-ROLE_OF_DUTY = {"review": "head", "plan": "planner", "execute": "executor", "verify": "verifier"}
+ROLES = {r: {"stages": list(vocab.ROLE_STAGES[r]), "skill": f"holon-{r}", "function": ROLE_FUNCTION[r]}
+         for r in vocab.ROLES}
+
+
+# optional pipeline stages: auto = the genome rules decide per work node; always; never
+PIPELINE_DEFAULTS = {"research": "auto", "shape": "auto", "retro": "auto"}
 
 
 class GenomeError(ValueError):
     pass
 
 
-def duties_for(roles: list[str]) -> list[str]:
+def stages_for(roles: list[str]) -> list[str]:
     bad = set(roles) - set(ROLES)
     if bad:
         raise GenomeError(f"unknown role(s) {sorted(bad)}; roles are {list(ROLES)}")
-    return sorted({d for r in roles for d in ROLES[r]["duties"]})
-
-
-def infer_roles(duties: list[str], is_head: bool) -> list[str]:
-    roles = {ROLE_OF_DUTY[d] for d in duties if d in ROLE_OF_DUTY}
-    if not is_head:
-        roles.discard("head")
-    else:
-        roles.add("head")
-    return sorted(roles)
+    return [s for s in vocab.STAGES if vocab.STAGE_ROLE[s] in roles]
 
 
 def profile_paths(home: Home | None) -> dict[str, Path | object]:
@@ -83,7 +72,7 @@ def validate(g: dict) -> dict:
         if s["name"] in names:
             raise GenomeError(f"duplicate slot {s['name']}")
         names.add(s["name"])
-        duties_for(s["roles"])
+        stages_for(s["roles"])
         covered |= set(s["roles"])
         if {"executor", "verifier"} <= set(s["roles"]):
             raise GenomeError(f"slot {s['name']}: one slot may not both execute and verify")
@@ -91,8 +80,12 @@ def validate(g: dict) -> dict:
     missing = set(ROLES) - covered - ({"executor"} if g.get("delegates_execution") else set())
     if missing:
         raise GenomeError(f"profile {g['name']} leaves roles unfilled: {sorted(missing)}")
-    return {"name": g["name"], "description": g.get("description", ""), "slots": slots,
-            "delegates_execution": bool(g.get("delegates_execution"))}
+    pipeline = {**PIPELINE_DEFAULTS, **(g.get("pipeline") or {})}
+    for k, v in pipeline.items():
+        if k not in PIPELINE_DEFAULTS or v not in ("auto", "always", "never"):
+            raise GenomeError(f"[pipeline] {k} = {v!r}: keys {sorted(PIPELINE_DEFAULTS)}, values auto | always | never")
+    return {"name": g["name"], "version": int(g.get("version", 1)), "description": g.get("description", ""),
+            "slots": slots, "delegates_execution": bool(g.get("delegates_execution")), "pipeline": pipeline}
 
 
 def staffing(genome: dict, employees: list[dict]) -> dict:
