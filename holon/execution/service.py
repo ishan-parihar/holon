@@ -41,7 +41,8 @@ DEFAULT_CONFIG = {
     "autonomy": {},
     "pipeline": {},
     "memory": {"promotion_threshold": 2},
-    "healing": {"incident_dept": "it", "lease_expiries_for_incident": 2, "schedule_failures_for_incident": 3},
+    "healing": {"incident_dept": "it", "lease_expiries_for_incident": 2, "schedule_failures_for_incident": 3,
+                "run_failures_for_incident": 3},
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
     "budget": {"max_running_per_dept": 0, "max_runs_per_dept_per_day": 0},   # 0 = no cap
     "notify": {"command": ""},   # e.g. a chat CLI with {message}; empty = no notifications
@@ -703,6 +704,18 @@ class Kernel:
                                    f"{s['employee']}). Find why the harness run dies and fix it.")
                 if r:
                     out.append(r)
+        # a run that ends without a valid result returns its stage to the board; a stage that keeps failing
+        # means a broken harness, model or brief, which retrying alone never fixes
+        for r in self.wconn.execute(
+                "SELECT r.task_id, t.stage, count(*) AS n, max(r.employee_id) AS emp FROM runs r JOIN tasks t "
+                "ON t.id=r.task_id WHERE r.status='failed' AND t.status IN ('ready','claimed') GROUP BY r.task_id "
+                "HAVING n>=?", (int(h["run_failures_for_incident"]),)).fetchall():
+            i = self._incident(f"Incident: runs keep failing on {r['task_id']}",
+                               f"{r['n']} runs of the {r['stage']} stage {r['task_id']} ended without a valid result "
+                               f"(last employee {r['emp']}). Read their driver.log files under "
+                               f"{self.home.runtime_dir / 'runs'} and fix the harness, model or brief.")
+            if i:
+                out.append(i)
         for sc in self.wconn.execute("SELECT * FROM schedules WHERE enabled=1 AND failure_streak>=?",
                                      (int(h["schedule_failures_for_incident"]),)).fetchall():
             r = self._incident(f"Incident: schedule {sc['id']} keeps failing",

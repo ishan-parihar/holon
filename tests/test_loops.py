@@ -84,6 +84,16 @@ class Loops(KernelCase):
         work = self.k.work.get(incident[0]["incident"])
         self.assertEqual((work["task_class"], work["dept_id"]), ("incident", self.k.org.dept("executive")["id"]))
 
+    def test_a_stage_whose_runs_keep_failing_opens_an_incident(self):
+        self.install_fake_driver("fake", mode="garbage")  # e.g. a harness binary that rejects the driver's flags
+        t = self.add("Doomed", dept="ops", task_class="restart")
+        for _ in range(3):
+            self.assertTrue(self.k.dispatch(self.maker, "plan", t["id"])["breach"])
+        incident = [x for x in self.k.tick()["triggered"] if "incident" in x]
+        self.assertEqual(len(incident), 1)
+        self.assertIn("keep failing", incident[0]["title"])
+        self.assertFalse([x for x in self.k.tick()["triggered"] if "incident" in x], "one incident, not one per tick")
+
     def test_probation_ends_with_a_decision_by_the_head(self):
         newbie = self.k.org.hire(name="Nu", title="Ops engineer", dept="ops", job_description=JD, roles=["executor"],
                                  driver="fake", reason="growth")["id"]

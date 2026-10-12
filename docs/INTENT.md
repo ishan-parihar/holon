@@ -42,7 +42,7 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
 | Earned authority | approval rights that grow with verified results and shrink on failures | `execution.org.Org.earned_authority_change` |
 | Probation | a new hire's period, ended by a confirmation their head decides | `execution.service.Kernel.triggers` |
 | Collective intelligence | lessons promoted from employees to departments to the company | `capabilities.memory.Memory.promote_recurring` |
-| Self-healing | leases, retries, stale-plan detection, incident work when runs keep dying | `holon tick` |
+| Self-healing | leases, retries, stale-plan detection, incident work when runs keep dying or failing | `holon tick` |
 | Self-evolving | retros whose actions become work that changes skills, staffing and the genome | `execution.work.Work.submit_retro` |
 | Integrity | artifact rubric and live-state checks | `holon lint`, `holon doctor` |
 
