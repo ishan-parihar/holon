@@ -190,7 +190,7 @@ class Rework(KernelCase):
 
 
 class OptionalStages(KernelCase):
-    pipeline = '[pipeline]\nretro = "never"\n'
+    pipeline = '[pipeline]\nretro = "never"\n[healing]\ndoctor_every_min = 0\n'
 
     def setUp(self):
         super().setUp()

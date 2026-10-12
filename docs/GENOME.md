@@ -94,6 +94,7 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[healing]` | `incident_dept` | it | department that receives incident work (falls back to executive) |
 | `[healing]` | `lease_expiries_for_incident` | 2 | expired runs of one stage before an incident opens |
 | `[healing]` | `schedule_failures_for_incident` | 3 | consecutive schedule failures before an incident opens |
+| `[healing]` | `doctor_every_min` | 30 | how often the heartbeat runs `holon doctor`; each failing check opens an incident (0 = never) |
 | `[healing]` | `run_failures_for_incident` | 3 | runs of one stage that ended without a valid result before an incident opens |
 | `[cadence]` | `dept_retro_days` | 7 | how often a department retro may run over pending proposals |
 | `[cadence]` | `dept_retro_min_proposals` | 1 | proposals needed before a department retro is due |

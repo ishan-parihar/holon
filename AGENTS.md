@@ -48,6 +48,11 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 
 ## Working on the kernel without losing context
 
+- **CI** (`.github/workflows/ci.yml`) runs the same two commands on every push (Python 3.11 and
+  3.13); a red run blocks nothing by itself, so look before you merge or deploy.
+- **The heartbeat runs `holon doctor`** every `[healing] doctor_every_min`; a failing check opens
+  an incident and reaches the Chair. Tests turn it off (`tests/helpers.py`) and test it explicitly.
+
 - **Read the dated design records** in `docs/design/` before changing a mechanism they cover; the
   latest red-team (`2026-10-13-system-red-team.md`) lists what is built, what is open and why.
 - **A defect found by a real run gets a guard test and a ledger row in the same commit.** The

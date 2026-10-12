@@ -4,7 +4,7 @@ from tests.helpers import JD, KernelCase
 
 
 class Loops(KernelCase):
-    pipeline = '[pipeline]\nresearch = "never"\nshape = "never"\n'   # retro stays auto
+    pipeline = '[pipeline]\nresearch = "never"\nshape = "never"\n[healing]\ndoctor_every_min = 0\n'   # retro stays auto
 
     def setUp(self):
         super().setUp()
@@ -134,3 +134,14 @@ class Notifications(KernelCase):
         self.plan(self.add("Second", dept="eng"))
         self.assertFalse(self.k.tick()["notified"]["sent"])
         self.assertTrue(any(e["entity"] == "notify" and e["to_status"] == "failed" for e in self.k.work.events()))
+
+
+class DoctorOnTheHeartbeat(KernelCase):
+    pipeline = '[pipeline]\nresearch = "never"\nshape = "never"\nretro = "never"\n[healing]\ndoctor_every_min = 30\n'
+
+    def test_a_doctor_error_becomes_one_incident_and_the_check_waits_its_interval(self):
+        self.k.auth.init_chair_key()
+        self.k.wconn.execute("UPDATE events SET note='tampered' WHERE seq=(SELECT min(seq) FROM events)")
+        first = [x for x in self.k.tick()["triggered"] if "incident" in x]
+        self.assertEqual([x["title"] for x in first], ["Incident: doctor reports audit.chain"])
+        self.assertFalse([x for x in self.k.tick()["triggered"] if "incident" in x], "doctor waits doctor_every_min")

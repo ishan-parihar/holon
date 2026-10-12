@@ -42,7 +42,7 @@ DEFAULT_CONFIG = {
     "pipeline": {},
     "memory": {"promotion_threshold": 2},
     "healing": {"incident_dept": "it", "lease_expiries_for_incident": 2, "schedule_failures_for_incident": 3,
-                "run_failures_for_incident": 3},
+                "run_failures_for_incident": 3, "doctor_every_min": 30},
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
     "budget": {"max_running_per_dept": 0, "max_runs_per_dept_per_day": 0},   # 0 = no cap
     "notify": {"command": ""},   # e.g. a chat CLI with {message}; empty = no notifications
@@ -730,6 +730,31 @@ class Kernel:
         out += self._incidents(swept or [])
         out += self._probation_reviews()
         out += self._department_retros()
+        out += self._doctor()
+        return out
+
+    def _doctor(self) -> list[dict]:
+        """Integrity on the heartbeat: every `doctor_every_min`, run `holon doctor`; each failing check opens
+        an incident (one per check until it is resolved), which the Chair is told about."""
+        every = int(self.config["healing"]["doctor_every_min"])
+        last = self._setting("doctor_ts")
+        if not every or (last and last > (datetime.now(timezone.utc) - timedelta(minutes=every))
+                         .strftime("%Y-%m-%dT%H:%M:%S.%fZ")):
+            return []
+        from holon.integrity import doctor
+        errors: dict[str, list[str]] = {}
+        for f in doctor.run(self):
+            if f["severity"] == "error":
+                errors.setdefault(f["check"], []).append(f["message"])
+        with write_txn(self.wconn):
+            self.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('doctor_ts', ?)", (now(),))
+        out = []
+        for check, msgs in errors.items():
+            r = self._incident(f"Incident: doctor reports {check}",
+                               "`holon doctor` reports:\n" + "\n".join(f"- {m}" for m in msgs[:10])
+                               + "\nFind the cause and fix it; the incident is done when doctor is clean for this check.")
+            if r:
+                out.append(r)
         return out
 
     def _incident(self, title: str, intent: str) -> dict | None:
