@@ -1,24 +1,15 @@
-# Staffing your department
+# Staffing the department
 
-Your department follows a genome profile. `$holon dept roles <slug>` shows each slot, who
-fills it, and any separation problems (for example, no verifier independent of the executor).
+Your department follows a genome profile. `$holon dept roles <slug>` shows each slot, who fills
+it, and separation problems such as no verifier independent of the executor.
 
-## Hire
-
-Tailor the job description to the department's purpose. A good JD names:
-responsibilities, the task classes the employee owns, the tools and systems it works in,
-what it must never do, and the KPIs it is judged on (verified results, first-pass rate, rework).
+A good hire has a job description tailored to the department (the `holon-system-design` skill has the job-description guide) and a reason grounded in evidence: a vacant slot,
+a backlog that `$holon metrics --dept <slug>` shows growing, or a capability the retros keep
+asking for. Hiring and firing are the Chair's commands; propose them with that evidence:
 
 ```
-$holon hr hire --dept <slug> --slot <slot> --name <name> --title "<title>" \
-  --jd @jd.md --driver <driver> --reason "<why this hire, with evidence>"
+$holon msg send chair "Proposal: hire a verifier for ops — first-pass rate 0.4, backlog 9 ready stages" --as <your id>
 ```
 
-New hires start on probation. Hiring is a proposal the CEO (or the Chair) may decide on when
-the charter requires it.
-
-## Review and fire
-
-`$holon hr review <emp_id>` gives counted evidence: runs, verified results, first-try plan
-approvals, rework, cost. Judge on that, not on impressions. Firing keeps the employee's memory
-and hands it to a successor: `$holon hr fire <emp_id> --reason "…" --successor <emp_id>`.
+New hires start on probation; when it ends, a confirmation reaches you to approve or reject.
+Firing keeps the employee's memory and hands it to a successor.

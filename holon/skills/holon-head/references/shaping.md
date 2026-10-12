@@ -1,12 +1,13 @@
-# Shaping incoming work
+# What well-shaped work is
 
-Turn a raw request into a task a planner can plan and a verifier can judge.
+Shaping turns a raw request into work a planner can plan and a verifier can judge.
 
-1. Read it and the requester's context: `$holon task show <task_id>`.
-2. Check it belongs to your department's mission. If not, ask the owning department to take it
-   (`$holon msg request <dept> "<title>" --intent "…"`) and tell the requester.
-3. Make sure it has: a one-line outcome, **acceptance criteria** a verifier can check, a task
-   class (reuse an existing one so the record accumulates), a risk level, and a working directory.
-4. If research is needed first (unknown terrain, novel class, high risk), assign the research
-   to your researcher before planning.
-5. Assign the planner (and, if you know it, the executor) through the task's assignee.
+- **Belongs here.** It fits the department's mission; otherwise redirect it to the department
+  that owns it, and say why in the note.
+- **One outcome.** A one-line title and an intent that says what changes for whom.
+- **Checkable.** Acceptance criteria a verifier can test without asking anyone.
+- **Classified.** A task class that already exists where possible, so the department's record
+  (and its earned authority) accumulates.
+- **Risk-honest.** low, normal, high or irreversible: the grade floor follows it.
+- **Owned.** The planner who should take it, when you know.
+- **Grounded.** Ask for research (`"research": true`) when the terrain is unknown.

@@ -21,8 +21,8 @@ from pathlib import Path
 from string import Template
 
 from holon.core.paths import Home
+from holon.core.vocab import SKILL_KINDS as KINDS
 
-KINDS = ("protocol", "role", "operation")
 REQUIRED = ("name", "description", "kind")
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
 LINK_RE = re.compile(r"`((?:references|briefs)/[\w./-]+\.md)`")

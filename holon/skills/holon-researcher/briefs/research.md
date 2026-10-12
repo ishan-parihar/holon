@@ -25,5 +25,4 @@ on what you write, and so will every later task in this area: write it to last.
  "learnings": ["lessons for your own memory"], "proposals": ["improvements to the department or the OS"]}
 ```
 
-Every terrain item is saved to the department's knowledge base. If you have no file-write tool,
-make that JSON object the very last thing in your final message. Then stop.
+Every terrain item is saved to the department's knowledge base. No file-write tool? End your final message with that JSON object, nothing after it.

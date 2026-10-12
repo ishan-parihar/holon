@@ -1,31 +1,34 @@
 ---
 name: holon-system-design
-description: Design and staff a new Holon department (a system) for a stated purpose, or reshape an existing one. Use when the Chair or the CEO asks for a new system, when a department outgrows its profile, or when a head proposes a split.
+description: Design and staff a Holon department (a system) for a stated purpose, or reshape one that has outgrown its profile. Use when the Chair or the CEO asks for a new system, or when a head or steward proposes a split or a profile change.
 kind: operation
 roles: [head, steward]
-version: 1
+version: 2
 ---
 
 # Designing a system
 
-A department is a holon: a mission, a genome profile, role slots, and employees tailored to
-fill them. Design it from its requirements, not from a template alone.
+A department is a holon: a mission, a genome profile whose slots cover the six roles, and
+employees tailored to fill them. Design it from its requirements, not from a template alone;
+the profile is the skeleton, the job descriptions and tailored skills are the muscle.
 
 ## Protocol
 
-1. **Requirements.** Write down: the mission (one sentence), the outcomes it owns, the task
-   classes it will handle, the systems and paths it works in, its risks (external effects,
-   irreversible actions, sensitive data), and which departments it serves or depends on.
-2. **Choose a profile.**
-   - `light` (3 slots: lead, maker, checker): new or small systems, low volume, low risk.
-   - `standard` (6 slots, one per role): sustained load, high-risk work, or several projects.
-   - A custom profile (`$HOLON_HOME/genome/<name>.toml`) only when neither fits; it must still
-     cover all six roles. `references/profiles.md` explains the format.
-3. **Create it:** `$holon dept create <slug> --name "<name>" --mission @mission.md --profile <profile>`
+1. **Requirements.** The mission in one sentence; the outcomes it owns; its task classes; the
+   systems and paths it works in; its risks (external effects, irreversible actions, sensitive
+   data); the departments it serves or depends on.
+2. **Profile.** `light` (3 slots: lead, maker, checker) for new or small systems; `standard`
+   (6 slots) for sustained load or high-risk work; a custom profile only when neither fits
+   (`references/profiles.md`). List them with `$holon dept profiles`.
+3. **Create** (Chair): `$holon dept create <slug> --name "<name>" --mission @mission.md --profile <profile>`.
 4. **Tailor each slot's job description** to the requirements: `references/job-descriptions.md`.
-5. **Hire** into each slot: `$holon hr hire --dept <slug> --slot <slot> …` (the head first, with `--head`).
-6. **Check:** `$holon dept roles <slug>` shows every slot filled and no separation warnings.
-7. **Set its autonomy** (Chair only): new departments run under the organization's default
-   (supervised). Trust is earned per department in `holon.toml` under `[autonomy.dept.<slug>]`.
-8. **Tailor skills** where the department's work differs from the standard playbooks:
-   `$holon skill fork <skill> --dept <slug>`.
+5. **Hire** (Chair), the head first: `$holon hr hire --dept <slug> --slot <slot> --name … --title … --jd @jd.md --driver <driver> --reason "…"`.
+6. **Check**: `$holon dept roles <slug>` shows every slot filled and no separation warnings.
+7. **Tailor skills** where the department's work differs from the standard playbooks
+   (Chair: `$holon skill fork <skill> --dept <slug>`).
+8. **Autonomy** stays at the organization's default until the department earns more; the
+   Chair raises it in `holon.toml` under `[autonomy.dept.<slug>]`.
+
+## Never
+
+- Leave a role uncovered, or put executing and verifying in one slot: the genome rejects both.

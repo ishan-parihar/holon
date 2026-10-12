@@ -1,85 +1,73 @@
-# Genome: roles, profiles, skills, autonomy
+# Genome: roles, stages, profiles, skills, autonomy
 
-Every department (system) is the same holon, configured for its purpose. Four things define it.
+The genome is what makes every department the same kind of holon while letting each one be
+configured for its purpose. It has five parts, each defined once in code and checked by
+`holon lint`: the roles and their stages, the department profiles, the pipeline rules, the skills
+library, and the autonomy policy. This page is the reference for all five and for `holon.toml`.
 
-## 1. Roles: the six standard functions
+## 1. Roles and stages
 
-| Role | Function | Duty today | Skill |
-|---|---|---|---|
-| head | owns outcomes: shapes work, approves within authority, assigns, staffs | review | `holon-head` |
-| researcher | maps the terrain into the department knowledge base | (research stage: G1) | `holon-researcher` |
-| planner | turns shaped work + terrain into a graded plan or a decomposition | plan | `holon-planner` |
-| executor | does the approved plan and documents it | execute | `holon-executor` |
-| verifier | independently checks results against acceptance criteria | verify | `holon-verifier` |
-| steward | retros, memory curation, playbook and genome evolution, healing | (retro stage: G1) | `holon-steward` |
+| Role | Stage(s) | Posture | Skill | Mechanism |
+|---|---|---|---|---|
+| head | shape, approve | observe | `holon-head` | `execution.work.Work.submit_shape`, `execution.work.Work.decide` |
+| researcher | research | observe | `holon-researcher` | `execution.work.Work.submit_research` |
+| planner | plan | observe | `holon-planner` | `execution.work.Work.submit_plan` |
+| executor | execute | act | `holon-executor` | `execution.work.Work.submit_execute` |
+| verifier | verify | observe | `holon-verifier` | `execution.work.Work.verify` |
+| steward | retro | observe | `holon-steward` | `execution.work.Work.submit_retro` |
 
-Researcher and steward work today through the CLI their skills describe; they get their own
-pipeline stages in the work-graph phase (G1, see docs/design/).
+An employee may claim a stage only if one of its roles performs it. Approve stages are claimable
+only by their approver, and verify stages never by the employee who executed the work.
 
-## 2. Profiles: which slots a department has
+## 2. Profiles
 
-A slot is a set of roles one employee fills. Profiles ship in `holon/genome/`; an instance adds
-or overrides them in `$HOLON_HOME/genome/<name>.toml`.
+A profile names a department's slots; a slot is the set of roles one employee fills. Profiles
+ship in `holon/genome/` and an instance adds or overrides them in `$HOLON_HOME/genome/`.
 
 | Profile | Slots | For |
 |---|---|---|
-| `light` | lead (head+steward) · maker (planner+executor) · checker (researcher+verifier) | small or new systems: 3 employees |
-| `standard` | one slot per role | sustained load, high-risk work |
-| `executive` | ceo (head+planner) · strategy · audit · charter | the executive office (delegates execution) |
+| `light` | lead (head, steward) · maker (planner, executor) · checker (researcher, verifier) | new or small systems: three employees |
+| `standard` | one slot per role | sustained load or high-risk work |
+| `executive` | ceo (head, planner) · strategy · audit · charter | the executive office, which delegates execution |
 
-Holon checks every profile covers all six roles and that no slot both executes and verifies.
+Each department keeps a snapshot of its profile and version; lint reports departments on an
+older version. `holon dept create … --profile`, `holon dept profile`, `holon dept roles` and
+`holon hr hire --slot` work with them. The `holon-system-design` skill is the protocol for
+designing a department from its requirements.
 
-```
-holon dept create <slug> --name "…" --mission @mission.md --profile light|standard|<file.toml>
-holon hr hire --dept <slug> --slot <slot> --name … --title … --jd @jd.md --driver … --reason "…"
-holon dept roles <slug>            # slots, holders, separation warnings
-holon dept profile <slug> standard --reason "…"   # the Chair grows a department
-```
+## 3. Pipeline rules
 
-Each hire is tailored to its system through the job description (skill `holon-system-design`
-gives the format and the design protocol).
+Every work node runs `plan → approve → execute → verify`. Three stages are optional, and each
+is `auto`, `always` or `never` in `holon.toml [pipeline]`, overridable per profile:
 
-## 3. Skills: how employees do their jobs
+| Stage | `auto` runs it when | Mechanism |
+|---|---|---|
+| research | the task class has fewer than `novelty_min_verified` verified successes, or risk is high or irreversible, and the department has a researcher | `execution.service.KernelRules.first_stage` |
+| shape | the Chair or another department asked for the work (not a decomposition), and the department has a head | `execution.service.KernelRules.first_stage` |
+| retro | verification or execution failed, a plan was rejected twice, or the work failed, and the department has a steward | `execution.service.KernelRules.on_rework` |
 
-The standard library (`holon/skills/`): `holon-employee` (the protocol every spawn loads first),
-one skill per role, and `holon-system-design`, `holon-collaboration`, `holon-memory`. Role skills
-hold the duty briefs (`briefs/<duty>.md`) the kernel renders into each run's BRIEF.md.
+## 4. Skills
 
-Skills resolve per file through three layers, first match wins:
-`$HOLON_HOME/skills/@<dept>/<skill>/` → `$HOLON_HOME/skills/<skill>/` → `holon/skills/<skill>/`.
-A steward tailors one file for one department without forking the rest, and the change reaches
-that department's next brief.
+The standard library (`holon/skills/`) holds the protocol every employee loads first
+(`holon-employee`), one skill per role with that role's stage briefs (`briefs/<stage>.md`), and
+three operations (`holon-system-design`, `holon-collaboration`, `holon-memory`). Skills resolve per
+file through three layers, first match wins: `$HOLON_HOME/skills/@<dept>/<skill>/`, then
+`$HOLON_HOME/skills/<skill>/`, then the standard library, so tailoring one file for one department
+leaves the rest untouched and reaches that department's next brief.
 
-```
-holon skill list [--as <emp>] [--role R] [--dept D]   # catalog (an employee's own skills with --as)
-holon skill show|path <skill> [file] [--dept D]        # read / locate the resolved file
-holon skill invoke <skill> [file] --as <emp>           # render for an employee; the use is recorded
-holon skill fork <skill> [--file F] [--dept D]         # copy into the instance/department layer to tailor
-holon skill new <name> --kind role|operation|protocol --description "…" [--dept D]
-holon skill check [--dept D]                           # frontmatter, links, roles
-holon skill export --to <dir> [--name S] [--dept D]    # for harnesses that load skills from disk
-```
+`holon skill list | show | path | invoke | fork | new | check | export` manage them; `invoke`
+records each use for the steward's metrics. `SKILL.md` frontmatter: `name`, `description` (with a
+"Use when" trigger), `kind` (protocol, role, operation), `roles`, `version`. Lint's DEPTH pack is
+the rubric: required sections per kind, 120–700 words, a runnable command, stated limits for
+roles that act.
 
-`SKILL.md` frontmatter: `name`, `description`, `kind` (protocol | role | operation), `roles`,
-`version`. Links to other files are written as `` `references/x.md` `` or `` `briefs/x.md` `` and
-checked.
+## 5. Autonomy
 
-## 4. Autonomy: how much a department decides without the Chair
-
-Safe by default; fully autonomous only where trust has been established and the Chair says so.
-
-```toml
-[autonomy]                  # holon.toml
-mode = "supervised"         # supervised | delegated | autonomous
-verify_sample_rate = 0.2    # share of trusted G0 results still verified
-
-[autonomy.dept.it]          # one department, once it has earned it
-mode = "autonomous"
-```
+Safe by default; more autonomous only where trust was earned and the Chair says so.
 
 | Key | supervised (default) | delegated | autonomous |
 |---|---|---|---|
-| `widen_approver`: who approves widening anyone's authority | chair | ceo | auto |
+| `widen_approver`: who approves widening authority | chair | ceo | auto |
 | `auto_promote_cap`: highest grade authority can be earned to | G2 | G3 | G4 |
 | `ceo_initial_max`: the CEO's authority at hire | G1 | G2 | G2 |
 | `promote_after`: clean verified successes per promotion | 10 | 10 | 10 |
@@ -87,11 +75,25 @@ mode = "autonomous"
 | `verify_sample_rate`: trusted G0 results still verified | 0.2 | 0.2 | 0.2 |
 | `trusted_after`: consecutive verified passes before an executor is trusted | 10 | 10 | 10 |
 
-Invariants no mode relaxes:
-- narrowing authority applies at once; widening goes to `widen_approver` as a proposal in that
-  approver's queue (applied by the kernel on approval), and nobody approves their own widening;
-- work closed without verification stays unverified and never counts toward trust or authority;
-- the objective grade floors (risk, external effects, sensitive paths, novelty) always apply;
-- the Chair can always approve, reject, regrade, cancel, and change this policy.
+Invariants no mode relaxes: narrowing authority applies at once; widening becomes a proposal
+for `widen_approver` and nobody approves their own; work closed without verification never counts
+toward trust; the grade floors always apply; the Chair can always decide, regrade, cancel and
+change this policy. `holon charter autonomy` shows the effective policy per department.
 
-`holon charter autonomy` shows the effective policy per department.
+## 6. `holon.toml` reference
+
+| Section | Key | Default | Meaning |
+|---|---|---|---|
+| `[context]` | `budget_chars` | 24000 | size of a stage's context bundle |
+| `[planner]` | `enforce_read_only` | true | fail observe-stage runs that change the working directory |
+| `[planner]` | `trust_harness_read_only` | false | skip that check for drivers declaring `read_only_enforced` |
+| `[grading]` | `novelty_min_verified`, `default_proposed`, `sensitive_paths` | 3, 2, [] | grade floors (see the planner skill's grading reference) |
+| `[autonomy]` | `mode` and the keys above; `[autonomy.dept.<slug>]` per department | supervised | §5 |
+| `[pipeline]` | `research`, `shape`, `retro` | auto | §3 |
+| `[memory]` | `promotion_threshold` | 2 | colleagues who must learn a lesson before it is promoted |
+| `[healing]` | `incident_dept` | it | department that receives incident work (falls back to executive) |
+| `[healing]` | `lease_expiries_for_incident` | 2 | expired runs of one stage before an incident opens |
+| `[healing]` | `schedule_failures_for_incident` | 3 | consecutive schedule failures before an incident opens |
+| `[cadence]` | `dept_retro_days` | 7 | how often a department retro may run over pending proposals |
+| `[cadence]` | `dept_retro_min_proposals` | 1 | proposals needed before a department retro is due |
+| `[cadence]` | `probation_days` | 14 | days before a new hire's confirmation goes to their head |

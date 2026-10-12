@@ -26,4 +26,4 @@ cause and turn it into changes.
  "actions": [{"title": "…", "intent": "the change and how we will know it worked", "acceptance": "…", "task_class": "improvement"}]}
 ```
 
-If you have no file-write tool, make that JSON object the very last thing in your final message. Then stop.
+No file-write tool? End your final message with that JSON object, nothing after it.

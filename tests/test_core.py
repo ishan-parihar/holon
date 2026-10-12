@@ -242,13 +242,11 @@ class Agnosticism(unittest.TestCase):
         self.assertEqual(offenders, [])
 
     def test_no_harness_named_in_kernel(self):
-        offenders = []
-        for f in [*PKG.rglob("*.py"), *PKG.rglob("*.md"), *(PKG / "genome").glob("*.toml")]:
-            text = f.read_text().lower()
-            for word in ("hermes", "zeroclaw", "operant", "~/.hermes", "claude"):
-                if word in text:
-                    offenders.append(f"{f.relative_to(PKG)}: {word}")
-        self.assertEqual(offenders, [])
+        from holon.integrity.lint import Findings, harness_names, pack_agnostic
+        self.assertTrue({"zeroclaw", "hermes", "claude"} <= harness_names())
+        f = Findings()
+        pack_agnostic(None, f)
+        self.assertEqual(f, [])
 
 
 if __name__ == "__main__":

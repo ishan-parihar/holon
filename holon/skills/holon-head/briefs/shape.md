@@ -25,4 +25,4 @@ Read-only: you change the work's fields through your result, nothing else.
  "priority": 2, "assignee": "emp_… (optional)", "dept": "slug (redirect only)", "research": false}
 ```
 
-If you have no file-write tool, make that JSON object the very last thing in your final message. Then stop.
+No file-write tool? End your final message with that JSON object, nothing after it.

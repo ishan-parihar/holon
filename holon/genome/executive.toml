@@ -1,6 +1,7 @@
 # The executive office: the same genome one level up. It does not execute; its execution is
 # delegation to departments (decompositions), so no executor slot is required.
 name = "executive"
+version = 1
 description = "CEO, strategy, audit and charter: the organization's own head office"
 delegates_execution = true
 

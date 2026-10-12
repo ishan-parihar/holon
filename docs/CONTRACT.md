@@ -1,86 +1,113 @@
 # The harness contract
 
-Everything a harness author needs. The kernel guarantees this contract; any agent that
-honors it can work in the organization, and nothing else is required.
+Everything a harness author needs to run Holon employees. The kernel guarantees this contract;
+any agent runtime that honors it can work in the organization, and nothing else is required.
+The ZeroClaw and Hermes adapters in `adapters/` are implementations of it, and
+`holon adapter test <driver>` checks any harness against it.
 
-## 1. The brief
+## 1. A run
+
+A run is one employee doing one stage of one piece of work. Push mode: `holon dispatch` (or the
+heartbeat, `holon tick`) claims a stage for an employee and invokes its driver. Pull mode: an
+employee session holding an employee key (`HOLON_KEY`) runs `holon claim`, works, and runs
+`holon submit <run_id>`.
 
 For each run the kernel writes `$HOLON_HOME/execution/runtime/runs/<run_id>/`:
 
-| File | Who writes | Content |
+| File | Written by | Content |
 |---|---|---|
-| `BRIEF.md` | kernel | duty instructions: plan, execute, verify, or review |
-| `brief.json` | kernel | `run_id, task_id, kind, role, brief_md, context_md, result_path, workdir, holon, lease_until` |
-| `context.md` | kernel | the compiled context: **Your role** (identity, job description, manager), task, plan, constraints, memory from your own/department/organization scopes, goal lineage, logbook |
+| `BRIEF.md` | kernel | the stage's instructions, rendered from the role skill's `briefs/<stage>.md` |
+| `brief.json` | kernel | run, stage and work ids, role, posture, employee, every path below, the run token (mode 0600) |
+| `identity.md` | kernel | the employee's identity card, for harnesses that put it in the system prompt |
+| `context.md` | kernel | the compiled context: role, work, earlier stages' outputs, memory, lineage |
 | `result.json` | **agent** | the result envelope (§2) |
-| `driver.log` | kernel | command, exit code, stdout/stderr (push mode) |
+| `driver.log` | kernel | command, exit code, stdout and stderr (push mode) |
 
-An agent needs only to read `BRIEF.md` (which points to everything else) and write
-`result.json`. During a run it may call the kernel via the `holon` command given in
-`brief.json` (also exported as `$HOLON`), e.g. `$HOLON memory search "..."` or `$HOLON run heartbeat <run_id>`.
+Environment in push mode:
 
-Environment in push mode: `HOLON_HOME, OG, HOLON_RUN_ID, HOLON_TASK_ID, HOLON_ROLE, HOLON_BRIEF_DIR, HOLON_RESULT_PATH`.
+| Variable | Value |
+|---|---|
+| `HOLON_HOME` | the instance root |
+| `HOLON` | the kernel command to run from any shell (also `holon` on PATH) |
+| `PYTHONPATH` | lets `python -m holon` find the kernel |
+| `HOLON_RUN_ID`, `HOLON_TASK_ID` | the run and its stage node |
+| `HOLON_STAGE`, `HOLON_ROLE` | research, shape, plan, approve, execute, verify or retro; the role that performs it |
+| `HOLON_POSTURE` | `observe` (change nothing) or `act` (execute only) |
+| `HOLON_EMPLOYEE_ID` | who is working |
+| `HOLON_BRIEF_DIR`, `HOLON_RESULT_PATH` | where the brief is and where the result goes |
+| `HOLON_RUN_TOKEN` | authenticates this employee for this run only (§6) |
+
+The kernel never passes `HOLON_CHAIR_KEY` to a harness.
 
 ## 2. Result envelopes
 
-JSON Schemas: [`schemas/`](../schemas). Summary:
+One JSON object per run, defined once in `holon/core/contract.py` and published as JSON Schemas
+in [`schemas/`](../schemas) (`holon contract schemas` prints them). Every envelope may also carry
+`learnings` and `decisions` (become memory) and `proposals` (go to the department's steward).
 
-**plan** (`plan-result.schema.json`): one of
-- `{"kind": "plan", "findings", "steps", "writes"?, "external_effects"?, "grade"?, "assignee"?, "risks"?, "rollback"?, "estimate"?, "acceptance"?, "context_refs"?}`
-- `{"kind": "decompose", "rationale", "grade"?, "children": [{"title", "intent", "dept"?, "assignee"?, "acceptance"?, ...}, ≥2]}`
-- `{"kind": "needs_input", "question"}`
+| Stage | Shape |
+|---|---|
+| research | `{"summary", "terrain": [{"content", "source", "kind"?, "confidence"?}], "open_questions"?}` |
+| shape | `{"decision": accept \| redirect \| cancel, "note", "dept"? (redirect), "title"?, "intent"?, "acceptance"?, "task_class"?, "risk"?, "priority"?, "assignee"?, "research"?}` |
+| plan | `{"kind": "plan", "findings", "steps", "writes"?, "external_effects"?, "grade"?, "assignee"?, …}` or `{"kind": "decompose", "rationale", "children": [≥2 work items, "after"?]}` or `{"kind": "needs_input", "question"}` |
+| approve | `{"decision": approve \| reject, "note"}` (the note is required to reject) |
+| execute | `{"outcome": success \| partial \| failure \| noop, "summary", "documentation", "artifacts"?, "blockers"?, "next_intent"?}` |
+| verify | `{"verdict": pass \| fail, "note"}` |
+| retro | `{"summary", "cause", "actions"?: [work items]}` |
 
-The effective grade is max(`grade`, an objective floor: risk, writes outside the workdir or to
-sensitive paths, external effects, decomposition, novelty of the task class). The plan is
-routed to the lowest approver (HOD → CEO → Chair) whose authority covers it; nobody decides
-their own plan.
+A harness that cannot write files may print the object as the last JSON in its output (driver
+`result = "stdout-json"`).
 
-**execute** (`execute-result.schema.json`):
-`{"outcome": success|partial|failure|noop, "summary", "documentation", "artifacts"?, "learnings"?, "decisions"?, "blockers"?, "proposals"?, "next_intent"?}`.
-Lessons go to the employee's own memory; facts/decisions/constraints to the project or department.
-
-**verify** (`verify-result.schema.json`): `{"verdict": pass|fail, "note"}`. The executor never verifies their own work.
-
-**review** (`review-result.schema.json`): `{"decision": approve|reject, "note"}` (note required to reject).
-
-### What happens to non-compliant output
-- **plan / verify / review:** the run fails and the task returns to the queue (no partial state).
-- **executor:** the output is wrapped as a `partial` result with the stdout tail as its
-  documentation and sent to verification, so an independent verifier decides, not the agent.
-- **plan or review run that modifies its working directory** (push mode, when `[planner] enforce_read_only`):
-  the plan is discarded and the task returns to the inbox.
-- **late result after the lease expired:** discarded; the work was already reassigned.
+**Non-compliant output.** An observe-stage run fails and its stage returns to the board. An
+execute run's output is wrapped as a `partial` result for an independent verifier to judge, so
+the agent never decides. A late result, after the lease expired, is discarded.
 
 ## 3. Drivers (push mode)
 
-One TOML file per harness in `$HOLON_HOME/config/drivers/`:
+One TOML file per harness in `$HOLON_HOME/config/drivers/` (adapters install theirs):
 
 ```toml
 name      = "my-harness"
-command   = "my-agent --prompt-file {brief_md} --cwd {workdir}"
+command   = "my-agent --system-file {identity_md} --message {spawn}"
 cwd       = "{workdir}"
 timeout_s = 1800
-result    = "file"          # or "stdout-json": take the last JSON object printed on stdout
-read_only = "--plan-only"   # inserted at {read_only} for plan/verify/review runs
-duties    = ["plan", "execute", "verify", "review"]
+result    = "file"          # or "stdout-json"
+read_only = "--plan-only"   # inserted at {read_only} for observe stages
+stages    = ["plan", "execute"]   # optional; default every stage
+read_only_enforced = true   # the harness denies writes in observe stages itself
 [env]
 SOME_VAR = "value"
 ```
 
-Placeholders (shell-quoted): `{brief_dir} {brief_md} {context_md} {result_path} {workdir}
-{run_id} {task_id} {role} {read_only} {prompt}` (the BRIEF.md text) and `{holon}`.
-Double literal braces: `{{ }}`. Shipped examples: `hermes`, `claude-code`, `generic-shell`
-(`holon drivers` lists them; instance files override by name).
+Placeholders (shell-quoted): `{brief_dir} {brief_md} {context_md} {identity_md} {result_path}
+{workdir} {run_id} {task_id} {stage} {role} {posture} {employee_id} {employee_slug} {read_only}
+{prompt}` (the BRIEF.md text), `{spawn}` (a one-line message pointing at BRIEF.md) and `{holon}`.
+Double literal braces: `{{ }}`. A driver that still lists `duties` is read as the matching stages.
+
+**Read-only.** For observe stages the kernel fingerprints the working directory before and
+after the run and fails the run if it changed. A harness that enforces read-only itself declares
+`read_only_enforced`; the kernel still checks unless the instance sets `[planner]
+trust_harness_read_only = true` (for working trees other processes also write).
 
 ## 4. Leases
 
-Every run holds a lease (plan 30 min, execute 60 min, verify 20 min, review 15 min). Renew with
-`holon run heartbeat <run_id>`. `holon tick` reclaims expired leases: planning returns to the
-inbox; execution retries (up to `max_attempts`) or fails.
+Every run holds a lease: research and plan 30 min, execute 60, verify and retro 20, shape and
+approve 15. Renew with `holon run heartbeat <run_id>`. The heartbeat reclaims expired leases: the
+stage returns to the board, and an execute stage counts as a failed attempt.
 
 ## 5. Staleness
 
-The planner lists in `writes` the paths it will modify. The kernel fingerprints them at
-plan submission and again when an executor claims the approved plan; if they changed, the
-plan is superseded and the task is replanned. A retry after a partial execution therefore
-usually replans; that is deliberate (the findings changed).
+A plan lists in `writes` the paths it will modify. The kernel fingerprints them when the plan
+is submitted and again when an executor claims the work; if they changed, the execute stage is
+cancelled and a fresh plan stage queued. A retry after a partial execution therefore usually
+replans; that is deliberate, because the findings changed.
+
+## 6. Identity
+
+The CLI authenticates every call. A run token (`HOLON_RUN_TOKEN`, minted per claim) lets an
+employee read, message, add to its own memory, heartbeat and submit **its own run**. An employee
+key (`HOLON_KEY`, issued with `holon hr key`) does the same for pull-mode sessions. The Chair key
+(`HOLON_CHAIR_KEY`, or the file at `HOLON_CHAIR_KEY_FILE`, by default
+`~/.config/holon/keys/<instance>.chair`) is created by `holon init` outside the instance. Adapters
+must keep it out of every agent's reach: deny `~/.config` to the harness, or run the kernel's
+timer as another user. `holon help --json` lists the actor class each command requires.

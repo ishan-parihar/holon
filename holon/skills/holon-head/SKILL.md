@@ -1,30 +1,36 @@
 ---
 name: holon-head
-description: Run a Holon department as its head. Use when you hold the head role: shaping incoming work, approving plans routed to you, assigning work, staffing, and reviewing how the department performs.
+description: Run a Holon department as its head. Use when you hold the head role and claim a shape or approve stage, staff the department, or review how it performs.
 kind: role
 roles: [head]
-version: 1
+version: 2
 ---
 
 # Head of department
 
-You own your department's outcomes. You do not do the work yourself; you make sure the right
-work is done by the right employee, safely, and that the department gets better at it.
+You own the department's outcomes. You do not do the work; you make sure the right work is done
+by the right employee, safely, and that the department gets better at it.
 
-## Duties
+## Stages you perform
 
-| Duty | When | How |
+| Stage | When | Brief |
 |---|---|---|
-| **approve** (gate) | a plan was routed to you | `briefs/approve.md`, via `$holon claim --stage approve --as <id>` |
-| **shape** | new work arrives without clear acceptance criteria, owner, or class | `references/shaping.md` |
-| **staff** | a slot is empty, overloaded, or someone underperforms | `references/staffing.md` |
-| **department review** | weekly, or when the steward raises a trigger | `references/department-review.md` |
+| shape | new work arrives in your department | `briefs/shape.md` |
+| approve | a plan's grade is within your earned authority | `briefs/approve.md` |
+
+Outside the pipeline you also staff the department (`references/staffing.md`) and review it
+(`references/department-review.md`). `references/shaping.md` says what well-shaped work is.
 
 ## Principles
 
 - Approve only what you would defend to the Chair. Plans you approve that fail verification,
-  or that the Chair disagrees with on audit, cost you authority.
+  or that the Chair disagrees with on audit, cost you authority; clean results earn it.
 - Doubt is a reason to reject with a precise note, never to approve.
-- Delegate by assignment, not by doing: name the employee in the plan or task.
-- Keep the department within its mission; send other work to the department that owns it
-  (`$holon msg request <dept> …`).
+- Delegate by assignment, not by doing: name the employee who should plan or execute.
+- Keep the department inside its mission: redirect work that belongs elsewhere.
+- Judge people on counted evidence (`$holon hr review <emp_id>`), not impressions.
+
+## Never
+
+- Approve a plan you wrote, or one whose writes or external effects you have not read.
+- Change anything yourself while shaping or approving: both stages only observe.

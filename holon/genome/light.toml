@@ -2,6 +2,7 @@
 # roles without breaking separation (nobody verifies their own work; the planner's plans
 # go to the lead or the CEO).
 name = "light"
+version = 1
 description = "3 slots for small or new systems; grows into 'standard' as load and risk rise"
 
 [[slots]]
