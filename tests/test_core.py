@@ -103,6 +103,10 @@ class Migrations(unittest.TestCase):
         self.assertTrue(migrate(conn, "work"))
         self.assertEqual(migrate(conn, "work"), [])
         self.assertFalse(conn.execute("SELECT 1 FROM schema_migrations WHERE checksum IS NULL").fetchone())
+        conn.execute("UPDATE schema_migrations SET checksum=NULL WHERE name='0001_init.sql'")
+        migrate(conn, "work")
+        self.assertTrue(conn.execute("SELECT checksum FROM schema_migrations WHERE name='0001_init.sql'").fetchone()[0],
+                        "pre-checksum instances adopt the shipped files as their baseline")
 
     def test_pre_graph_instance_converts(self):
         """An instance created before the work graph (migrations 0001-0003) keeps every task, plan and result."""
