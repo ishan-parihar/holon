@@ -1,0 +1,110 @@
+"""R5: the feedback loops. Every loop has a sensor, a comparator, and an actuator that is work."""
+
+from tests.helpers import JD, KernelCase
+
+
+class Loops(KernelCase):
+    pipeline = '[pipeline]\nresearch = "never"\nshape = "never"\n'   # retro stays auto
+
+    def setUp(self):
+        super().setUp()
+        o = self.k.org
+        o.create_dept("ops", "Operations", "Run things")
+        self.lead = o.hire(name="Lu", title="Head of Ops", dept="ops", job_description=JD, slot="lead",
+                           driver="fake", reason="r", status="active")["id"]
+        self.maker = o.hire(name="Mo", title="Ops engineer", dept="ops", job_description=JD, slot="maker",
+                            driver="fake", reason="r", status="active")["id"]
+        self.checker = o.hire(name="Ce", title="Ops checker", dept="ops", job_description=JD, slot="checker",
+                              driver="fake", reason="r", status="active")["id"]
+
+    def _executed(self, title="Restart the queue"):
+        t = self.add(title, dept="ops", task_class="restart")
+        self.plan_and_approve(t, planner=self.maker, assignee=self.maker, writes=[])
+        c = self.k.claim("execute", self.maker)
+        self.k.submit(c.run["id"], self.exec_env())
+        return t
+
+    def test_failed_verification_triggers_a_retro_whose_actions_become_work(self):
+        t = self._executed()
+        self.k.verify(t["id"], "fail", "queue still stuck")
+        self.assertIn(("retro", "ready"), self.pipeline_of(t))
+        c = self.k.claim("retro", self.lead)
+        ctx = (c.brief_dir / "context.md").read_text()
+        self.assertIn("History of this work", ctx)
+        self.assertIn("queue still stuck", ctx)
+        out = self.k.submit(c.run["id"], {"summary": "restart missed the worker", "cause": "plan skipped workers",
+                                          "learnings": ["restart workers with the queue"],
+                                          "actions": [{"title": "Add workers to the restart runbook",
+                                                       "intent": "so restarts include workers"}]})
+        new = self.k.work.get(out["created"][0])
+        self.assertEqual((new["dept_id"], new["source"], new["task_class"]),
+                         (self.k.org.dept("ops")["id"], "audit", "improvement"))
+        self.assertTrue(any("restart workers" in i["content"] for i in self.k.memory.live_items([f"emp:{self.lead}"])))
+
+    def test_one_rejection_is_feedback_two_are_a_pattern(self):
+        t = self.add("Tune alerts", dept="ops", task_class="alerts")
+        a = self.plan(t, planner=self.maker)
+        self.k.reject(a["id"], "too broad")
+        self.assertNotIn("retro", [s for s, _ in self.pipeline_of(t)])
+        a = self.plan(t, planner=self.maker)
+        self.k.reject(a["id"], "still too broad")
+        self.assertIn(("retro", "ready"), self.pipeline_of(t))
+
+    def test_departments_without_a_steward_get_no_retro(self):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        self.k.submit(c.run["id"], self.exec_env())
+        self.k.verify(t["id"], "fail", "nope")
+        self.assertNotIn("retro", [s for s, _ in self.pipeline_of(t)])
+
+    def test_proposals_reach_the_steward_through_a_department_retro(self):
+        t = self.add("Restart", dept="ops", task_class="restart")
+        self.plan_and_approve(t, planner=self.maker, assignee=self.maker, writes=[])
+        c = self.k.claim("execute", self.maker)
+        self.k.submit(c.run["id"], self.exec_env(proposals=["automate restarts"]))
+        out = self.k.tick()
+        retro = [x for x in out["triggered"] if "dept_retro" in x]
+        self.assertEqual((retro[0]["dept"], retro[0]["proposals"]), ("ops", 1))
+        self.assertEqual(self.k.tick()["triggered"], [], "one department retro at a time")
+        c = self.k.claim("retro", self.lead)
+        self.assertIn("automate restarts", (c.brief_dir / "context.md").read_text())
+        self.k.submit(c.run["id"], {"summary": "s", "cause": "c"})
+        self.assertEqual(self.status(retro[0]["dept_retro"]), "done")
+        self.assertEqual(self.k.work.messages(to_refs=["dept:ops"], kind="proposal", unacked=True), [])
+
+    def test_runs_that_keep_dying_open_an_incident(self):
+        t = self.add("Flaky", dept="ops", task_class="restart")
+        for _ in range(2):
+            c = self.k.claim("plan", self.maker, task_id=t["id"])
+            self.k.wconn.execute("UPDATE runs SET lease_until='2000-01-01T00:00:00.000000Z' WHERE id=?", (c.run["id"],))
+            out = self.k.tick()
+        incident = [x for x in out["triggered"] if "incident" in x]
+        self.assertEqual(len(incident), 1)
+        work = self.k.work.get(incident[0]["incident"])
+        self.assertEqual((work["task_class"], work["dept_id"]), ("incident", self.k.org.dept("executive")["id"]))
+
+    def test_probation_ends_with_a_decision_by_the_head(self):
+        newbie = self.k.org.hire(name="Nu", title="Ops engineer", dept="ops", job_description=JD, roles=["executor"],
+                                 driver="fake", reason="growth")["id"]
+        self.k.wconn.execute("UPDATE employees SET hired_at='2000-01-01T00:00:00.000000Z' WHERE id=?", (newbie,))
+        review = [x for x in self.k.tick()["triggered"] if "probation_review" in x][0]
+        approval = self.k.work.get(review["probation_review"])
+        self.assertEqual(approval["approver"], f"emp:{self.lead}")
+        self.k.approve(approval["id"], "good start")
+        self.assertEqual(self.k.org.employee(newbie)["status"], "active")
+        self.assertFalse([x for x in self.k.tick()["triggered"] if "probation_review" in x])
+
+    def test_metrics_pair_every_sensor_with_a_counter(self):
+        t = self._executed()
+        self.k.verify(t["id"], "fail", "x")
+        c = self.k.claim("execute", self.maker)
+        self.k.submit(c.run["id"], self.exec_env())
+        self.k.verify(t["id"], "pass", "ok")
+        m = self.k.metrics("ops")
+        self.assertEqual(m["rework_rate"]["value"], 1.0)
+        self.assertEqual(m["first_pass_rate"]["value"], 0.0)
+        self.assertEqual(m["verify_pass_rate"]["value"], 0.5)
+        for v in m.values():
+            if isinstance(v, dict) and "value" in v:
+                self.assertIn(v["counter"], m)

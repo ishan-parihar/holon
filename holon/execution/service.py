@@ -667,7 +667,8 @@ class Kernel:
         q = lambda sql, extra=(): self.wconn.execute(sql.format(where=where), [*args, *extra]).fetchone()  # noqa: E731
         verifies = q("SELECT count(*), sum(t.outcome='pass') FROM tasks t WHERE t.stage='verify' AND t.status='done' "
                      "AND {where}")
-        first = q("SELECT count(*), sum(t.attempt=1) FROM tasks t WHERE t.stage='verify' AND t.outcome='pass' AND {where}")
+        first = q("SELECT count(*), sum((SELECT max(e.attempt) FROM tasks e WHERE e.parent_id=t.parent_id "
+                  "AND e.stage='execute')=1) FROM tasks t WHERE t.stage='verify' AND t.outcome='pass' AND {where}")
         execs = q("SELECT count(DISTINCT t.parent_id), sum(t.attempt>1) FROM tasks t WHERE t.stage='execute' AND {where}")
         gates = q("SELECT count(*), avg((julianday(t.decided_at)-julianday(t.created_at))*24), "
                   "sum(t.outcome='reject') FROM tasks t WHERE t.stage='approve' AND t.decided_at IS NOT NULL AND {where}")
