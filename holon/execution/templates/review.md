@@ -27,4 +27,5 @@ modify anything.
 {"decision": "approve | reject", "note": "what you checked and why; for a rejection, exactly what the planner must change"}
 ```
 
-Then stop.
+If your environment gives you no file-write tool in this run, make that JSON object the very
+last thing in your final message instead (no prose after it). Then stop.

@@ -1,0 +1,11 @@
+# Holon driver for ZeroClaw. Installed to $HOLON_HOME/config/drivers/zeroclaw.toml.
+# Each duty runs as its own ZeroClaw agent alias (holon-plan / holon-execute / holon-verify /
+# holon-review), so plan/verify/review runs get the read-only "holon-observer" risk profile and
+# only execute runs get the "holon-worker" profile. See adapters/zeroclaw/README.md.
+name = "zeroclaw"
+command = "zeroclaw agent -a holon-{duty} -m {prompt}"
+cwd = "{workdir}"
+timeout_s = 3600
+result = "stdout-json"   # result.json if the agent wrote it; else the last JSON object it printed
+read_only = ""
+duties = ["plan", "execute", "verify", "review"]

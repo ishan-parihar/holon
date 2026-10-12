@@ -1,0 +1,8 @@
+[Unit]
+Description=Holon tick: self-healing sweep + fire due schedules
+After=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOLON_HOME=%h/holon
+ExecStart=%h/.local/bin/holon tick

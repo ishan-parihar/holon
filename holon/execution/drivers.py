@@ -11,7 +11,7 @@
     FOO = "bar"
 
 Placeholders: {brief_dir} {brief_md} {context_md} {result_path} {workdir} {run_id}
-{task_id} {role} {read_only} {prompt} (= the BRIEF.md text) {holon} (= kernel command).
+{task_id} {duty} {role} {read_only} {prompt} (= the BRIEF.md text) {holon} (= kernel command).
 Search order: $HOLON_HOME/config/drivers/*.toml, then the examples shipped with the kernel.
 """
 
@@ -85,7 +85,7 @@ def render(driver: Driver, brief: dict, kind: str) -> tuple[str, str]:
     values = {
         "brief_dir": str(Path(brief["brief_md"]).parent), "brief_md": brief["brief_md"],
         "context_md": brief["context_md"], "result_path": brief["result_path"], "workdir": brief["workdir"],
-        "run_id": brief["run_id"], "task_id": brief["task_id"], "role": role, "holon": brief["holon"],
+        "run_id": brief["run_id"], "task_id": brief["task_id"], "role": role, "duty": kind, "holon": brief["holon"],
         "prompt": Path(brief["brief_md"]).read_text(),
     }
     quoted = {k: shlex.quote(v) for k, v in values.items()}

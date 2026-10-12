@@ -1,0 +1,44 @@
+
+# ── Holon (agentic OS) employees: appended by adapters/zeroclaw/install.py ──
+# One agent alias per duty. @MODEL_PROVIDER@, @HOLON_HOME@, @ALLOWED_ROOTS@ are filled in by the installer.
+
+[risk_profiles.holon-observer]
+# plan / verify / review: look, never touch. Write tools are excluded and the shell is limited
+# to read-only commands; Holon additionally fails any plan/review run that changed its workdir.
+level = "full"
+block_high_risk_commands = true
+auto_approve = ["*"]
+excluded_tools = ["file_write", "file_edit", "file_upload", "file_upload_bundle", "file_download"]
+allowed_roots = [@ALLOWED_ROOTS@]
+forbidden_paths = ["/etc", "/root", "/usr", "/sbin", "/boot", "/dev", "/sys", "/var/run", "~/.ssh", "~/.gnupg", "~/.aws", "~/.config", "/proc/kcore"]
+allowed_commands = ["holon", "ls", "cat", "grep", "find", "head", "tail", "wc", "stat", "du", "df", "date", "pwd", "echo", "sort", "uniq", "cut", "tr", "git", "jq", "sqlite3", "uname", "uptime", "free", "hostname"]
+
+[risk_profiles.holon-worker]
+# execute: does the approved plan. Same forbidden paths; broader commands.
+level = "full"
+block_high_risk_commands = true
+auto_approve = ["*"]
+allowed_roots = [@ALLOWED_ROOTS@]
+forbidden_paths = ["/etc", "/root", "/usr", "/sbin", "/boot", "/dev", "/sys", "/var/run", "~/.ssh", "~/.gnupg", "~/.aws", "~/.config", "/proc/kcore"]
+allowed_commands = ["holon", "git", "npm", "cargo", "ls", "cat", "grep", "find", "echo", "pwd", "wc", "head", "tail", "date", "df", "du", "uname", "uptime", "hostname", "python", "python3", "pip", "node", "free", "timeout", "sort", "awk", "sleep", "mkdir", "bash", "sh", "env", "cut", "tr", "uniq", "tee", "cp", "mv", "ln", "sed", "jq", "sqlite3", "stat", "touch", "rm"]
+
+[agents.holon-plan]
+model_provider = "@MODEL_PROVIDER@"
+risk_profile = "holon-observer"
+enabled = true
+
+[agents.holon-review]
+model_provider = "@MODEL_PROVIDER@"
+risk_profile = "holon-observer"
+enabled = true
+
+[agents.holon-verify]
+model_provider = "@MODEL_PROVIDER@"
+risk_profile = "holon-observer"
+enabled = true
+
+[agents.holon-execute]
+model_provider = "@MODEL_PROVIDER@"
+risk_profile = "holon-worker"
+enabled = true
+# ── end Holon ──

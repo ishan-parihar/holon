@@ -49,4 +49,5 @@ make it reviewable in under two minutes.
 or `{"kind": "decompose", "rationale": "...", "grade": "G2", "children": [{"title": "...", "intent": "...", "acceptance": "...", "dept": "marketing", "assignee": "emp_…"}, ...]}`
 or `{"kind": "needs_input", "question": "..."}`
 
-Then stop.
+If your environment gives you no file-write tool in this run, make that JSON object the very
+last thing in your final message instead (no prose after it). Then stop.

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import shutil
 import sys
 from importlib import resources
 from pathlib import Path
@@ -25,8 +26,10 @@ KIND_OF_ROLE = {v: k for k, v in ROLE_OF_KIND.items()}
 
 
 def holon_command(home: Home) -> str:
-    """How an agent invokes the kernel from any shell, without installation."""
-    return f"{shlex.quote(sys.executable)} -m holon --home {shlex.quote(str(home.root))}"
+    """How an agent invokes the kernel from any shell. Prefers an installed `holon` command so a
+    harness can allowlist `holon` without allowlisting the Python interpreter."""
+    exe = "holon" if shutil.which("holon") else f"{shlex.quote(sys.executable)} -m holon"
+    return f"{exe} --home {shlex.quote(str(home.root))}"
 
 
 def kernel_env(home: Home) -> dict[str, str]:

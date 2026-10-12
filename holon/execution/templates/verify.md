@@ -20,4 +20,5 @@ You are independently verifying task **$task_id**. You did not do the work; judg
 {"verdict": "pass | fail", "note": "which criteria were checked, how, and what you found"}
 ```
 
-Then stop.
+If your environment gives you no file-write tool in this run, make that JSON object the very
+last thing in your final message instead (no prose after it). Then stop.
