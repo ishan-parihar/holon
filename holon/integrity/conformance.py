@@ -93,7 +93,10 @@ def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | No
                 return False, "no plan stage was claimable"
             if out.get("breach"):
                 return False, "; ".join(out["breach"])
-            return True, f"valid plan, graded G{out['approval']['grade']}, working directory untouched"
+            a = s.work.latest(state["work"], "approve")  # read state: an agent may have submitted via holon_submit
+            if a is None:
+                return False, f"no approval stage after the plan (work {s.work.get(state['work'])['status']})"
+            return True, f"valid plan, graded G{a['grade']}, working directory untouched"
         clause("plan", check_plan)
 
         def check_approve():
@@ -102,7 +105,10 @@ def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | No
                 return False, "no approval was routed to the CEO (did the plan clause pass?)"
             if out.get("breach"):
                 return False, "; ".join(out["breach"])
-            return True, f"decision: {out['approval']['outcome']} ({out['approval'].get('decision_note') or ''})"[:200]
+            a = s.work.latest(state["work"], "approve", "done")
+            if a is None:
+                return False, "the approval was not decided"
+            return True, f"decision: {a['outcome']} ({a.get('decision_note') or ''})"[:200]
         clause("approve", check_approve)
 
         def check_execute():
@@ -112,9 +118,11 @@ def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | No
             if out.get("breach"):
                 return False, "; ".join(out["breach"])
             target = work / TARGET
+            ex = s.work.latest(state["work"], "execute")
+            outcome = ((s.work.output(ex["id"]) if ex else None) or {"body": {}})["body"].get("outcome")
             if not target.exists() or "ok" not in target.read_text().lower():
-                return False, f"result {out['result']['body'].get('outcome')} but {TARGET} is missing or wrong"
-            return True, f"{TARGET} written; outcome {out['result']['body'].get('outcome')}"
+                return False, f"result {outcome} but {TARGET} is missing or wrong"
+            return True, f"{TARGET} written; outcome {outcome}"
         clause("execute", check_execute)
 
         def check_verify():
@@ -124,7 +132,8 @@ def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | No
             if out.get("breach"):
                 return False, "; ".join(out["breach"])
             status = s.work.get(state["work"])["status"]
-            return status == "done", f"verdict {out['node']['outcome']}; work {status}"
+            v = s.work.latest(state["work"], "verify", "done")
+            return status == "done", f"verdict {v['outcome'] if v else None}; work {status}"
         clause("verify", check_verify)
     finally:
         s.close()

@@ -79,6 +79,11 @@ class Conformance(KernelCase):
         report = conformance.run(self.k, "fake")
         self.assertEqual(report["passed"], len(conformance.CLAUSES), report)
 
+    def test_a_harness_whose_agents_submit_for_themselves_passes(self):
+        self.install_fake_driver("fake", mode="self-submit")  # e.g. ZeroClaw agents calling holon_submit
+        report = conformance.run(self.k, "fake")
+        self.assertEqual(report["passed"], len(conformance.CLAUSES), report)
+
     def test_a_harness_that_writes_while_observing_fails(self):
         self.install_fake_driver("fake", mode="dirty-planner")
         report = {c["clause"]: c for c in conformance.run(self.k, "fake")["clauses"]}
