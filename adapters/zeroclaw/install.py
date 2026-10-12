@@ -47,6 +47,9 @@ def main() -> int:
     ap.add_argument("--holon-home", default=str(Path("~/holon").expanduser()))
     ap.add_argument("--zeroclaw-config", default=str(Path("~/.zeroclaw/config.toml").expanduser()))
     ap.add_argument("--model-provider", help="default: the provider of [agents.assistant] (or the first agent)")
+    ap.add_argument("--model", help="give Holon its own provider entry, cloned from --model-provider, pinned to this "
+                                    "model (e.g. an aroute combo such as free-stack)")
+    ap.add_argument("--fallback-model", action="append", default=[], help="fallback models for --model (repeat)")
     ap.add_argument("--allow", action="append", default=[], help="extra directory employees may work in (repeat)")
     ap.add_argument("--force", action="store_true", help="replace an existing Holon block")
     ap.add_argument("--skip-skill", action="store_true")
@@ -66,7 +69,23 @@ def main() -> int:
         print("could not infer a model provider; pass --model-provider", file=sys.stderr)
         return 2
     roots = [str(home)] + [str(Path(p).expanduser().resolve()) for p in a.allow]
+    provider_block = ""
+    if a.model:
+        kind, _, alias = provider.partition(".")
+        base = cfg.get("providers", {}).get("models", {}).get(kind, {}).get(alias)
+        if not base:
+            print(f"no provider {provider} to clone for --model", file=sys.stderr)
+            return 2
+        lines = [f"[providers.models.{kind}.holon]", f'model = "{a.model}"',
+                 "fallback_models = [" + ", ".join(f'"{m}"' for m in a.fallback_model) + "]"]
+        for key in ("uri", "api_key", "timeout_secs", "context_window"):
+            if key in base:
+                v = base[key]
+                lines.append(f'{key} = "{v}"' if isinstance(v, str) else f"{key} = {v}")
+        provider_block = "\n".join(lines) + "\n\n"
+        provider = f"{kind}.holon"
     block = (HERE / "config.snippet.toml").read_text() \
+        .replace("@PROVIDER_BLOCK@", provider_block) \
         .replace("@MODEL_PROVIDER@", provider) \
         .replace("@ALLOWED_ROOTS@", ", ".join(f'"{r}"' for r in roots))
 
