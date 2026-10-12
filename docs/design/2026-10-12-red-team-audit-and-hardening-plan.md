@@ -220,5 +220,28 @@ All six phases are implemented on `main`; 99 tests pass; `holon lint --strict` r
 | G1 | `holon doctor` (backup/restore remains open) |
 | G2 | partially: cost per verified result in `holon metrics`; budget caps remain open |
 
-Not yet done: a real-harness conformance run (`holon adapter test zeroclaw|hermes`), the VPS
-migration to the new kernel, backup/restore, and budget caps.
+G1 and G2 were closed afterwards: `holon backup` / `holon restore` (online, checksummed, no
+secrets) and per-department budget caps (`[budget]`).
+
+## 7. Real-harness validation (2026-10-12, this laptop)
+
+| Harness | Result |
+|---|---|
+| Hermes Agent v0.19.0, aroute `free-stack` | conformance 5/5 (~2.5 min); end to end: a `light` department of three Hermes employees took a real coding task through research, shape, plan, Chair approval, execute and verify; terrain, lessons and a proposal landed in memory; doctor and lint clean |
+| Claude Code (`claude -p`) | driver, plan, approve pass; execute and verify not yet run (the account's session limit cut the run off) |
+| ZeroClaw | not installed locally; on the VPS only |
+
+Defects the real runs found, all fixed with regression tests:
+1. Exported skills baked one instance's path into `$holon`, so a harness serving another instance
+   used the wrong instance with its token. Exports now render `${HOLON:-holon}`.
+2. Hermes ignores `OPENAI_BASE_URL`; it reads `CUSTOM_BASE_URL`.
+3. Hermes disables stream-stall detection for local endpoints; one stalled stream hung a run
+   for 15 minutes. The driver sets stall and API timeouts.
+4. The read-only guard counted `__pycache__/` (from running tests while researching) as a change.
+   Tool caches are now ignored.
+5. A breach found after an agent self-submitted crashed the dispatch; it is now recorded.
+6. Claude Code confines tools to the working directory, so the agent could not read its context.
+   The driver adds the run directory with `--add-dir` and puts the identity in the system prompt.
+
+Still open: Claude Code's execute and verify clauses; ZeroClaw conformance and the VPS migration
+(the Chair's go-ahead); model latency on free-stack (50–115 s per large-context call).
