@@ -81,12 +81,13 @@ def scope_block(scope: dict, base_roots: list[str], forbidden: list[str]) -> str
         .replace("@WORKER_COMMANDS@", toml_list(dedupe(WORKER_COMMANDS + scope["commands"] + scope["act_commands"])))
 
 
-def set_notify(home: Path, config_dir: Path | None, channel: str, recipient: str, force: bool) -> str:
+def set_notify(home: Path, config_dir: Path | None, channel: str, recipient: str, force: bool,
+               zeroclaw: str = "zeroclaw") -> str:
     """Point Holon's [notify] hook at `zeroclaw channel send` (holon.toml; kept unless --force)."""
     toml = home / "holon.toml"
     text = toml.read_text() if toml.exists() else ""
     cd = f"--config-dir {config_dir} " if config_dir else ""
-    line = f'command = "zeroclaw {cd}channel send {{message}} --channel-id {channel} --recipient {recipient}"'
+    line = f'command = "{zeroclaw} {cd}channel send {{message}} --channel-id {channel} --recipient {recipient}"'
     if "[notify]" in text and not force:
         return f"{toml} already has [notify] (use --force to replace it)"
     if "[notify]" in text:
@@ -109,11 +110,25 @@ def main() -> int:
     ap.add_argument("--allow", action="append", default=[], help="a directory employees work in (repeat)")
     ap.add_argument("--notify-channel", help="ZeroClaw channel that tells the Chair what needs them (e.g. telegram)")
     ap.add_argument("--notify-recipient", help="the Chair's id on that channel (e.g. a Telegram chat id)")
+    ap.add_argument("--zeroclaw", help="the zeroclaw binary (default: the first on PATH). Its absolute path is pinned "
+                                       "in the driver and the notify command: a timer's PATH can find another one")
     ap.add_argument("--force", action="store_true", help="replace an existing Holon block")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
     home = Path(a.holon_home).expanduser().resolve()
+    found = a.zeroclaw or shutil.which("zeroclaw")
+    if found:
+        zc = str(Path(found).expanduser().resolve())
+        rc, out = sh([zc, "agent", "--help"])
+        if "--agent" not in out and " -a" not in out:
+            print(f"{zc} does not support `agent -a` (too old?); pass --zeroclaw with a current binary", file=sys.stderr)
+            return 2
+    elif a.dry_run:
+        zc = "zeroclaw"
+    else:
+        print("no zeroclaw on PATH; pass --zeroclaw", file=sys.stderr)
+        return 2
     config_dir = Path(a.config_dir).expanduser() if a.config_dir else Path("~/.zeroclaw").expanduser()
     cfg_path = config_dir / "config.toml"
     if not cfg_path.exists():
@@ -164,6 +179,7 @@ def main() -> int:
     else:
         new_text = strip_block(text).rstrip() + "\n" + block
         tomllib.loads(new_text)  # never write invalid TOML
+    print(f"zeroclaw: {zc}")
     print(f"config: {cfg_path} provider={provider}\n  allowed_roots={roots} (+ each scope's roots)\n"
           f"  scopes={[s['name'] for s in sc['scopes']]} fingerprint={sc['fingerprint']}\n  skills={skills_dir}")
     if a.dry_run:
@@ -190,18 +206,18 @@ def main() -> int:
 
     if a.notify_channel and a.notify_recipient:
         print("notify: " + set_notify(home, config_dir if a.config_dir else None, a.notify_channel,
-                                      a.notify_recipient, a.force))
+                                      a.notify_recipient, a.force, zc))
 
     drivers_dir = home / "config" / "drivers"
     drivers_dir.mkdir(parents=True, exist_ok=True)
     driver = (HERE / "driver.toml").read_text().replace('scope_fingerprint = ""',
                                                        f'scope_fingerprint = "{sc["fingerprint"]}"')
-    if a.config_dir:
-        driver = driver.replace("zeroclaw agent", f"zeroclaw --config-dir {config_dir} agent")
+    driver = driver.replace('command = "zeroclaw agent', f'command = "{zc}' + (
+        f" --config-dir {config_dir}" if a.config_dir else "") + " agent")
     (drivers_dir / "zeroclaw.toml").write_text(driver)
     print(f"driver: {drivers_dir / 'zeroclaw.toml'}")
 
-    base = ["zeroclaw"] + (["--config-dir", str(config_dir)] if a.config_dir else [])
+    base = [zc] + (["--config-dir", str(config_dir)] if a.config_dir else [])
     rc, out = sh(base + ["agents", "list"])
     missing = [x for x in aliases if x not in out]
     print("verify: " + (f"all {len(aliases)} holon aliases are visible to zeroclaw" if rc == 0 and not missing

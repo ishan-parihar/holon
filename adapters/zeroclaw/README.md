@@ -50,6 +50,10 @@ holon hr hire … --driver zeroclaw     # employees now run on ZeroClaw
 ```
 
 `--config-dir DIR` writes the block into a separate ZeroClaw config instead of `~/.zeroclaw`.
+The installer pins the absolute path of the `zeroclaw` it verified (`--zeroclaw PATH`, default
+the first on `PATH`) in the driver and the notify command, and refuses a binary without
+`agent -a`: a systemd timer's `PATH` differs from your shell's and can find an older install
+(found on the first real heartbeat: `~/.local/bin` held 0.7.3, `~/.cargo/bin` 0.8.5).
 Re-run without `--force` after tailoring skills, to re-export them. Re-run **with** `--force` after
 changing `[scope]` in `holon.toml` (or when upgrading from an older adapter): the driver carries the
 scope fingerprint it was built for, and `holon doctor` reports `scope.drift` until you do. Pass

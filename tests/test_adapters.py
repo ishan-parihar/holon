@@ -71,6 +71,24 @@ class Shipped(KernelCase):
         for alias in ("holon-org-observe", "holon-org-act", "holon-eng-observe", "holon-eng-act"):
             self.assertEqual(cfg["agents"][alias]["mcp_bundles"], ["holon"])
 
+    def test_zeroclaw_installer_pins_a_binary_that_supports_agent_aliases(self):
+        zc = self.tmp / "zeroclaw"
+        zc.mkdir()
+        (zc / "config.toml").write_text('[providers.models.openai.main]\nuri = "http://x"\n\n'
+                                        '[agents.assistant]\nmodel_provider = "openai.main"\n')
+        old, new = self.tmp / "zc-old", self.tmp / "zc-new"
+        old.write_text("#!/bin/sh\necho 'Usage: zeroclaw agent [OPTIONS]'\n")
+        new.write_text("#!/bin/sh\necho 'Usage: zeroclaw agent [OPTIONS] --agent <AGENT>'\necho '  -a, --agent <AGENT>'\n")
+        for f in (old, new):
+            f.chmod(0o755)
+        run = lambda b: subprocess.run([sys.executable, str(ADAPTERS / "zeroclaw" / "install.py"), "--holon-home",  # noqa: E731
+                                        str(self.home.root), "--config-dir", str(zc), "--zeroclaw", str(b), "--dry-run"],
+                                       capture_output=True, text=True)
+        self.assertEqual(run(old).returncode, 2, "an old zeroclaw without `agent -a` is refused")
+        p = run(new)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn(f"zeroclaw: {new}", p.stdout)
+
     def test_zeroclaw_installer_wires_chair_notifications(self):
         zc = self.tmp / "zeroclaw"
         zc.mkdir()
