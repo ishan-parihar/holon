@@ -14,7 +14,7 @@ REPO = Path(__file__).resolve().parents[1]
 JD = "Responsibilities: do the work well. KPIs: verified results."
 # the minimal pipeline (plan -> approve -> execute -> verify) unless a test turns stages on; no doctor on
 # the heartbeat (test instances run in open mode, which doctor reports) unless a test turns it on
-MINIMAL = '[pipeline]\nresearch = "never"\nshape = "never"\nretro = "never"\n[healing]\ndoctor_every_min = 0\n'
+MINIMAL = '[pipeline]\nresearch = "never"\nshape = "never"\nretro = "never"\n[healing]\ndoctor_every_min = 0\nbackup_every_h = 0\n'
 ENV_KEYS = ("HOLON_CHAIR_KEY_FILE", "HOLON_CHAIR_KEY", "HOLON_KEY", "HOLON_RUN_TOKEN")
 
 

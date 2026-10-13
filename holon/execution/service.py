@@ -43,7 +43,7 @@ DEFAULT_CONFIG = {
     "pipeline": {},
     "memory": {"promotion_threshold": 2},
     "healing": {"incident_dept": "it", "lease_expiries_for_incident": 2, "schedule_failures_for_incident": 3,
-                "run_failures_for_incident": 3, "doctor_every_min": 30},
+                "run_failures_for_incident": 3, "doctor_every_min": 30, "backup_every_h": 24, "backup_to": ""},
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
     # a department rate past its bound (over min_samples) makes its retro due without proposals;
     # a _min of 0 or a _max of 1 turns that bound off
@@ -714,8 +714,7 @@ class Kernel:
         fired = []
         for s in self.schedules.take_due():
             if s["kind"] == "recurring":
-                work = self.work.instantiate_recurring(s["template_id"])
-                fired.append({"schedule": s["id"], "recurring_work": work["id"]})
+                fired.append(self._fire_recurring(s))
                 continue
             if foreground:
                 try:
@@ -729,6 +728,24 @@ class Kernel:
                 self._spawn_dispatch(s["employee_id"], s["stage"], s["id"])
                 fired.append({"schedule": s["id"], "spawned": True})
         return {"swept": swept, "triggered": triggered, "fired": fired, "notified": notified}
+
+    def _fire_recurring(self, s: dict) -> dict:
+        """A fresh instance of the recurring plan, unless its work was cancelled (the schedule is turned off)
+        or the previous instance is still open (this firing is skipped, so slow work never piles up)."""
+        plan = self.work.get(s["template_id"])
+        source = self.work.get(plan["parent_id"])
+        if source["status"] == "cancelled":
+            self.schedules.set_enabled(s["id"], False)
+            return {"schedule": s["id"], "disabled": f"its work {source['id']} was cancelled"}
+        prev = self.wconn.execute(
+            "SELECT id FROM tasks WHERE stage IS NULL AND requested_by=? AND status NOT IN "
+            f"({','.join('?' * len(vocab.TERMINAL))})", (f"recurring:{plan['id']}", *vocab.TERMINAL)).fetchone()
+        if prev:
+            with write_txn(self.wconn):
+                self.work._event("schedule", s["id"], None, None, f"skipped: {prev[0]} from the last firing is open",
+                                 actor="kernel")
+            return {"schedule": s["id"], "skipped": prev[0]}
+        return {"schedule": s["id"], "recurring_work": self.work.instantiate_recurring(s["template_id"])["id"]}
 
     def _spawn_dispatch(self, employee_id: str, stage: str | None, schedule_id: str) -> None:
         log = self.home.runtime_dir / "dispatch.log"
@@ -891,7 +908,26 @@ class Kernel:
         out += self._probation_reviews()
         out += self._department_retros()
         out += self._doctor()
+        out += self._backup()
         return out
+
+    def _backup(self) -> list[dict]:
+        """Every `backup_every_h`, a consistent copy of the instance (the organization exists nowhere else);
+        a failure opens an incident. ponytail: no pruning, backups are small; add a keep-N when disk matters."""
+        h = self.config["healing"]
+        last = self._setting("backup_ts")
+        if not h["backup_every_h"] or (last and last > (datetime.now(timezone.utc) - timedelta(
+                hours=float(h["backup_every_h"]))).strftime("%Y-%m-%dT%H:%M:%S.%fZ")):
+            return []
+        from holon.integrity import backup
+        with write_txn(self.wconn):
+            self.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('backup_ts', ?)", (now(),))
+        try:
+            return [{"backup": backup.backup(self, h["backup_to"] or str(self.home.root / "backups"))["path"]}]
+        except OSError as e:
+            r = self._incident("Incident: the scheduled backup failed", f"`holon backup` failed: {e}\nFix the "
+                               "cause (disk, permissions, `[healing] backup_to`); done when the next backup succeeds.")
+            return [r] if r else []
 
     def _doctor(self) -> list[dict]:
         """Integrity on the heartbeat: every `doctor_every_min`, run `holon doctor`; each failing check opens

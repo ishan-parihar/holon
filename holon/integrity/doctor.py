@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import stat
 
+from holon.core import vocab
 from holon.core.db import event_hash, now
 from holon.execution import autonomy
 
@@ -53,6 +54,21 @@ def run(k) -> list[dict]:
                "AND a.approver LIKE 'emp:%' AND NOT EXISTS (SELECT 1 FROM employees e WHERE 'emp:' || e.id = "
                "a.approver AND e.status IN ('active','probation'))"):
         add("error", "graph.approver", f"approval {r[0]} waits on {r[1]}, who is not active")
+    # a ready stage nobody can claim waits forever: its assignee is out, or no one in reach performs it
+    staff: dict[str | None, set[str]] = {}
+    for e in q("SELECT dept_id, roles FROM employees WHERE status IN ('active','probation')"):
+        staff.setdefault(e[0], set()).update(s for role in json.loads(e[1] or "[]") for s in vocab.ROLE_STAGES[role])
+    working = {r[0] for r in q("SELECT id FROM employees WHERE status IN ('active','probation')")}
+    exec_dept = (q("SELECT id FROM departments WHERE slug=?", vocab.EXECUTIVE) or [[None]])[0][0]
+    for r in q("SELECT id, stage, dept_id, assignee FROM tasks WHERE status='ready' AND stage IS NOT NULL "
+               "AND stage<>'approve'"):
+        if r[3]:
+            if r[3] not in working:
+                add("error", "graph.unstaffed", f"{r[1]} stage {r[0]} is assigned to {r[3]}, who is not active")
+            continue
+        reach = staff.get(r[2], set()) | (staff.get(exec_dept, set()) if r[2] is None or r[1] == "verify" else set())
+        if r[1] not in reach:
+            add("error", "graph.unstaffed", f"{r[1]} stage {r[0]}: no active employee who can claim it performs '{r[1]}'")
 
     # separation of duties, in history
     for r in q("SELECT a.id, a.decided_by FROM tasks a JOIN task_needs n ON n.task_id=a.id JOIN outputs o "

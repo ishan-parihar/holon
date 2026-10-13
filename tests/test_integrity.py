@@ -102,6 +102,14 @@ class Doctor(KernelCase):
 
 
 class Operations(KernelCase):
+    def test_the_heartbeat_backs_the_instance_up(self):
+        self.k.config["healing"]["backup_every_h"] = 24
+        took = [x for x in self.k.tick()["triggered"] if "backup" in x]
+        self.assertEqual(len(took), 1)
+        from holon.integrity import backup
+        self.assertEqual(backup.verify(took[0]["backup"])["corrupt"], [])
+        self.assertFalse([x for x in self.k.tick()["triggered"] if "backup" in x], "once per interval")
+
     def test_backup_and_restore_round_trip(self):
         from holon.integrity import backup
         keep = self.add("keep me", dept="eng")

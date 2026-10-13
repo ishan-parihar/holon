@@ -83,6 +83,20 @@ class Loops(KernelCase):
         self.assertEqual((retro[0]["dept"], retro[0]["proposals"]), ("ops", 0), "no proposal was needed")
         self.assertIn("rejection_rate 1.0 is above 0.5 over 2", self.k.work.get(retro[0]["dept_retro"])["intent"])
 
+    def test_a_stage_nobody_can_claim_is_reported_not_left_waiting(self):
+        from holon.integrity import doctor
+        w = self.add("Unplannable", dept="ops", task_class="restart")
+        self.k.org.reassign(self.maker, "no planner left", roles=["executor"])
+        unstaffed = [f["message"] for f in doctor.run(self.k) if f["check"] == "graph.unstaffed"]
+        self.assertTrue(any("performs 'plan'" in m for m in unstaffed), unstaffed)
+        t = self.add("Restart", dept="ops", task_class="restart")
+        self.k.org.reassign(self.maker, "planner again", roles=["planner", "executor"])
+        self.plan_and_approve(t, planner=self.maker, assignee=self.maker, writes=[])
+        self.k.org.set_status(self.maker, "paused", "on leave")
+        unstaffed = [f["message"] for f in doctor.run(self.k) if f["check"] == "graph.unstaffed"]
+        self.assertTrue(any("is not active" in m for m in unstaffed), unstaffed)
+        self.assertIsNotNone(w)
+
     def test_runs_that_keep_dying_open_an_incident(self):
         t = self.add("Flaky", dept="ops", task_class="restart")
         for _ in range(2):

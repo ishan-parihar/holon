@@ -102,6 +102,8 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[healing]` | `lease_expiries_for_incident` | 2 | expired runs of one stage before an incident opens |
 | `[healing]` | `schedule_failures_for_incident` | 3 | consecutive schedule failures before an incident opens |
 | `[healing]` | `doctor_every_min` | 30 | how often the heartbeat runs `holon doctor`; each failing check opens an incident (0 = never) |
+| `[healing]` | `backup_every_h` | 24 | how often the heartbeat takes `holon backup` (0 = never); a failure opens an incident |
+| `[healing]` | `backup_to` | `$HOLON_HOME/backups` | where scheduled backups go; point it at another disk or a synced mount, or a dead disk takes the backups too |
 | `[healing]` | `run_failures_for_incident` | 3 | runs of one stage that ended without a valid result before an incident opens; past it the stage waits 10 min before the next try, doubling per failure (at most a day) |
 | `[cadence]` | `dept_retro_days` | 7 | how often a department retro may run over pending proposals |
 | `[cadence]` | `dept_retro_min_proposals` | 1 | proposals needed before a department retro is due |

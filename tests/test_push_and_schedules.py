@@ -234,6 +234,14 @@ class Schedules(KernelCase):
         c = self.k.claim("execute", self.dev1, task_id=new_id)
         self.assertIsNotNone(c)
 
+        def fire():
+            self.k.wconn.execute("UPDATE schedules SET next_run_at='2000-01-01T00:00:00.000000Z' WHERE id=?", (s["id"],))
+            return self.k.tick()["fired"][0]
+        self.assertEqual(fire(), {"schedule": s["id"], "skipped": new_id}, "slow work does not pile up")
+        self.k.work.cancel(w["id"], "no longer wanted")
+        self.assertIn("disabled", fire())
+        self.assertFalse(self.k.schedules.get(s["id"])["enabled"], "a cancelled template stops firing")
+
 
 class Hiring(KernelCase):
     def test_hire_validates_and_head_takes_reports(self):
