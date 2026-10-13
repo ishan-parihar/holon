@@ -607,8 +607,7 @@ def legacy_cron(path: Path) -> dict:
     pool = path.resolve().parent.parent
     script = None
     if str(meta.get("no_agent")).lower() == "true" and meta.get("script"):
-        script = next((c for c in (pool / "scripts" / meta["script"], Path("~/.hermes/scripts").expanduser() / meta["script"])
-                       if c.exists()), pool / "scripts" / meta["script"])
+        script = pool / "scripts" / meta["script"]  # the pool's copy is canonical; lint flags it if missing
     return {"title": meta.get("name") or path.stem, "cron": meta.get("schedule", ""),
             "intent": ((meta.get("description") or "") + "\n\n" + body.strip())[:20000].strip(),
             "command": (f"python3 {script}" if str(script).endswith(".py") else str(script)) if script else None,
