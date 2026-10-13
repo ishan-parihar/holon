@@ -24,6 +24,7 @@ reading order.
 | `holon/execution/{briefs,drivers,grading,schedules,staleness,cron}.py` | the harness contract and scheduling |
 | `holon/execution/isolation.py` | the trust boundary: the runner (agent processes as the agent user), the broker (the organization for agents), setup plan and doctor's probe |
 | `holon/capabilities/{memory,context,skills}.py` | memory (**only writer of memory.db**), context bundles, the skills library |
+| `holon/capabilities/playbooks.py` | playbooks: a job's protocol and rubric as a versioned department skill (refined by the kernel's loop) |
 | `holon/capabilities/decisions.py` | the decision-model client (`[classifier]`): lane choice, rubric judge, triage, routing; every caller has a safe default |
 | `holon/skills/` | the standard skills library; role skills hold the stage briefs |
 | `holon/integrity/{lint,doctor,conformance,backup}.py` | the rubric, live-state checks, adapter conformance, backup/restore |

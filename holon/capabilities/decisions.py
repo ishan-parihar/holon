@@ -10,6 +10,10 @@ session. Configured in holon.toml (docs/GENOME.md §10):
     key_file = "~/.config/holon/classifier.key"   # 0600; read by the kernel, never put in a run's environment
     model = "…"                           # answers choice, score and yes/no questions
     noul_model = "…"                      # optional: a yes/no-only model used when every question is yes/no
+    fallback_url = "…"                    # optional: a second endpoint (same protocol) for decisions that can
+    fallback_model = "…"                  #   wait (the rubric judge), tried when the first fails; it may be
+    fallback_key_file = "…"               #   slow, hence its own timeout
+    fallback_timeout_s = 330
 
 The rule every caller keeps: a decision may only make the organization *more* careful on its own
 (a costlier lane, a verifier, a higher floor). Where it lets something skip a step, the kernel's
@@ -24,7 +28,8 @@ import urllib.request
 from pathlib import Path
 
 DEFAULTS = {"url": "", "key_file": "", "model": "", "noul_model": "", "timeout_s": 15,
-            "min_confidence": 0.8, "pass_p": 0.85}
+            "min_confidence": 0.8, "pass_p": 0.85, "fallback_url": "", "fallback_model": "", "fallback_key_file": "",
+            "fallback_timeout_s": 330}
 
 
 class Decider:
@@ -36,28 +41,39 @@ class Decider:
     def on(self) -> bool:
         return bool(self.cfg["url"] and self.cfg["model"])
 
-    def _key(self) -> str | None:
-        f = self.cfg["key_file"]
+    @staticmethod
+    def _key(f: str) -> str | None:
         try:
             return Path(f).expanduser().read_text().strip() if f else None
         except OSError:
             return None
 
-    def ask(self, state: str, questions: dict) -> dict | None:
-        """Answers keyed by question id, or None: off, or the endpoint failed (`self.error` says why).
-        Callers treat None as "no opinion" and take their safe default."""
+    def ask(self, state: str, questions: dict, patient: bool = False) -> dict | None:
+        """Answers keyed by question id, or None: off, or every endpoint failed (`self.error` says why).
+        Callers treat None as "no opinion" and take their safe default. `patient`: the caller can wait for the
+        fallback endpoint (it runs in a dispatch, not in the Chair's terminal or the heartbeat)."""
         if not self.on or not questions:
             return None
         noul_only = all(q["type"] == "noul" for q in questions.values())
         model = (self.cfg["noul_model"] or self.cfg["model"]) if noul_only else self.cfg["model"]
+        a = self._post(self.cfg["url"], model, self.cfg["key_file"], self.cfg["timeout_s"], state, questions)
+        if a is None and patient and self.cfg["fallback_url"] and self.cfg["fallback_model"]:
+            first = self.error
+            a = self._post(self.cfg["fallback_url"], self.cfg["fallback_model"], self.cfg["fallback_key_file"],
+                           self.cfg["fallback_timeout_s"], state, questions)
+            if a is None:
+                self.error = f"{first}; fallback: {self.error}"
+        return a
+
+    def _post(self, url: str, model: str, key_file: str, timeout_s, state: str, questions: dict) -> dict | None:
         headers = {"Content-Type": "application/json"}
-        key = self._key()
+        key = self._key(key_file) if key_file else None
         if key:
             headers["Authorization"] = f"Bearer {key}"
         body = json.dumps({"model": model, "state": state[:60_000], "questions": questions}).encode()
         try:
-            req = urllib.request.Request(self.cfg["url"], body, headers)
-            with urllib.request.urlopen(req, timeout=float(self.cfg["timeout_s"])) as r:
+            req = urllib.request.Request(url, body, headers)
+            with urllib.request.urlopen(req, timeout=float(timeout_s)) as r:
                 answers = json.load(r).get("answers") or {}
         except urllib.error.HTTPError as e:
             with e:

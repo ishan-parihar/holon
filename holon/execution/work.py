@@ -280,7 +280,8 @@ class Work:
 
     def _add_work(self, title: str, intent: str, *, acceptance=None, project_ref=None, parent_id=None, dept=None,
                   assignee=None, requested_by=None, priority=3, source=vocab.CHAIR, task_class=None, risk="normal",
-                  workdir=None, due=None, max_attempts=2, needs=None, expand=True, lane="full") -> dict:
+                  workdir=None, due=None, max_attempts=2, needs=None, expand=True, lane="full",
+                  objective_id=None) -> dict:
         if not title or not title.strip() or not intent or not intent.strip():
             raise ValueError("title and intent are required")
         if source not in vocab.SOURCES:
@@ -297,6 +298,8 @@ class Work:
         if parent and parent["stage"]:
             raise TransitionError("work can only be nested under work, not under a stage")
         dept_id = self._dept_id(dept)
+        if parent and not objective_id:  # work under an objective serves it, however deep
+            objective_id = parent["objective_id"] or (parent["id"] if parent["task_class"] == "objective" else None)
         if assignee:
             emp = self.conn.execute("SELECT dept_id, status FROM employees WHERE id=?", (assignee,)).fetchone()
             if emp is None or emp["status"] == "retired":
@@ -309,12 +312,12 @@ class Work:
         self.conn.execute(
             "INSERT INTO tasks (id, root_id, parent_id, depth, dept_id, assignee, requested_by, source, title, intent,"
             " acceptance, task_class, project_ref, workdir, priority, risk, status, max_attempts, due, created_at,"
-            " updated_at, lane) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " updated_at, lane, objective_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (tid, parent["root_id"] if parent else tid, parent_id, (parent["depth"] + 1) if parent else 0, dept_id,
              assignee, requested_by or self.actor, source, title.strip(), intent.strip(), acceptance, task_class,
              project_ref or (parent["project_ref"] if parent else None),
              workdir or (parent["workdir"] if parent else None), priority, risk, status, max_attempts, due, ts, ts,
-             lane))
+             lane, objective_id))
         for n in needs:
             self.conn.execute("INSERT INTO task_needs VALUES (?,?)", (tid, n))
         self._event("task", tid, None, status, f"work from {source}" + (f", blocked on {len(pending)}" if pending else ""))
@@ -603,12 +606,15 @@ class Work:
 
     def decide(self, ref: str, decision: str, note: str | None = None, recurring: bool = False,
                review_run: str | None = None) -> dict:
-        """Approve or reject a plan. The Chair may decide any; an employee only what is routed to them."""
+        """Approve or reject a plan. The Chair may decide any; an employee only what is routed to them.
+        A decomposition's children that carry a `cron` are routines: returned in `routines` for the kernel to
+        create (it classifies them, which must not happen inside this transaction)."""
         if decision not in vocab.OUTCOMES["approve"]:
             raise ValueError("decision must be approve or reject")
         if decision == "reject" and not (note and note.strip()):
             raise ValueError("a rejection needs a note: it is what the planner learns from")
         children: list[str] = []
+        routines: list[dict] = []
         with write_txn(self.conn):
             approval = self.resolve_approval(ref)
             if approval["status"] not in ("ready", "claimed"):
@@ -631,6 +637,11 @@ class Work:
                 if body["kind"] == "decompose":
                     self._set(work["id"], "waiting", f"split by {plan['id']}", decider)
                     for c in body["children"]:
+                        if c.get("cron"):
+                            routines.append({**c, "dept": c.get("dept") or work["dept_id"], "parent": work["id"],
+                                             "objective_id": work["objective_id"] or (
+                                                 work["id"] if work["task_class"] == "objective" else None)})
+                            continue
                         needs = [children[i] for i in c.get("after") or [] if isinstance(i, int) and 0 <= i < len(children)]
                         child = self._add_work(
                             c["title"], c["intent"], acceptance=c.get("acceptance"), parent_id=work["id"],
@@ -647,7 +658,7 @@ class Work:
                 else:
                     self._add_stage(work, "execute", [approval["id"]], assignee=body.get("assignee") or work["assignee"])
         return {"approval": self.get(approval["id"]), "plan": self.get(plan["id"]), "work": self.get(work["id"]),
-                "children": children, "decider": decider}
+                "children": children, "routines": routines, "decider": decider}
 
     def submit_execute(self, run_id: str, env: dict, exit_code: int | None = 0, **metrics: Any) -> dict:
         with write_txn(self.conn):
@@ -725,19 +736,27 @@ class Work:
     def submit_retro(self, run_id: str, env: dict, exit_code: int | None = 0) -> dict:
         """A retro's actions become new work in the department: changes to playbooks, skills, staffing or
         the genome go through the same pipeline as any other work."""
-        created = []
+        created, routines = [], []
         with write_txn(self.conn):
             run, node, work, actor = self._begin_submit(run_id, "retro", exit_code)
+            objective = work["task_class"] == "objective"
             self._output(node["id"], run_id, "retro", env, env.get("summary"))
             self._set(node["id"], "done", "retro done", actor, outcome="done")
             for p in env.get("actions") or []:
+                if p.get("cron"):  # a new routine: a proposal for its approver (a retro approves nothing)
+                    routines.append({**p, "dept": p.get("dept") or work["dept_id"],
+                                     "objective_id": work["id"] if objective else work["objective_id"]})
+                    continue
                 created.append(self._add_work(
                     p["title"], p["intent"], acceptance=p.get("acceptance"), dept=p.get("dept") or work["dept_id"],
                     requested_by=actor, source="audit", task_class=p.get("task_class") or "improvement",
-                    priority=p.get("priority", 3))["id"])
-            if work["status"] == "open" and not self._active_stages(work["id"]):
+                    priority=p.get("priority", 3), parent_id=work["id"] if objective else None,
+                    lane=p.get("lane") or "full")["id"])
+            if objective and env.get("objective_met"):
+                self._finish(work, "done", f"objective met: {env.get('summary', '')[:300]}", actor)
+            elif work["status"] == "open" and not self._active_stages(work["id"]):
                 self._finish(work, "done", "retro complete", actor)
-        return {"node": self.get(node["id"]), "work": self.get(work["id"]), "created": created}
+        return {"node": self.get(node["id"]), "work": self.get(work["id"]), "created": created, "routines": routines}
 
     def add_retro(self, work_id: str, why: str) -> dict | None:
         """Queue a retro on a work node (once per reason while one is pending)."""
@@ -782,8 +801,8 @@ class Work:
             self._settle_parent(self.get(work["parent_id"]))
 
     def _settle_parent(self, parent: dict) -> None:
-        if parent["status"] != "waiting":
-            return
+        if parent["status"] != "waiting" or parent["task_class"] == "objective":
+            return  # an objective stays open: its review decides, when its pool has finished a cycle
         statuses = [c["status"] for c in self.children(parent["id"])]
         if any(s not in TERMINAL for s in statuses):
             return
@@ -897,7 +916,7 @@ class Work:
                                   assignee=src["assignee"], requested_by=f"recurring:{plan_id}", priority=src["priority"],
                                   source="schedule", task_class=src["task_class"], risk=src["risk"],
                                   workdir=src["workdir"], max_attempts=src["max_attempts"], expand=lane == "full",
-                                  lane=lane if lane in vocab.LANES else "full")
+                                  lane=lane if lane in vocab.LANES else "full", objective_id=src["objective_id"])
             if lane != "full":
                 body = {k: v for k, v in body.items() if k not in ("apply", "classification")}
                 a = self._standing_plan(work, {**body, "writes_fingerprint": fingerprint(

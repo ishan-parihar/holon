@@ -65,4 +65,4 @@ MESSAGE_KINDS = ("dm", "channel", "request", "question", "answer", "proposal")
 SCHEDULE_KINDS = ("wake", "recurring")
 
 # ── skills ───────────────────────────────────────────────────────────────
-SKILL_KINDS = ("protocol", "role", "operation")
+SKILL_KINDS = ("protocol", "role", "operation", "playbook")

@@ -56,6 +56,12 @@ def run(k) -> list[dict]:
     q = lambda sql, *a: w.execute(sql, a).fetchall()  # noqa: E731
 
     _isolation(k, add)
+    for r in k.smoke_results():
+        if not r["ok"]:
+            add("error" if r["critical"] else "warning", "smoke.critical" if r["critical"] else "smoke.check",
+                f"{r['dept'] or 'org'}: {r['name']} failed (exit {r['exit_code']})"
+                + (f" — {r['reason']}" if r["reason"] else "") + (f": {r['tail'][-200:]}" if r["tail"] else "")
+                + (" — its agents wait until it passes" if r["critical"] else ""))
 
     # databases
     for name, conn in (("work.db", k.wconn), ("memory.db", k.mconn)):

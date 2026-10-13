@@ -138,9 +138,8 @@ class Isolated(KernelCase):
         with a, b:
             t = threading.Thread(target=isolation.handle_runner, args=(a, {os.getuid() + 1}))
             t.start()
-            isolation._send(b, {"cmd": "true", "cwd": "/"})
+            self.assertIn("error", isolation._recv(b.makefile("rb")), "refused before it reads a request")
             t.join(5)
-            self.assertIn("error", isolation._recv(b.makefile("rb")))
 
     def test_doctor_probes_what_the_agent_user_can_reach(self):
         self.k.auth.init_chair_key()

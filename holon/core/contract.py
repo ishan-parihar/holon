@@ -45,7 +45,12 @@ COMMON = {
     "proposals": F("list", items=F("entry", items=PROPOSAL), doc="improvements, routed to the steward"),
 }
 WORK_ITEM = {"title": F("text", required=True), "intent": F("text", required=True), "acceptance": TEXT,
-             "dept": F("str"), "task_class": F("str"), "priority": F("int", lo=0, hi=4)}
+             "dept": F("str"), "task_class": F("str"), "priority": F("int", lo=0, hi=4),
+             "lane": F("str", enum=vocab.LANES, doc="fast: one session plans and acts (only work the kernel grades "
+                                                   "G0); script: a routine's approved command, run by the kernel"),
+             "cron": F("str", doc="makes the item a routine (a recurring job) on this 5-field schedule"),
+             "command": F("str", doc="a script routine's command (lane script)"),
+             "rubric": STR_LIST}
 
 SPECS: dict[str, dict[str, dict[str, F]]] = {
     "research": {"": {
@@ -75,9 +80,7 @@ SPECS: dict[str, dict[str, dict[str, F]]] = {
             "rationale": F("text", required=True), "grade": F("grade"),
             "children": F("list", required=True, min_items=2, items=F("object", fields={
                 **WORK_ITEM, "assignee": F("str"), "risk": F("str", enum=vocab.RISKS), "workdir": F("str"),
-                "after": F("list", items=F("int", lo=0)),
-                "lane": F("str", enum=("fast", "full"), doc="fast: one session plans and acts; the kernel allows it "
-                                                            "only when the child's grade floor is G0")})),
+                "after": F("list", items=F("int", lo=0))})),
         },
         "needs_input": {
             "kind": F("str", required=True, enum=("needs_input",)),
@@ -107,7 +110,9 @@ SPECS: dict[str, dict[str, dict[str, F]]] = {
     "retro": {"": {
         "summary": F("text", required=True), "cause": F("text", required=True, doc="the root cause, not the symptom"),
         "actions": F("list", items=F("object", fields=dict(WORK_ITEM)),
-                     doc="each becomes new work in the department, planned and approved like any other"),
+                     doc="each becomes new work in the department, planned and approved like any other; one with a "
+                         "`cron` becomes a routine proposal for its approver"),
+        "objective_met": F("bool", doc="an objective's review: its key results are met, so it closes"),
     }},
 }
 assert set(SPECS) == set(vocab.STAGES)

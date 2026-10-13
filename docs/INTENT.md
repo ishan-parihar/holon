@@ -49,6 +49,9 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
 | Routine | a recurring job (a cron job) in the cheapest lane that does it reliably, approved once | `holon routine add`, `execution.work.Work.instantiate_recurring` |
 | Rubric | what each result of a job is judged on, by a decision model before any verifier is spent | `execution.service.Kernel.judge` |
 | Gold standard | the last verified result of the same job: shown to its executor and its judge | `execution.work.Work.gold_standard` |
+| Playbook | a job's protocol and rubric as a versioned department skill, refined from its own evidence after verification | `capabilities.playbooks.read`, `holon playbook show` |
+| Objective | an outcome pursued over time: decomposed into work and routines, reviewed against its key results until met | `holon objective add`, `execution.service.Kernel._objective_reviews` |
+| Smoke check | a command proving the infrastructure a department runs on works; a critical failure stops its agents | `holon smoke`, `execution.service.Kernel.smoke_blocked` |
 | Trust boundary | agents run as their own Unix user and reach the organization only through the broker | `execution.isolation.serve_broker`, `holon isolation plan` |
 | Decision model | a fast classifier with calibrated probabilities for lane choice, judging, triage and routing | `capabilities.decisions.Decider`, `holon classify` |
 
@@ -60,6 +63,8 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
 | Rework (per work) | verdicts, decisions | `execute#n` or `plan#n` with the feedback in its context | `execution.work.Work.verify` |
 | Employee (per run) | every stage's learnings and decisions | memory; record; earned authority | `capabilities.memory.Memory.consolidate` |
 | Department (on failure, and periodically) | rework, failures, colleagues' proposals, metrics | a retro whose actions become department work | `holon metrics` |
+| Playbook (per job, after verified runs) | judgments per criterion, verifier failures, judge/verifier disagreements | refinement work that rewrites the protocol and rubric; the next version is judged | `execution.service.Kernel._playbook_refinements` |
+| Objective (per cycle of its pool) | the pool's results against the key results | new work, new routines, refinement; closing the objective | `execution.service.Kernel._objective_reviews` |
 | Company (on request) | department metrics, audit samples, promoted lessons | genome and charter changes, approved like any work | `holon audit samples` |
 
 ## Design laws

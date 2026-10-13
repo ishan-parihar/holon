@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tomllib
@@ -19,7 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from holon.capabilities import decisions
+from holon.capabilities import decisions, playbooks
 from holon.capabilities.context import DEFAULT_BUDGET_CHARS, compile_context, identity_card
 from holon.capabilities.decisions import Decider, choice, noul, p_yes, picked
 from holon.capabilities.memory import Memory
@@ -65,8 +66,32 @@ DEFAULT_CONFIG = {
     "classifier": dict(decisions.DEFAULTS),
     # the trust boundary (docs/GENOME.md §11): agents run as agent_user, through the runner, and reach the
     # organization only through the broker; empty agent_user = off (agents run as the kernel's user)
-    "isolation": {"agent_user": "", "broker": "", "runner": "", "grants": []},
+    "isolation": {"agent_user": "", "broker": "", "runner": "", "grants": [], "reads": []},
+    # playbooks (docs/GENOME.md §12): refinement is due after refine_after runs on a version, on any verifier
+    # failure or judge/verifier disagreement, or when a criterion averages below the pass bar over
+    # min_judged results; a task class gets its first playbook after class_after verified results
+    "playbooks": {"refine_after": 5, "min_judged": 2, "class_after": 3},
+    # objectives: reviewed when their pool finishes a cycle, and at least every review_every_days
+    "objectives": {"review_every_days": 7},
+    # smoke checks (docs/GENOME.md §13): [[smoke.checks]] for everyone, [[smoke.dept.<slug>.checks]] or
+    # [smoke.dept.<slug>] file = "<toml with [[checks]]>" per department; a critical failure blocks the
+    # department's agents until it passes; results are cached for every_min
+    "smoke": {"checks": [], "every_min": 30, "timeout_s": 60},
 }
+OBJECTIVE_PLAN = (
+    "This work is an objective: an outcome the organization pursues over time, judged by the key results in its "
+    "acceptance. Decompose it (kind `decompose`) into the pool that achieves it: one-off work for what is done "
+    "once, and routines for what must happen repeatedly. A child with a `cron` is a routine: give it a `lane` "
+    "(`script` with a `command` when the job is deterministic; `fast` for small, bounded judgment; `full` for "
+    "open-ended work that needs its own plan each time) and a `rubric`: checkable criteria that tie each result "
+    "to the key results. Routines and their rubrics start rough on purpose: every verified run refines their "
+    "playbook, and the objective's review reshapes the pool.")
+OBJECTIVE_REVIEW = (
+    "Review this objective against its key results, using the dashboard below. Say in `summary` how far each key "
+    "result is, and in `cause` what most limits progress. Your `actions` reshape the pool: new one-off work, new "
+    "routines (`cron`, `lane`, `rubric`; a routine waits for its approver), or work to change a routine or its "
+    "playbook. Retiring a routine is the Chair's (`holon schedule disable`): ask for it in an action. Set "
+    "`objective_met` only when every key result is met by verified results.")
 # what each lane costs and is for: the classifier's options, and the order "cheapest first" means
 LANE_OPTIONS = {
     "script": "deterministic: fixed inputs and fixed steps with no judgment; a shell or Python command does it "
@@ -88,6 +113,7 @@ CONFIG_KEYS = {s: set(v) for s, v in DEFAULT_CONFIG.items() if s not in ("gradin
 CONFIG_KEYS["budget"].add("dept")  # [budget.dept.<slug>] overrides
 CONFIG_KEYS["scope"].add("dept")   # [scope.dept.<slug>] additions
 CONFIG_KEYS["checks"] |= {"dept", "class"}  # [checks.dept.<slug>], [checks.class.<task_class>]
+CONFIG_KEYS["smoke"].add("dept")  # [smoke.dept.<slug>]
 CONFIG_KEYS["classes"] = set()   # [classes] org = [...], <dept slug> = [...]: checked by lint against departments
 
 
@@ -260,6 +286,10 @@ class Kernel:
                review_run: str | None = None) -> dict:
         out = self.work.decide(ref, decision, note, recurring, review_run)
         work, approval = out["work"], out["approval"]
+        if out["routines"]:
+            author = (self.work.output(out["plan"]["id"]) or {"body": {}})["body"].get("author")
+            out["routines"] = self._routines_from_items(out["routines"], out["decider"],
+                                                        f"emp:{author}" if author else out["decider"])
         author = (self.work.output(out["plan"]["id"]) or {"body": {}})["body"].get("author")
         self.memory.record_review(work, author, decision + "d", note, self._dept_scope(work["dept_id"]))
         if decision == "approve" and out["decider"] != CHAIR and out["decider"] == approval["approver"] \
@@ -396,14 +426,28 @@ class Kernel:
                 raise TransitionError(f"{emp['name']} ({employee_id}) has no role that performs the '{stage}' stage")
         token, token_hash = security.new_token()
         got = self.work.claim(who, stages, driver or (emp["driver"] if emp else None), task_id, token_hash,
-                              exclude_depts=self.over_budget(), max_running=max_running,
+                              exclude_depts=self.over_budget() + self.smoke_blocked(), max_running=max_running,
                               exclude_tasks=self.backed_off())
         if got is None:
             return None
         node, run = got
+        work = self.work.work_of(node)
+        pb = self.playbook_of(work) if node["stage"] in ("plan", "execute", "verify") else None
+        if pb and node["stage"] == "execute":
+            with write_txn(self.wconn):
+                self.wconn.execute("UPDATE tasks SET playbook=?, playbook_version=? WHERE id=?",
+                                   (pb["name"], pb["version"], work["id"]))
+        extra = []
+        if pb:
+            extra.append((f"Playbook: {pb['name']} v{pb['version']} (how this job is done and judged)",
+                          pb["protocol"] + "\n\n### Rubric\n\n" + "\n".join(f"- {c}" for c in pb["rubric"])))
+        if work.get("task_class") == "objective" and node["stage"] in ("plan", "retro"):
+            extra.append(("Objective", OBJECTIVE_PLAN if node["stage"] == "plan" else OBJECTIVE_REVIEW))
+            extra.append(("Objective dashboard", self.objective_dashboard(work["id"])))
         md, _ = compile_context(self.home, self.work, self.memory, node["id"],
                                 budget=int(self.config["context"]["budget_chars"]), run_id=run["id"],
-                                employee=emp, predecessors=self.org.predecessors(emp["id"]) if emp else None)
+                                employee=emp, predecessors=self.org.predecessors(emp["id"]) if emp else None,
+                                extra=extra)
         slug = self._dept_slug(node["dept_id"])
         if self.classes_for(slug) and node["stage"] in ("shape", "plan", "retro"):
             md += ("\n\n## Task classes\n\nNew or split work in " + (slug or "the organization") + " uses one of: "
@@ -498,6 +542,8 @@ class Kernel:
             out = self.verify(node["id"], env["verdict"], env["note"], run_id=run_id)
         else:
             out = self.work.submit_retro(run_id, env, exit_code)
+            if out["routines"]:
+                out["routines"] = self._routines_from_items(out["routines"], None, f"emp:{run['employee_id']}")
             if work.get("task_class") == "retro" and work.get("dept_id"):
                 self._ack_proposals(work["dept_id"])
         out["memory"] = self._consolidate(work, run, env, emp, stage)
@@ -592,6 +638,14 @@ class Kernel:
                 self.work._event("skill", f"@{slug}/{c['skill']}/{c['file']}", None,
                                  "changed" if applied else "rejected",
                                  (c["why"] if applied else "; ".join(problems))[:500], actor="kernel")
+        if applied:
+            for name in {c["skill"] for c in changes}:
+                pb = playbooks.read(self.skills, slug, name)
+                if pb:
+                    v = playbooks.bump(self.skills, slug, name, pb["version"])
+                    with write_txn(self.wconn):
+                        self.work._event("skill", f"@{slug}/{name}", f"v{pb['version']}", f"v{v}",
+                                         f"playbook refined by {work['id']}", actor="kernel")
         exported = self.refresh_skill_exports() if applied else []
         return [{"skill": c["skill"], "file": c["file"], "applied": applied, "problems": problems,
                  "exported_to": exported} for c in changes]
@@ -730,10 +784,10 @@ class Kernel:
         return {"skill": name, "file": file, "layer": layer, "path": str(path), "text": text}
 
     # ── lanes: the cheapest way to do each job, chosen at intake and enforced (docs/GENOME.md §10) ──
-    def _ask(self, why: str, state: str, questions: dict) -> dict | None:
+    def _ask(self, why: str, state: str, questions: dict, patient: bool = False) -> dict | None:
         """A decision, or None. A failure (rate limit, outage) is recorded as an event and reaches the Chair:
         every caller then takes its safe default, which costs verifier sessions until the model is back."""
-        a = self.decider.ask(state, questions)
+        a = self.decider.ask(state, questions, patient)
         if a is None and self.decider.on:
             with write_txn(self.wconn):
                 self.work._event("classifier", "decider", None, "failed",
@@ -775,11 +829,12 @@ class Kernel:
     def add_routine(self, title: str, intent: str, *, dept: str, cron: str, lane: str | None = None,
                     command: str | None = None, rubric: list[str] | None = None, why: str | None = None,
                     workdir: str | None = None, task_class: str | None = None, risk: str = "normal",
-                    project_ref: str | None = None) -> dict:
+                    project_ref: str | None = None, objective_id: str | None = None, strict: bool = True) -> dict:
         """A routine (a cron job) as a proposal for the approver its grade names. The lane is enforced
         cheapest first: a job the classifier judges deterministic must be a script (`command`); a costlier lane
         than the classifier's needs `why`, which is recorded; a cheaper one is raised to the classifier's.
-        A routine runs unattended, so its floor is G2 (G3 when it reaches outside the organization)."""
+        A routine runs unattended, so its floor is G2 (G3 when it reaches outside the organization).
+        `strict=False` (a planner's routine): a costlier lane than the classifier's is lowered to it instead."""
         Cron(cron)
         if lane not in (None, *vocab.LANES):
             raise ValueError(f"lane must be one of {vocab.LANES}")
@@ -806,7 +861,11 @@ class Kernel:
                          "needs that much care")
             lane = cls["lane"]
         elif cls["lane"] and order.index(lane) > order.index(cls["lane"]):
-            if not why:
+            if not why and not strict:
+                notes.append(f"lowered from {lane} to {cls['lane']}: the classifier is {cls['confidence']:.0%} sure "
+                             "that is enough")
+                lane = cls["lane"]
+            elif not why:
                 raise ValueError(f"the classifier says {cls['lane']} is enough ({cls['confidence']:.0%}); a {lane} "
                                  "routine costs more on every firing: say --why")
         if why:
@@ -830,13 +889,74 @@ class Kernel:
             title=f"Routine: {title}", intent=intent, steps=steps, apply={"kind": "routine", "cron": cron},
             approver=approver, grade=floor, task_class=task_class, dept=dept_id, author=self.actor,
             reasons=reasons + notes, body={"lane": lane, "rubric": list(rubric or []), "classification": cls,
+                                           "playbook": playbooks.for_routine(title),
                                            **({"command": command} if command else {})},
-            acceptance="; ".join(rubric) if rubric else None, workdir=workdir, risk=risk, project_ref=project_ref)
+            acceptance="; ".join(rubric) if rubric else None, workdir=workdir, risk=risk, project_ref=project_ref,
+            objective_id=objective_id)
 
     def _apply_routine(self, a: dict) -> None:
-        """On approval: the plan becomes a standing (recurring) plan and its schedule starts."""
+        """On approval: the plan becomes a standing (recurring) plan, its schedule starts, and its playbook
+        (protocol + rubric, version 1) is written into the department's skills, where refinement improves it."""
         self.wconn.execute("UPDATE tasks SET recurring=1 WHERE id=?", (a["_plan"],))
         self.schedules.insert("recurring", a["cron"], template_id=a["_plan"])
+        plan = self.work.get(a["_plan"])
+        src, body = self.work.get(plan["parent_id"]), self.work.output(a["_plan"])["body"]
+        slug, name = self._dept_slug(src["dept_id"]), body.get("playbook")
+        if slug and name and not playbooks.read(self.skills, slug, name):
+            title = src["title"].removeprefix("Routine: ")
+            rubric = body.get("rubric") or [src["acceptance"] or f"The result does what was asked: {src['intent'][:300]}",
+                                            "The result says what was done and what was found, with evidence"]
+            steps = [f"Run `{body['command']}` (the kernel does this; the protocol records why and what to check)"] \
+                if body.get("command") else [src["intent"]]
+            playbooks.write(self.skills, slug, name, playbooks.render(name, title, src["intent"], steps, rubric))
+            self.work._event("skill", f"@{slug}/{name}", None, "changed", "playbook v1, with the routine's approval",
+                             actor="kernel")
+
+    def _routines_from_items(self, items: list[dict], approved_by: str | None, author: str) -> list[dict]:
+        """Routines a planner (in an approved decomposition) or a retro proposed. The decomposition's
+        decider also approves each routine when the routine's grade is theirs to decide; otherwise the
+        routine waits for its approver. A job the classifier judges deterministic becomes work to write its
+        script instead, since a planner cannot approve code that does not exist yet."""
+        out = []
+        for c in items:
+            dept = self._dept_slug(c["dept"]) if str(c["dept"]).startswith("dept_") else c["dept"]
+            try:
+                a = self.add_routine(c["title"], c["intent"], dept=dept, cron=c["cron"], lane=c.get("lane"),
+                                     command=c.get("command"), rubric=c.get("rubric"), workdir=c.get("workdir"),
+                                     task_class=c.get("task_class"), risk=c.get("risk") or "normal",
+                                     objective_id=c.get("objective_id"), strict=False)
+            except ValueError as e:
+                w = self.work.add_work(f"Make routine '{c['title']}' a script", f"{c['intent']}\n\n{e}. Write the "
+                                       "script in the department's reach, then propose the routine with its command.",
+                                       dept=dept, parent_id=c.get("objective_id"), source="agent", requested_by=author,
+                                       task_class=c.get("task_class"))
+                out.append({"script_work": w["id"], "title": c["title"]})
+                continue
+            if approved_by and approved_by in (CHAIR, a["approver"]):
+                actor = self.work.actor
+                self.work.actor = approved_by
+                try:
+                    self.decide(a["id"], "approve", f"approved with the decomposition by {approved_by}")
+                finally:
+                    self.work.actor = actor
+                out.append({"routine": a["parent_id"], "title": c["title"], "approved": True})
+            else:
+                out.append({"routine": a["parent_id"], "title": c["title"], "approval": a["id"],
+                            "approver": a["approver"]})
+        return out
+
+    def playbook_of(self, work: dict) -> dict | None:
+        """The playbook a work follows: its routine's, else its task class's in its department."""
+        slug = self._dept_slug(work.get("dept_id"))
+        if not slug:
+            return None
+        plan = self.work.approved_plan(work["id"])
+        name = ((plan or {}).get("output") or {"body": {}})["body"].get("playbook")
+        if not name and (work.get("requested_by") or "").startswith("recurring:"):
+            name = ((self.work.output(work["requested_by"][10:]) or {"body": {}})["body"]).get("playbook")
+        if not name and work.get("task_class") and work["task_class"] not in ("objective", "playbook-refinement"):
+            name = playbooks.for_class(work["task_class"])
+        return playbooks.read(self.skills, slug, name) if name else None
 
     def routines(self) -> list[dict]:
         out = []
@@ -864,7 +984,9 @@ class Kernel:
     def judge(self, work: dict, env: dict) -> dict | None:
         """The rubric judge: the decision model's probability that the result meets each criterion, and that
         it is as good as the gold standard. None when the model is off or failed."""
-        rubric, gold = self.rubric(work)[:12], self.work.gold_standard(work)
+        pb = self.playbook_of(work)
+        rubric = (pb["rubric"] if pb and pb["rubric"] else self.rubric(work))[:12]
+        gold = self.work.gold_standard(work)
         qs = {f"c{i}": noul(f"Does the result meet this criterion: {c}", "the result shows it is met",
                             "it is not met, or the result does not show it") for i, c in enumerate(rubric)}
         if gold:
@@ -875,11 +997,19 @@ class Kernel:
                  f"{env['documentation'][:12000]}")
         if gold:
             state += f"\n\n--- Gold standard ({gold['work_id']}) ---\n{gold['summary']}\n{(gold['documentation'] or '')[:6000]}"
-        a = self._ask("rubric", state, qs)
+        a = self._ask("rubric", state, qs, patient=True)
         if a is None:
             return None
         scores = {("gold standard" if q == "gold" else rubric[int(q[1:])]): round(p_yes(a[q]), 3) for q in qs}
-        return {"pass": all(v >= float(self.decider.cfg["pass_p"]) for v in scores.values()), "scores": scores}
+        bar = float(self.decider.cfg["pass_p"])
+        w = self.work.get(work["id"])
+        with write_txn(self.wconn):
+            for c, p in scores.items():
+                self.wconn.execute("INSERT INTO judgments (work_id, playbook, version, criterion, p, passed, created_at)"
+                                   " VALUES (?,?,?,?,?,?,?)", (work["id"], w["playbook"] or (pb or {}).get("name"),
+                                                               w["playbook_version"] or (pb or {}).get("version"), c, p,
+                                                               int(p >= bar), now()))
+        return {"pass": all(v >= bar for v in scores.values()), "scores": scores}
 
     def _lane_verification(self, work: dict, run: dict, env: dict) -> dict | None:
         """Script and fast work skip the verifier when nothing calls for one: graded again on what it did
@@ -1126,6 +1256,66 @@ class Kernel:
         import hashlib
         return hashlib.sha256(json.dumps(self.scopes(), sort_keys=True).encode()).hexdigest()[:12]
 
+    # ── smoke: the infrastructure a department runs on, checked before its agents run ──
+    def smoke_checks(self, dept: str | None = None) -> list[dict]:
+        """Every declared smoke check: {dept (None = everyone), name, cmd, critical, timeout, reason}."""
+        sm = self.config.get("smoke", {})
+        found = [(None, c) for c in sm.get("checks") or []]
+        for slug, sub in (sm.get("dept") or {}).items():
+            if dept and slug != dept:
+                continue
+            found += [(slug, c) for c in sub.get("checks") or []]
+            if sub.get("file"):
+                f = Path(sub["file"]).expanduser()
+                try:
+                    found += [(slug, c) for c in tomllib.loads(f.read_text()).get("checks") or []]
+                except (OSError, tomllib.TOMLDecodeError) as e:
+                    found.append((slug, {"name": f"smoke file {f}", "cmd": f"echo {shlex.quote(str(e))}; false",
+                                         "critical": True, "reason": "the department's smoke manifest must load"}))
+        return [{"dept": d, "name": c.get("name") or c.get("cmd", "?"), "cmd": c.get("cmd", "false"),
+                 "critical": bool(c.get("critical")), "timeout": int(c.get("timeout") or sm.get("timeout_s") or 60),
+                 "reason": c.get("reason", "")} for d, c in found]
+
+    def run_smoke(self, dept: str | None = None) -> list[dict]:
+        """Run the smoke checks (as the agent user under isolation: they exercise what agents use), in the
+        department's first scope root (else the instance), and remember the results for the gate."""
+        results = []
+        for c in self.smoke_checks(dept):
+            roots = self.scope(c["dept"])["roots"] if c["dept"] else []
+            cwd = next((r for r in roots if Path(r).is_dir()), str(self.home.root))
+            started = datetime.now(timezone.utc)
+            code, out = self._exec(c["cmd"], cwd, {}, c["timeout"])
+            results.append({**c, "ok": code == 0, "exit_code": code, "tail": out.strip()[-600:],
+                            "seconds": round((datetime.now(timezone.utc) - started).total_seconds(), 2)})
+        if not dept:
+            with write_txn(self.wconn):
+                self.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('smoke', ?)",
+                                   (json.dumps({"ts": now(), "results": results}),))
+        return results
+
+    def smoke_results(self, max_age_min: float | None = None) -> list[dict]:
+        """The last smoke results; re-run when older than `max_age_min` (default [smoke] every_min)."""
+        raw = self._setting("smoke")
+        cached = json.loads(raw) if raw else None
+        age = float(self.config["smoke"]["every_min"] if max_age_min is None else max_age_min)
+        if cached and cached["ts"] > (datetime.now(timezone.utc) - timedelta(minutes=age)).strftime(
+                "%Y-%m-%dT%H:%M:%S.%fZ"):
+            return cached["results"]
+        return self.run_smoke() if self.smoke_checks() else []
+
+    def smoke_blocked(self) -> list[str]:
+        """Departments whose agents wait: a critical check of theirs, or one for everyone, failed last time.
+        The incident department is never blocked, so it can fix what broke. Uses the cache only: the gate
+        never runs commands inside a claim."""
+        raw = self._setting("smoke")
+        failed = [r for r in (json.loads(raw)["results"] if raw else []) if r["critical"] and not r["ok"]]
+        if not failed:
+            return []
+        everyone = any(r["dept"] is None for r in failed)
+        slugs = {r["dept"] for r in failed if r["dept"]}
+        spare = self.config["healing"]["incident_dept"]
+        return [d["id"] for d in self.org.depts() if d["slug"] != spare and (everyone or d["slug"] in slugs)]
+
     # ── budgets: how much work a department may have in flight, and start per day ──
     def budget(self, dept_slug: str | None) -> dict:
         b = {k: v for k, v in self.config.get("budget", {}).items() if k != "dept"}
@@ -1233,6 +1423,178 @@ class Kernel:
         out += self._department_retros()
         out += self._doctor()
         out += self._backup()
+        out += self._playbook_refinements()
+        out += self._objective_reviews()
+        return out
+
+    # ── the playbook loop: protocols and rubrics improve from their own evidence ──
+    def playbook_evidence(self, name: str, dept_id: str, version: int, since: str = "") -> dict:
+        """What the runs under one version of a playbook show: runs, verifier failures, rubric passes a
+        verifier then failed (disagreements), and each criterion's mean probability of being met."""
+        runs = [dict(r) for r in self.wconn.execute(
+            "SELECT * FROM tasks WHERE stage IS NULL AND playbook=? AND playbook_version=? AND dept_id=? AND "
+            "created_at>? ORDER BY created_at", (name, version, dept_id, since))]
+        ids = [r["id"] for r in runs]
+        marks = ",".join("?" * len(ids)) or "''"
+        fails = [dict(r) for r in self.wconn.execute(
+            f"SELECT v.parent_id, o.body FROM tasks v JOIN outputs o ON o.task_id=v.id WHERE v.stage='verify' AND "
+            f"v.outcome='fail' AND v.parent_id IN ({marks})", ids)]
+        judged_pass = {r[0] for r in self.wconn.execute(
+            f"SELECT entity_id FROM events WHERE entity='task' AND note LIKE 'rubric pass%' AND entity_id IN ({marks})",
+            ids)}
+        criteria = [dict(r) for r in self.wconn.execute(
+            "SELECT criterion, avg(p) AS mean, count(*) AS n, sum(passed) AS passed FROM judgments WHERE playbook=? "
+            "AND version=? AND created_at>? GROUP BY criterion ORDER BY mean", (name, version, since))]
+        return {"runs": len(runs), "done": sum(r["status"] == "done" for r in runs),
+                "failed": sum(r["status"] == "failed" for r in runs),
+                "verify_fails": [{"work": f["parent_id"], "note": json.loads(f["body"]).get("note", "")} for f in fails],
+                "disagreements": sorted(judged_pass & {f["parent_id"] for f in fails}), "criteria": criteria,
+                "last": runs[-1] if runs else None}
+
+    def _playbook_refinements(self) -> list[dict]:
+        """Each playbook in use gets refinement work when its evidence calls for it: a verifier failed a
+        run, the judge and a verifier disagreed, a criterion keeps scoring below the bar, or enough runs
+        have accumulated to consolidate. A task class with enough verified results and no playbook gets one
+        written. The work goes through the full pipeline; the change lands only once verified."""
+        c, bar = self.config["playbooks"], float(self.decider.cfg["pass_p"])
+        out = []
+        for name, dept_id in self.wconn.execute(
+                "SELECT DISTINCT playbook, dept_id FROM tasks WHERE stage IS NULL AND playbook IS NOT NULL").fetchall():
+            slug = self._dept_slug(dept_id)
+            pb = playbooks.read(self.skills, slug, name) if slug else None
+            if not pb:
+                continue
+            title = f"Refine playbook: {name}"
+            last = self.wconn.execute("SELECT max(created_at) FROM tasks WHERE stage IS NULL AND title=?",
+                                      (title,)).fetchone()[0] or ""
+            if self._incident_open(title):
+                continue
+            ev = self.playbook_evidence(name, dept_id, pb["version"], last)
+            why = []
+            if ev["verify_fails"]:
+                why.append(f"{len(ev['verify_fails'])} run(s) failed verification")
+            if ev["disagreements"]:
+                why.append(f"the rubric judge passed {len(ev['disagreements'])} run(s) a verifier failed: the rubric "
+                           "misses what matters")
+            weak = [x for x in ev["criteria"] if x["n"] >= int(c["min_judged"]) and x["mean"] < bar]
+            if weak:
+                why.append(f"{len(weak)} criterion(s) average below {bar}")
+            if ev["runs"] >= int(c["refine_after"]):
+                why.append(f"{ev['runs']} runs on v{pb['version']} to consolidate")
+            if why:
+                out.append(self._refinement(title, name, slug, pb, ev, why))
+        for slug, task_class, n in self._unwritten_class_playbooks():
+            out.append(self._refinement(f"Write playbook: {playbooks.for_class(task_class)}",
+                                        playbooks.for_class(task_class), slug, None,
+                                        {"task_class": task_class, "verified": n},
+                                        [f"{n} verified results in class {task_class} and no playbook yet"]))
+        return [o for o in out if o]
+
+    def _unwritten_class_playbooks(self) -> list[tuple[str, str, int]]:
+        out = []
+        for dept_id, task_class, n in self.wconn.execute(
+                "SELECT w.dept_id, w.task_class, count(DISTINCT w.id) FROM outputs o JOIN tasks s ON s.id=o.task_id "
+                "JOIN tasks w ON w.id=s.parent_id WHERE o.kind='execute' AND o.verified=1 AND w.dept_id IS NOT NULL "
+                "AND w.task_class IS NOT NULL AND w.task_class NOT IN ('objective','playbook-refinement','incident',"
+                "'retro') AND w.playbook IS NULL GROUP BY w.dept_id, w.task_class HAVING count(DISTINCT w.id)>=?",
+                (int(self.config["playbooks"]["class_after"]),)).fetchall():
+            slug = self._dept_slug(dept_id)
+            if not playbooks.read(self.skills, slug, playbooks.for_class(task_class)) and not self.wconn.execute(
+                    "SELECT 1 FROM tasks WHERE stage IS NULL AND title=?",
+                    (f"Write playbook: {playbooks.for_class(task_class)}",)).fetchone():
+                out.append((slug, task_class, n))
+        return out
+
+    def _refinement(self, title: str, name: str, slug: str, pb: dict | None, ev: dict, why: list[str]) -> dict:
+        if pb:
+            crit = "\n".join(f"- {x['criterion']}: mean p={x['mean']:.2f} over {x['n']} ({x['passed']} passed)"
+                             for x in ev["criteria"]) or "- (no judgments yet)"
+            fails = "\n".join(f"- {f['work']}: {f['note'][:400]}" for f in ev["verify_fails"][:5]) or "- none"
+            body = (f"The playbook `{name}` (v{pb['version']}) needs refining: {'; '.join(why)}.\n\n"
+                    f"Runs on v{pb['version']}: {ev['runs']} ({ev['done']} done, {ev['failed']} failed).\n\n"
+                    f"Rubric judgments per criterion:\n{crit}\n\nVerifier failures:\n{fails}\n\n"
+                    f"Current protocol (`holon skill show {name} --dept {slug}`):\n\n{pb['protocol'][:3000]}\n\n"
+                    f"Current rubric:\n" + "\n".join(f"- {c}" for c in pb["rubric"]))
+        else:
+            body = (f"Task class `{ev['task_class']}` has {ev['verified']} verified results in this department and no "
+                    f"playbook. Distil one from them (their results and verifier notes: `holon task list --dept "
+                    f"{slug}`): the objective, the protocol that worked, and a rubric of checkable criteria.")
+        intent = (body + f"\n\nPlan the change as writes to `skill:{name}/SKILL.md` and `skill:{name}/rubric.md` "
+                  "(a playbook skill: frontmatter `kind: playbook`, sections `## Objective`, `## Protocol`, "
+                  "`## Lessons`; rubric lines start with `- `). Tie every change to the evidence. Sharpen criteria "
+                  "that pass when they should not; retire ones that measure nothing; add what verifiers keep "
+                  "catching. The kernel bumps the version when the change is verified, and later runs are judged "
+                  "against it, so the next refinement can see whether this one helped.")
+        w = self.work.add_work(title, intent[:20000], dept=slug, source="kernel", requested_by="kernel", priority=2,
+                               task_class="playbook-refinement",
+                               acceptance=f"skill:{name} is updated, `holon skill check --dept {slug}` is clean, and "
+                                          "each change cites the evidence it answers")
+        return {"refinement": w["id"], "playbook": name, "why": why}
+
+    # ── the objective loop: a pool of work and routines steered toward key results ──
+    def add_objective(self, title: str, intent: str, *, dept: str, key_results: list[str],
+                      project_ref: str | None = None, workdir: str | None = None) -> dict:
+        """An objective: its planner decomposes it into one-off work and routines; it stays open while its
+        pool runs, and its review reshapes the pool until the key results are met."""
+        if not key_results:
+            raise ValueError("an objective needs at least one key result (--key-result)")
+        return self.work.add_work(title, intent, dept=dept, task_class="objective", project_ref=project_ref,
+                                  acceptance="\n".join(f"- {k}" for k in key_results), workdir=workdir,
+                                  source=CHAIR if self.actor == CHAIR else "agent", requested_by=self.actor,
+                                  priority=1)
+
+    def objective_dashboard(self, oid: str) -> str:
+        o = self.work.get(oid)
+        kids = [dict(r) for r in self.wconn.execute(
+            "SELECT * FROM tasks WHERE stage IS NULL AND objective_id=? AND requested_by NOT LIKE 'recurring:%' "
+            "ORDER BY created_at", (oid,))]
+        lines = [f"**{o['title']}** [{o['status']}]", "", "Key results:", o["acceptance"] or "(none)", "", "Work:"]
+        lines += [f"- {k['title']} [{k['status']}, {k['lane']}]" for k in kids if k["task_class"] != "objective"] or ["- none"]
+        lines += ["", "Routines:"]
+        for r in self.routines():
+            src = self.work.get(self.work.get(r["plan"])["parent_id"])
+            if src["objective_id"] != oid:
+                continue
+            body = (self.work.output(r["plan"]) or {"body": {}})["body"]
+            pb = playbooks.read(self.skills, self._dept_slug(src["dept_id"]), body.get("playbook") or "")
+            crit = self.wconn.execute("SELECT criterion, avg(p), count(*) FROM judgments WHERE playbook=? AND version=? "
+                                      "GROUP BY criterion", (pb["name"], pb["version"])).fetchall() if pb else []
+            lines.append(f"- {r['title']} ({r['lane']}, `{r['cron']}`, {'on' if r['enabled'] else 'off'}): fired "
+                         f"{r['fired']}, done {r['done']}, failed {r['failed']}"
+                         + (f"; playbook v{pb['version']}" if pb else "")
+                         + "".join(f"\n  - {c[0][:90]}: mean p={c[1]:.2f} over {c[2]}" for c in crit))
+        done = [k for k in kids if k["status"] == "done"][-5:]
+        if done:
+            lines += ["", "Latest results:"]
+            for k in done:
+                ex = self.work.last_execute_output(k["id"])
+                lines.append(f"- {k['title']}: {((ex or {}).get('summary') or '')[:200]}")
+        return "\n".join(lines)
+
+    def _objective_reviews(self) -> list[dict]:
+        """An objective's review is due when its pool has finished a cycle (nothing of its own in flight and
+        something finished since the last review) or every `review_every_days`."""
+        out = []
+        every = timedelta(days=float(self.config["objectives"]["review_every_days"]))
+        for o in self.wconn.execute("SELECT * FROM tasks WHERE stage IS NULL AND task_class='objective' AND "
+                                    "status='waiting'").fetchall():
+            o = dict(o)
+            if any(s["stage"] == "retro" and s["status"] in ("ready", "claimed") for s in self.work.stages(o["id"])):
+                continue
+            last = max([s["created_at"] for s in self.work.stages(o["id"], "retro")] or [o["updated_at"]])
+            busy = self.wconn.execute(
+                "SELECT 1 FROM tasks WHERE stage IS NULL AND objective_id=? AND requested_by NOT LIKE 'recurring:%' "
+                "AND status NOT IN ('done','failed','cancelled')", (o["id"],)).fetchone()
+            moved = self.wconn.execute(
+                "SELECT 1 FROM tasks WHERE stage IS NULL AND objective_id=? AND status IN ('done','failed','cancelled') "
+                "AND updated_at>?", (o["id"], last)).fetchone()
+            stale = last < (datetime.now(timezone.utc) - every).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            if (moved and not busy) or (stale and moved):
+                with write_txn(self.wconn):
+                    r = self.work.add_retro(o["id"], "objective review: " + (
+                        "its pool finished a cycle" if not busy else f"{every.days} days since the last review"))
+                if r:
+                    out.append({"objective_review": r["id"], "objective": o["id"]})
         return out
 
     def _backup(self) -> list[dict]:

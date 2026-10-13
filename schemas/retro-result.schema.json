@@ -39,6 +39,29 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 4
+          },
+          "lane": {
+            "type": "string",
+            "enum": [
+              "script",
+              "fast",
+              "full"
+            ],
+            "description": "fast: one session plans and acts (only work the kernel grades G0); script: a routine's approved command, run by the kernel"
+          },
+          "cron": {
+            "type": "string",
+            "description": "makes the item a routine (a recurring job) on this 5-field schedule"
+          },
+          "command": {
+            "type": "string",
+            "description": "a script routine's command (lane script)"
+          },
+          "rubric": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -46,7 +69,11 @@
           "intent"
         ]
       },
-      "description": "each becomes new work in the department, planned and approved like any other"
+      "description": "each becomes new work in the department, planned and approved like any other; one with a `cron` becomes a routine proposal for its approver"
+    },
+    "objective_met": {
+      "type": "boolean",
+      "description": "an objective's review: its key results are met, so it closes"
     },
     "learnings": {
       "type": "array",

@@ -157,7 +157,10 @@ FAST_LANE = ("There is no separate plan or approval: this work is routine (its g
 
 def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
                     budget: int = DEFAULT_BUDGET_CHARS, run_id: str | None = None,
-                    employee: dict | None = None, predecessors: list[str] | None = None) -> tuple[str, dict]:
+                    employee: dict | None = None, predecessors: list[str] | None = None,
+                    extra: list[tuple[str, str]] | None = None) -> tuple[str, dict]:
+    """`extra`: sections the kernel adds for this stage (a playbook, an objective's dashboard), placed right
+    after the work itself."""
     node = work.get(node_id)
     stage = node["stage"] or "work"
     task = work.work_of(node)
@@ -197,6 +200,8 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
     if node.get("blocked_reason") and node["stage"]:
         body += f"\n\n**Why this stage exists:** {node['blocked_reason']}"
     b.add("Task", body)
+    for title, text in extra or []:
+        b.add(title, text)
 
     # 2. stage material: what the stages before this one produced
     for prev_id in work.needs(node_id):

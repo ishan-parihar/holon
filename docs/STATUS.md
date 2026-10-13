@@ -49,6 +49,8 @@ whose inputs changed (AGENTS.md).
 | 2026-10-13 | The workstation instance runs the Notion sync and tunnel; the heartbeat stays off until the Chair turns it on. |
 | 2026-10-13 | Trust boundary (G1): separate Unix users and a kernel broker, not per-harness filesystem confinement. |
 | 2026-10-13 | Lanes (G3): script, then a fast single session, then the full pipeline, cheapest first and enforced at intake by a classifier; each routine has a rubric, and its last verified run is its gold standard. |
+| 2026-10-14 | Routine architecture approved. Fast and full lanes are coupled to playbooks that refine their protocol and rubric after verification; objectives decompose into pools of work and routines that review themselves; smoke checks gate departments as in the legacy organism. |
+| 2026-10-14 | Clef (`api.experientiallabs.ai/v1/systemone`) is a decision-model endpoint; it answers in ~274 s, so it is the patient fallback (rubric judging), not the first endpoint. Key rotation deferred: trusted environment. |
 | 2026-10-13 | Decision models (classifiers) run on OpenRouter's decisions endpoint (`[classifier]`), outside free-stack; free-stack stays the only pipeline for generative models. |
 
 ## 4. Rules for anyone working on Holon

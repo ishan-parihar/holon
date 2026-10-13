@@ -158,6 +158,12 @@ class Library:
                 problems.append(f"{where}: frontmatter name {m['name']!r} does not match its directory")
             if m.get("kind") and m["kind"] not in KINDS:
                 problems.append(f"{where}: kind must be one of {KINDS}")
+            if m.get("kind") == "playbook":
+                try:
+                    if not [x for x in self.read(name, "rubric.md", dept).splitlines() if x.startswith("- ")]:
+                        problems.append(f"{where}: rubric.md lists no criterion ('- ' lines)")
+                except SkillError:
+                    problems.append(f"{where}: a playbook needs rubric.md")
             if roles is not None:
                 bad = set(m.get("roles") or []) - set(roles)
                 if bad:

@@ -131,6 +131,14 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[isolation]` | `broker`, `runner` | `@holon-broker-<instance>`, `@holon-runner-<instance>` | the abstract Unix socket names of the broker and the runner |
 | `[isolation]` | `grants` | [] | trees the agent user may write beyond the departments' `[scope]` roots (workdirs, harness homes) |
 | `[isolation]` | `reads` | [] | trees it may only read (beyond the kernel distribution and the drivers' binaries) |
+| `[classifier]` | `fallback_url`, `fallback_model`, `fallback_key_file`, `fallback_timeout_s` | "", "", "", 330 | a second decision endpoint for decisions that can wait (the rubric judge, inside a dispatch), tried when the first fails; never on the Chair's terminal or the heartbeat |
+| `[smoke]` | `checks` | [] | `[[smoke.checks]]` tables (`name`, `cmd`, `critical`, `timeout`, `reason`) for everyone; `[[smoke.dept.<slug>.checks]]`, or `[smoke.dept.<slug>] file` (a TOML file of `[[checks]]` kept with the department's code), per department (§13) |
+| `[smoke]` | `every_min` | 30 | how long smoke results stay fresh; `holon doctor` re-runs them after that |
+| `[smoke]` | `timeout_s` | 60 | per check, unless it sets `timeout` |
+| `[playbooks]` | `refine_after` | 5 | runs on one playbook version before its refinement is due anyway (§12) |
+| `[playbooks]` | `min_judged` | 2 | judged results a criterion needs before a low average makes refinement due |
+| `[playbooks]` | `class_after` | 3 | verified results in a department's task class before its first playbook is written |
+| `[objectives]` | `review_every_days` | 7 | an objective is reviewed when its pool finishes a cycle, and at least this often while anything moves |
 | `[classes]` | `org`, `<dept slug>` | (any) | the task classes work may carry, organization-wide and per department; agents proposing work with another class breach the contract, `holon doctor` warns about open work outside it. Track records (novelty floors, earned authority, sampling) accrue per class, so a small shared taxonomy is what lets trust grow |
 
 ## 7. Operations
@@ -271,4 +279,70 @@ and whether the broker answers. Each failure is an error, so the heartbeat opens
 Limits: agents share one Unix user, so one agent could read another's run directory (and its run
 token); per-department users would close that. The model key a harness needs is readable by the
 agent user by design.
+
+## 12. Playbooks, refinement and objectives: the department's learning loop
+
+Automations that run the same way forever drift away from what they are for. In Holon every job
+carries a **playbook** that improves from its own evidence, and every set of jobs serves an
+**objective** that steers it.
+
+**Playbooks.** A playbook is a department skill of kind `playbook` (`holon/capabilities/playbooks.py`):
+`SKILL.md` holds the objective and protocol (with a `version`), `rubric.md` the criteria, one `- `
+line each. A routine gets one when it is approved (`routine-<slug>`, version 1 from its intent and
+rubric); a task class gets one when its department has `class_after` verified results
+(`class-<task_class>`, written by refinement work from those results). Plan, execute and verify
+stages of work that follows a playbook get it in their context, the execute stage records the
+version it ran under (`tasks.playbook_version`), and the rubric judge scores each result against the
+playbook's rubric and its gold standard, storing one `judgments` row per criterion.
+
+**Refinement** (`execution.service.Kernel._playbook_refinements`, on the heartbeat). For each playbook
+in use, the evidence since its last refinement: runs, verifier failures and their notes, results the
+judge passed that a verifier failed (the rubric misses what matters), and each criterion's mean
+probability. Refinement is due on a verifier failure, a disagreement, a criterion averaging below
+`pass_p` over `min_judged` results, or `refine_after` runs. It opens `Refine playbook: <name>` work
+carrying that evidence; its plan writes `skill:<name>/SKILL.md` and `rubric.md` (so it is at least G2
+and goes to its approver), its executor returns the new files, and when a verifier passes them the
+kernel writes them, bumps the version and re-exports skills. The next runs are judged against the new
+version, so `holon playbook show` tells whether the refinement helped. Both the protocol and the
+rubric evolve: what "good" means sharpens as the terrain is understood.
+
+**Objectives** (`holon objective add --key-result …`). An objective's planner is told to decompose
+it into one-off work and routines: a child with a `cron` is a routine (`lane`, `command` for a
+script, `rubric`). On approval the kernel creates the routines (`Kernel._routines_from_items`): the
+decomposition's decider also approves each one whose grade is theirs; a job the classifier judges
+deterministic becomes work to write its script. Everything the objective spawns carries its
+`objective_id`, and the objective stays open (`waiting`). When its pool finishes a cycle (nothing of
+its own in flight and something finished), or every `review_every_days` while anything moves, the
+heartbeat opens a review: a retro on the objective whose context is its dashboard (`holon objective
+show`: key results, work, routines with their playbook versions and criterion means, latest
+results). Its actions become new work under the objective, or routine proposals; `objective_met`
+closes it. The pool therefore improves at two levels: each job's playbook, and the set of jobs.
+
+## 13. Smoke checks: is the infrastructure there
+
+A smoke check is a command that proves something a department depends on works: a script imports, a
+database answers, a model endpoint responds. Checks are declared once:
+
+```toml
+[[smoke.checks]]                         # everyone depends on it
+name = "model gateway"
+cmd = "curl -sf http://127.0.0.1:20129/v1/models -o /dev/null"
+critical = true
+reason = "every agent's model goes through it"
+
+[smoke.dept.tools]                       # or kept with the department's code
+file = "~/ventures/tools/smoke.toml"     # a TOML file of [[checks]]
+```
+
+`holon doctor` runs them when the last results are older than `every_min` (so the heartbeat does
+too, every `doctor_every_min`), as the agent user under isolation, in the department's first scope
+root. A failed critical check is a doctor error (an incident) and **blocks that department's
+agents** (`Kernel.smoke_blocked`: their stages wait on the board) until it passes; a failed check for
+everyone blocks every department except the incident department, which must be able to fix it. A
+non-critical failure is a warning. `holon smoke` runs them now.
+
+`holon lint` checks what the instance will run (`ref.command`, `ref.path`): every executable named
+in `[checks]`, smoke checks, script routines and installed drivers must exist on the machine, and
+absolute paths they name should; a department with its own reach or scripts but no smoke checks is
+reported (`ref.smoke`).
 

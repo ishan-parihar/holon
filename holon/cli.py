@@ -592,6 +592,74 @@ def cmd_routine_list(args, k):
                              for r in rs) or "no routines")
 
 
+@command("smoke", "chair", "run the smoke checks: the infrastructure each department runs on ([smoke]); a "
+         "critical failure blocks that department's agents", arg("--dept"), arg("--cached", action="store_true",
+                                                                               help="the last results, if fresh"))
+def cmd_smoke(args, k):
+    rs = k.smoke_results() if args.cached else k.run_smoke(args.dept)
+    bad = [r for r in rs if not r["ok"]]
+    _out(args, rs, "\n".join(f"{'ok  ' if r['ok'] else ('FAIL' if r['critical'] else 'warn')} {r['dept'] or 'org':<12} "
+                             f"{r['name']} ({r['seconds']}s)" + ("" if r["ok"] else f"\n     {r['tail'][-300:]}")
+                             for r in rs) or "no smoke checks ([smoke] in holon.toml)")
+    return 1 if any(r["critical"] for r in bad) else 0
+
+
+@command("objective add", "chair", "an objective: decomposed into work and routines, reviewed against its key results "
+         "until they are met", arg("title"), arg("--intent", required=True, help="text, '-' for stdin, or @file"),
+         arg("--dept", required=True), arg("--key-result", action="append", default=[], dest="key_results",
+                                           help="a measurable result that says the objective is met (repeat)"),
+         arg("--project"), arg("--workdir"))
+def cmd_objective_add(args, k):
+    o = k.add_objective(args.title, _text_arg(args.intent), dept=args.dept, key_results=args.key_results,
+                        project_ref=args.project,
+                        workdir=str(Path(args.workdir).expanduser().resolve()) if args.workdir else None)
+    _out(args, o, _line(o) + f"\n  first stage: {k.work.stages(o['id'])[0]['stage']}")
+
+
+@command("objective show", "any", "an objective's dashboard: key results, its work, its routines and their playbooks",
+         arg("objective_id"), mutates=False)
+def cmd_objective_show(args, k):
+    text = k.objective_dashboard(args.objective_id)
+    _out(args, {"objective": args.objective_id, "dashboard": text}, text)
+
+
+@command("playbook list", "any", "playbooks: each routine's and task class's protocol and rubric, with its version",
+         arg("--dept"), mutates=False)
+def cmd_playbook_list(args, k):
+    from holon.capabilities import playbooks
+    rows = []
+    for d in k.org.depts():
+        if args.dept and d["slug"] != args.dept:
+            continue
+        for name in k.skills.names(d["slug"]):
+            pb = playbooks.read(k.skills, d["slug"], name)
+            if pb and pb["layer"].startswith("dept:"):
+                ev = k.playbook_evidence(name, d["id"], pb["version"])
+                rows.append({"dept": d["slug"], "name": name, "version": pb["version"], "criteria": len(pb["rubric"]),
+                             "runs_on_version": ev["runs"]})
+    _out(args, rows, "\n".join(f"{r['dept']:<12} {r['name']:<40} v{r['version']}  {r['criteria']} criteria, "
+                               f"{r['runs_on_version']} runs on this version" for r in rows) or "no playbooks")
+
+
+@command("playbook show", "any", "a playbook: its protocol, rubric, and the evidence its next refinement will read",
+         arg("name"), arg("--dept", required=True), mutates=False)
+def cmd_playbook_show(args, k):
+    from holon.capabilities import playbooks
+    pb = playbooks.read(k.skills, args.dept, args.name)
+    if not pb:
+        raise LookupError(f"no playbook {args.name} in {args.dept}")
+    ev = k.playbook_evidence(args.name, k.org.dept(args.dept)["id"], pb["version"])
+    history = [e for e in k.work.events(f"@{args.dept}/{args.name}", limit=20)]
+    text = (f"{args.name} v{pb['version']} ({pb['layer']})\n\n{pb['protocol']}\n\nRubric:\n"
+            + "\n".join(f"- {c}" for c in pb["rubric"])
+            + f"\n\nOn v{pb['version']}: {ev['runs']} runs, {ev['done']} done, {ev['failed']} failed, "
+            f"{len(ev['verify_fails'])} verifier failures, {len(ev['disagreements'])} judge/verifier disagreements\n"
+            + "".join(f"  {x['criterion'][:80]}: mean p={x['mean']:.2f} over {x['n']}\n" for x in ev["criteria"])
+            + "\nHistory:\n" + "".join(f"  {e['ts'][:16]} {e['from_status'] or ''}->{e['to_status']} {e['note'] or ''}\n"
+                                       for e in history))
+    _out(args, {**pb, "evidence": ev, "history": history}, text)
+
+
 @command("classify", "employee", "ask the decision model which lane a job needs (script, fast, full)",
          arg("title"), arg("--intent", required=True, help="text, '-' for stdin, or @file"), arg("--command"),
          mutates=False)

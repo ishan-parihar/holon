@@ -35,7 +35,7 @@ DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) wh
 DOC_FILES = ("README.md", "AGENTS.md")
 SUBSTITUTED = {"run_id", "task_id", "work_id", "stage", "context_md", "result_path", "workdir", "holon"}
 SKILL_SECTIONS = {"protocol": ("## Protocol", "## Always"), "role": ("## Principles",),
-                  "operation": ("## Protocol",)}
+                  "operation": ("## Protocol",), "playbook": ("## Objective", "## Protocol")}
 SKILL_WORDS = (120, 700)
 DOC_WORDS_MIN = 150
 SIMILAR_WARN, SIMILAR_ERROR = 0.6, 0.85
@@ -231,6 +231,7 @@ def pack_ref(k, f: Findings) -> None:
             if not (doc.parent / target).exists():
                 f.add("error", "ref.link", _rel(doc), f"link to missing {target}")
     _guards(f)
+    _refs(k, f)
     contract_doc = DIST / "docs" / "CONTRACT.md"
     if contract_doc.exists():
         from holon.execution import drivers
@@ -241,6 +242,78 @@ def pack_ref(k, f: Findings) -> None:
             f.add("error", "ref.env", "docs/CONTRACT.md", f"the driver sets {var} but the contract does not document it")
         for var in sorted(documented - expected - {"HOLON_KEY", "HOLON_CHAIR_KEY", "HOLON_CHAIR_KEY_FILE"}):
             f.add("error", "ref.env", "docs/CONTRACT.md", f"documents {var}, which nothing sets or reads")
+
+
+SHELL_WORDS = {"cd", "test", "[", "echo", "true", "false", "export", "exit", "set", "if", "then", "else", "fi",
+               "for", "do", "done", "while", "!", "{", "}", "(", ")", "printf", "read", "source", ".", "eval", "exec",
+               "command", "time", "env"}
+
+
+def command_refs(cmd: str) -> tuple[list[str], list[str]]:
+    """(executables, absolute paths) a shell command names: the first word of each simple command (after
+    VAR=value assignments), and every /… or ~/… word that is not a redirect target or an option."""
+    import shlex
+    try:
+        lex = shlex.shlex(cmd, posix=True, punctuation_chars=True)
+        lex.whitespace_split = True
+        words = list(lex)
+    except ValueError:
+        return [], []
+    exes, paths, start, redirect = [], [], True, False
+    for w in words:
+        if w and set(w) <= set("&|;()<>"):
+            start, redirect = w in ("&&", "||", ";", "|", "(", ")"), w in (">", ">>", "<", "&>", "2>")
+            continue
+        if start and "=" in w and not w.startswith(("/", "~")):
+            continue
+        if start:
+            if w not in SHELL_WORDS:
+                exes.append(w)
+            start = False
+        elif w.startswith(("/", "~/")) and not redirect and "$" not in w and "*" not in w:
+            paths.append(w)
+        redirect = False
+    return exes, paths
+
+
+def _commands(k) -> list[tuple[str, str]]:
+    """Every command the instance will run, with where it is declared."""
+    from holon.execution import drivers
+    c = k.config
+    out = [("[checks]", x) for x in (c.get("checks") or {}).get("commands", [])]
+    for kind in ("dept", "class"):
+        for name, sub in ((c.get("checks") or {}).get(kind) or {}).items():
+            out += [(f"[checks.{kind}.{name}]", x) for x in sub.get("commands", [])]
+    out += [(f"smoke {s['dept'] or 'org'}: {s['name']}", s["cmd"]) for s in k.smoke_checks()]
+    for r in k.routines():
+        if r["command"]:
+            out.append((f"routine {r['title']}", r["command"]))
+    for d in drivers.available(k.home).values():
+        if not d.source.startswith("builtin:"):
+            out.append((f"driver {d.name}", d.command.split("{")[0]))
+    return out
+
+
+def _refs(k, f: Findings) -> None:
+    """Commands that name an executable or a path that does not exist fail when they run, often at 3am on a
+    schedule; the legacy organism's linter caught these, so this one does too."""
+    import shutil
+    for where, cmd in _commands(k):
+        exes, paths = command_refs(cmd)
+        for e in exes:
+            found = Path(e).expanduser().exists() if "/" in e else shutil.which(e)
+            if not found:
+                f.add("error", "ref.command", where, f"`{e}` is not an executable on this machine ({cmd[:120]})")
+        for p in paths:
+            if not Path(p).expanduser().exists():
+                f.add("warning", "ref.path", where, f"{p} does not exist ({cmd[:120]})")
+    smoked = {s["dept"] for s in k.smoke_checks()}
+    scoped = set((k.config.get("scope", {}).get("dept") or {})) | set(((k.config.get("checks") or {}).get("dept") or {}))
+    scripted = {k._dept_slug(k.work.get(k.work.get(r["plan"])["parent_id"])["dept_id"]) for r in k.routines()
+                if r["command"]}
+    for slug in sorted((scoped | scripted) - smoked - {None}):
+        f.add("warning", "ref.smoke", f"dept:{slug}", "runs scripts or has its own reach but declares no smoke checks "
+              "([[smoke.dept.<slug>.checks]]): nothing verifies its infrastructure before its agents run")
 
 
 def _guards(f: Findings) -> None:
