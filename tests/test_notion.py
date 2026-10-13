@@ -5,6 +5,7 @@ import hmac
 import importlib.util
 import json
 import queue
+import re
 import sys
 from pathlib import Path
 
@@ -16,6 +17,42 @@ spec = importlib.util.spec_from_file_location(
 hn = importlib.util.module_from_spec(spec)
 sys.modules["holon_notion"] = hn  # dataclasses look their module up
 spec.loader.exec_module(hn)
+
+
+class Schema(KernelCase):
+    """The mirror's schema against SQLite's: complete, typed, every edge readable from both ends."""
+
+    def columns(self, entity):
+        table = hn.TABLES[entity]
+        sql = self.k.wconn.execute("SELECT sql FROM sqlite_master WHERE name=?", (table,)).fetchone()[0]
+        cols = {r[1]: r for r in self.k.wconn.execute(f"PRAGMA table_info({table})")}
+        enumerated = set(re.findall(r"\b(\w+)\s+(?:IN\s*\(|BETWEEN\b)", sql)) & set(cols)
+        refs = {c for c in cols if re.search(rf"\b{c}\s+TEXT[^,]*REFERENCES", sql)} | ({"head_id", "approver"} & set(cols))
+        return set(cols), enumerated, refs
+
+    def test_every_column_is_mirrored_or_accounted_for(self):
+        for e in hn.ENTITIES:
+            cols, _, _ = self.columns(e.key)
+            mirrored = {p.column for p in e.props if p.column} | {r.column for r in e.rels if r.column}
+            skipped = set(hn.UNMIRRORED.get(e.key, {}))
+            self.assertEqual(mirrored - cols, set(), f"{e.key}: mirrors columns that do not exist")
+            self.assertEqual(skipped - cols, set(), f"{e.key}: UNMIRRORED names columns that do not exist")
+            self.assertEqual(mirrored & skipped, set(), f"{e.key}: both mirrored and listed as unmirrored")
+            self.assertEqual(cols - mirrored - skipped, set(), f"{e.key}: columns neither mirrored nor accounted for")
+
+    def test_enumerations_are_selects_and_references_are_dual_relations(self):
+        open_sets = {"outcome", "kind", "roles", "task_class", "task_classes", "driver", "profile"}  # vocab/instance
+        for e in hn.ENTITIES:
+            _, enumerated, refs = self.columns(e.key)
+            for p in e.props:
+                if p.column in enumerated | open_sets:
+                    self.assertIn(p.kind, ("select", "multi_select", "checkbox"), f"{e.key}.{p.name} is a text slug")
+                self.assertNotIn(p.column, refs - {"decided_by"}, f"{e.key}.{p.name}: a reference must be a relation")
+            self.assertEqual(refs - {r.column for r in e.rels} - set(hn.UNMIRRORED.get(e.key, {})), set(),
+                             f"{e.key}: a reference column is neither a relation nor accounted for")
+            for r in e.rels:
+                self.assertEqual(hn.rel_schema(r, {x.key: x.key for x in hn.ENTITIES})["relation"]["type"],
+                                 "dual_property")
 
 
 class NotionMirror(KernelCase):
@@ -64,6 +101,12 @@ class NotionMirror(KernelCase):
         run = self.k.wconn.execute("SELECT * FROM runs").fetchone()
         self.assertEqual(self.rel(run["id"], "Stage", "runs"), [self.sync._page_of("work", plan["id"])])
         self.assertEqual(self.sync.push(), {"created": 0, "updated": 0})
+        self.assertEqual(self.sync.verify(), [], "every value and both ends of every relation match SQLite")
+        children = self.fake.pages[self.sync._page_of("work", w["id"])]["properties"]["Children"]["relation"]
+        children.pop()  # an edge lost on one side, with no event to say so
+        self.assertTrue(any("lacks it in Children" in p for p in self.sync.heal()))
+        self.sync.push()
+        self.assertEqual(self.sync.verify(), [], "heal re-pushed the forward side and Notion restored the reverse")
 
     def test_the_chair_approves_in_notion_and_the_organization_moves(self):
         w = self.add(dept="eng")
@@ -138,6 +181,70 @@ class NotionMirror(KernelCase):
         self.assertEqual(self.sync.reconcile()["orphans"], 1)
         self.assertEqual(live_ids(), sorted(set(ids)))
         self.assertEqual(self.sync.check(), [])
+
+    def test_webhook_events_drive_every_inbound_path(self):
+        inbox = queue.Queue()
+        self.sync.webhook(b'{"verification_token": "secret_x"}', {}, inbox)
+
+        def deliver(event):
+            raw = json.dumps({"authors": [{"id": CHAIR, "type": "person"}], **event}).encode()
+            sig = "sha256=" + hmac.new(b"secret_x", raw, hashlib.sha256).hexdigest()
+            self.assertEqual(self.sync.webhook(raw, {"X-Notion-Signature": sig}, inbox), (200, "queued"))
+            return self.sync.handle_event(inbox.get_nowait())
+
+        w = self.add(dept="eng")
+        approval = self.plan(w)
+        self.sync.push()
+        pid = self.sync._page_of("work", approval["id"])
+        self.fake.human_edit(pid, {"Chair decision": {"select": {"name": "approve"}}})
+        self.assertEqual(deliver({"type": "page.properties_updated", "entity": {"id": pid, "type": "page"}}),
+                         "chair approve")
+        gone = self.sync._page_of("work", w["id"])
+        self.fake.delete_forever(gone)
+        self.assertIn("recreated", deliver({"type": "page.deleted", "entity": {"id": gone, "type": "page"}}))
+        self.sync.push()
+        self.assertNotEqual(self.sync._page_of("work", w["id"]), gone)
+        self.assertEqual(self.prop(w["id"], "Holon ID"), w["id"])
+        ex = self.k.work.latest(w["id"], "execute")
+        self.assertEqual(ex["status"], "ready")
+        plan = self.k.work.latest(w["id"], "plan")  # pushed before the delete
+        self.assertEqual(self.rel(plan["id"], "Parent"), [self.sync._page_of("work", w["id"])],
+                         "pages that pointed at the deleted one point at its replacement")
+        self.fake.drop_property(self.ds["work"], "Grade")
+        self.assertIn("repaired", deliver({"type": "data_source.schema_updated",
+                                           "entity": {"id": self.ds["work"], "type": "data_source"}}))
+        self.assertEqual(self.sync.check(), [])
+
+    def test_an_older_schema_is_upgraded_in_place(self):
+        w = self.add(dept="eng", task_class="greeting")
+        self.plan(w)
+        self.sync.push()
+        work, depts = self.fake.ds[self.ds["work"]]["properties"], self.fake.ds[self.ds["departments"]]["properties"]
+        work["Outcome"] = {"id": "Outc", "name": "Outcome", "type": "rich_text", "rich_text": {}}  # a text slug
+        work["Kind"] = {"id": "Kind", "name": "Kind", "type": "select", "select": {"options": []}}  # retired
+        depts["Parent department"]["relation"] = {"data_source_id": self.ds["departments"],
+                                                  "type": "single_property", "single_property": {}}  # one-way
+        depts.pop("Sub-departments", None)
+        problems = self.sync.check()
+        for needle in ("'Outcome' is rich_text", "'Kind' is retired", "'Parent department' is not the dual"):
+            self.assertTrue(any(needle in p for p in problems), (needle, problems))
+        self.sync.check(repair=True)
+        self.assertEqual(self.sync.check(), [])
+        self.assertNotIn("Kind", work)
+        self.sync.push()
+        plan = self.k.work.latest(w["id"], "plan")
+        self.assertEqual(self.prop(plan["id"], "Outcome"), "plan", "values come back as selects")
+
+    def test_chair_created_work_carries_its_selects(self):
+        self.sync.push()
+        eng = self.sync._page_of("departments", self.k.org.dept("eng")["id"])
+        self.fake.human_create(self.ds["work"], {
+            "Title": {"title": [{"text": {"content": "Tidy logs"}}]},
+            "Department": {"relation": [{"id": eng}]}, "Priority": {"select": {"name": "P1"}},
+            "Risk": {"select": {"name": "low"}}, "Due": {"date": {"start": "2026-11-01"}}})
+        self.sync.reconcile()
+        w = self.k.wconn.execute("SELECT * FROM tasks WHERE title='Tidy logs'").fetchone()
+        self.assertEqual((w["priority"], w["risk"], w["due"]), (1, "low", "2026-11-01"))
 
     def test_schema_drift_is_found_and_repaired(self):
         self.fake.drop_property(self.ds["work"], "Grade")

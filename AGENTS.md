@@ -26,6 +26,7 @@ agents changing the kernel itself: where things are, and the laws every change m
 | `adapters/<harness>/` | everything harness-specific: driver, installer, identity and skills sync |
 | `adapters/systemd/` | the heartbeat timer (`holon tick` every 2 minutes) |
 | `adapters/notion/` | the Chair's dashboard: a live Notion mirror (not a harness); tested against `tests/fake_notion.py` |
+| `install.py` | cold start or upgrade of a machine: instance (SQLite + Chair key), launcher, Notion databases, user units; `tests/test_install.py` |
 | `docs/` | INTENT, GENOME, CONTRACT; `docs/design/` holds dated design records |
 
 ## Laws (enforced by `holon lint`, `holon doctor` and the tests)
@@ -95,3 +96,8 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | Red-team R1 | a harness name leaked into the kernel | `test_no_harness_named_in_kernel` |
 | jcode conformance | a planner spent its whole 3600 s timeout reading Holon's source to derive the grade floor | `test_planners_are_told_the_grade_floor_and_the_approver` |
 | Notion live setup | connection resets aborted push; a retried create whose reply was lost left an untracked twin page | `test_a_lost_reply_is_retried_and_the_orphan_it_leaves_is_trashed` |
+| Notion schema pass | enumerations mirrored as text slugs; ids as text; one-way relations; dead columns | `test_enumerations_are_selects_and_references_are_dual_relations` |
+| Notion schema pass | a kernel column could be added without deciding whether Notion shows it | `test_every_column_is_mirrored_or_accounted_for` |
+| Notion schema pass | a live workspace on the older schema had to be rebuilt by hand | `test_an_older_schema_is_upgraded_in_place` |
+| Notion schema pass | a page deleted for good came back, but its stages still pointed at the old page | `test_webhook_events_drive_every_inbound_path` |
+| Notion schema pass | no single command built a new machine's SQLite and Notion databases | `test_a_new_machine_gets_every_database_and_a_rerun_changes_nothing` |

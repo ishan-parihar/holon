@@ -4,16 +4,22 @@ A live mirror of the organization in Notion: departments, employees, the work ho
 work node and its stages) and runs, with their relations, plus a way back in for the Chair's
 decisions. Holon's SQLite stays the source of truth; Notion is the Chair's dashboard.
 
-| Data source | Rows | Relations (Notion keeps the reverse side) |
-|---|---|---|
-| Holon · Departments | `departments` | Parent department, Head → Employees; ← Employees |
-| Holon · Employees | `employees` | Department ↔ Employees, Reports to |
-| Holon · Work | `tasks` (work nodes and their stages) | Parent ↔ Children, Needs, Department, Assignee; ← Runs |
-| Holon · Runs | `runs` | Stage ↔ Runs, Employee |
+| Data source | Rows | Properties | Relations (each dual: Notion keeps the reverse side) |
+|---|---|---|---|
+| Holon · Departments | `departments` | Name, Holon ID, Slug, Mission, Profile▾, Status▾, Created | Parent department ↔ Sub-departments; Head ↔ Head of; ← Employees, Work |
+| Holon · Employees | `employees` | Name, Holon ID, Title, Roles▾▾, Task classes▾▾, Status▾, Driver▾, Job description, Hired | Department ↔ Employees; Reports to ↔ Direct reports; ← Head of, Assigned work, Approvals, Runs |
+| Holon · Work | `tasks` (work nodes and their stages) | Title, Holon ID, Stage▾, Status▾, Outcome▾, Grade▾, Grade reasons, Priority▾, Risk▾, Source▾, Task class▾, Chair☑, Intent, Acceptance, Blocked reason, Decision note, Result, Workdir, Due, Created, Updated; Chair inputs: Chair decision▾, Chair note, Chair answer | Parent ↔ Children; Needs ↔ Needed by; Department ↔ Work; Assignee ↔ Assigned work; Approver ↔ Approvals; ← Runs |
+| Holon · Runs | `runs` | Run, Holon ID, Stage kind▾, Status▾, Driver▾, Exit code, Tokens in/out, Cost, Started, Ended | Stage ↔ Runs; Employee ↔ Runs |
 
-Select options (stages, statuses, roles, risks, grades, sources) are generated from
-`holon/core/vocab.py`, so a vocabulary change shows up as schema drift (`check`) and is fixed by
-`check --repair`.
+▾ select, ▾▾ multi-select, ☑ checkbox (Chair: the decision is the Chair's — filter on it for your
+queue). The rules, enforced by `tests/test_notion.py`:
+
+- a column SQLite constrains to a set of values is a select, built from `holon/core/vocab.py`
+  (profiles, drivers and task classes come from the instance, and Notion adds a new one on write);
+- an id that points at another row is a relation, and every relation is dual;
+- every column of the four tables is mirrored or listed in `UNMIRRORED` with where its
+  information lives instead (e.g. `key_hash` never leaves the kernel; `depth` is the Parent chain).
+  A new kernel column fails the test until someone decides which.
 
 ## What flows back
 
@@ -22,7 +28,7 @@ Only the Chair's Notion account(s) (`chair_users` in `notion.json`) can act, in 
 - **Chair decision** = approve / reject (and an optional **Chair note**) on an `approve` stage;
 - **Chair answer** on work whose status is `needs_input`;
 - a new page in *Holon · Work* without a Holon ID becomes new work (Title, Intent, Acceptance,
-  Department).
+  Department, Priority, Risk, Task class, Due).
 
 Anything else edited in Notion, by anyone, is overwritten by the next push, and a trashed page is
 restored. That is what keeps the two from drifting: Notion never holds a fact Holon does not.
@@ -36,9 +42,18 @@ restored. That is what keeps the two from drifting: Notion never holds a fact Ho
 - **Reconcile** (every 5 min): Notion delivers webhooks at most once and aggregates them, so a
   periodic pass handles edits made since the last pass, restores trashed pages and re-creates
   deleted ones.
-- **Schema**: `check` diffs every data source against `holon_notion.py`; `check --repair` fixes it.
+- **Schema**: `check` diffs every data source against `holon_notion.py`; `check --repair` upgrades
+  it in place (adds, recreates a property whose type changed, removes retired ones, then re-pushes
+  the values). A schema webhook (someone edited a database's properties) triggers the repair.
+- **Verify**: `verify` compares every live page, value and relation, both ends, with SQLite.
+  `serve` runs it hourly and re-pushes everything when it finds drift (self-healing).
+- **Deleted for good**: the page is recreated on the next push, and every row is re-pushed so the
+  relations that named the old page name the new one.
 
 ## Set up
+
+On a new machine, `python3 install.py --notion-parent-page <page id> --notion-token-file <file>`
+(repository root) does steps 3 and 6 below along with the SQLite instance. By hand:
 
 1. In Notion, create an internal connection (Settings → Connections → Develop or manage
    integrations) with *Read content*, *Update content*, *Insert content* and *Read user

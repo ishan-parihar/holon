@@ -113,7 +113,7 @@ class Work:
         if node["status"] in TERMINAL and to != node["status"]:
             raise TransitionError(f"{node_id} is already {node['status']}")
         sets = "".join(f", {k}=?" for k in cols)
-        self.conn.execute(f"UPDATE tasks SET status=?, updated_at=?, sync_dirty=1{sets} WHERE id=?",
+        self.conn.execute(f"UPDATE tasks SET status=?, updated_at=?{sets} WHERE id=?",
                           (to, now(), *cols.values(), node_id))
         self._event("task", node_id, node["status"], to, note, actor)
         node.update(status=to, **cols)

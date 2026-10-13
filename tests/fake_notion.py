@@ -1,8 +1,9 @@
 """An in-memory Notion API (2025-09-03 data sources) for the Notion adapter's tests.
 
 Strict where drift would hide: page writes must name properties the data source has, with the
-right type, and relations must point at pages of the relation's data source. Dual relations keep
-their synced property up to date, as Notion does.
+right type, and relations must point at pages of the relation's data source. As Notion does, dual
+relations keep their synced property up to date (and go with it when deleted), and a page write
+that names a new select option adds it.
 """
 
 import itertools
@@ -24,6 +25,8 @@ def _read(kind, v):
     if kind in ("title", "rich_text"):
         return [{"type": "text", "text": {"content": x["text"]["content"]}, "plain_text": x["text"]["content"]}
                 for x in v]
+    if kind == "date" and v and "T" in v["start"]:  # Notion keeps a date-time to the minute
+        return {**v, "start": v["start"][:16] + ":00.000+00:00"}
     return v
 
 
@@ -54,6 +57,10 @@ class FakeNotion:
         with self.lock:
             self.pages[page_id]["in_trash"] = True
 
+    def delete_forever(self, page_id):
+        with self.lock:
+            del self.pages[page_id]
+
     def drop_property(self, ds, name):
         with self.lock:
             del self.ds[ds]["properties"][name]
@@ -72,8 +79,11 @@ class FakeNotion:
 
     def _set_props(self, ds_id, props):
         for name, spec in props.items():
-            if spec is None:
-                self.ds[ds_id]["properties"].pop(name, None)
+            if spec is None:  # deleting one side of a dual relation deletes the other, as Notion does
+                gone = self.ds[ds_id]["properties"].pop(name, None)
+                rel = (gone or {}).get("relation") or {}
+                if rel.get("type") == "dual_property":
+                    self.ds[rel["data_source_id"]]["properties"].pop(rel["dual_property"]["synced_property_name"], None)
                 continue
             prop, dual = self._schema_prop(name, spec)
             self.ds[ds_id]["properties"][name] = prop
@@ -94,6 +104,11 @@ class FakeNotion:
             if set(value) != {kind}:
                 raise ValueError(f"{name} is a {kind} property, got {list(value)}")
             v = value[kind]
+            if kind in ("select", "multi_select"):  # Notion adds an option a page write names
+                opts = schema[name][kind].setdefault("options", [])
+                for o in ([v] if kind == "select" else v):
+                    if o and o["name"] not in {x["name"] for x in opts}:
+                        opts.append({"name": o["name"]})
             if kind == "relation":
                 target = schema[name]["relation"]["data_source_id"]
                 for ref in v:
@@ -103,6 +118,8 @@ class FakeNotion:
                 if rel.get("type") == "dual_property":
                     synced = rel["dual_property"]["synced_property_name"]
                     for other in self.pages.values():  # drop old back-references, add the new ones
+                        if other["parent"]["data_source_id"] != target:
+                            continue
                         refs = other["properties"].get(synced, {}).get("relation")
                         if refs is not None:
                             other["properties"][synced]["relation"] = [r for r in refs if r["id"] != page["id"]]

@@ -2,20 +2,24 @@
 """Holon ⇄ Notion: the organization mirrored live in Notion, with the Chair's decisions flowing back.
 
     python3 adapters/notion/holon_notion.py setup --holon-home ~/holon --parent-page <page id> [--chair-user <id>]
-    python3 adapters/notion/holon_notion.py push | reconcile | check [--repair] | status
+    python3 adapters/notion/holon_notion.py push | reconcile | check [--repair] | verify | status
     python3 adapters/notion/holon_notion.py serve --port 8787      # webhook receiver + push/reconcile loop
 
 Holon's SQLite is the source of truth; Notion is a projection with exactly four ways back in, all
 taken only from the Chair's Notion account(s) (`chair_users`):
   - on an approve stage: set **Chair decision** to approve or reject (optional **Chair note**);
   - on work that needs input: write **Chair answer**;
-  - in the Work database: a new page without a Holon ID becomes new work (Title, Intent, Department);
+  - in the Work database: a new page without a Holon ID becomes new work (Title, Intent, Acceptance,
+    Department, Priority, Risk, Task class, Due);
   - nothing else: any other edit is overwritten on the next push, and a trashed page is restored.
 
-Schema: four data sources (Departments, Employees, Work, Runs) whose properties are generated from
-the kernel's vocabulary, and whose relations mirror the holarchy (Parent ↔ Children, Needs,
-Department ↔ Employees, Assignee, Head, Reports to, Run → Stage/Employee). `check` diffs the live
-schema against this module and `--repair` restores it.
+Schema: four data sources (Departments, Employees, Work, Runs). Enumerated values are selects built
+from the kernel's vocabulary (or the instance's profiles, drivers and task classes); every reference
+is a dual relation, so each edge of the holarchy reads from both ends (Parent ↔ Children, Needs ↔
+Needed by, Department ↔ Employees/Work, Parent department ↔ Sub-departments, Head ↔ Head of,
+Reports to ↔ Direct reports, Assignee ↔ Assigned work, Approver ↔ Approvals, Run ↔ Stage/Employee).
+Every column of the four tables is mirrored or listed in UNMIRRORED with where its information
+lives. `check` diffs the live schema against this module and `--repair` upgrades it in place.
 
 Sync: every push hashes each row's mapped values (properties and relation targets) and writes only
 rows whose hash changed: pages first, then relations, so a relation never points at a page that
@@ -40,6 +44,7 @@ import sqlite3
 import sys
 import threading
 import time
+from datetime import datetime
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -86,6 +91,7 @@ class Notion:
                     return json.loads(resp.read() or b"{}")
             except urllib.error.HTTPError as e:
                 text = e.read().decode(errors="replace")
+                e.close()
                 if e.code in (429, 500, 502, 503, 504, 529) and attempt < 5:
                     time.sleep(float(e.headers.get("Retry-After") or 2 ** attempt))
                     continue
@@ -163,13 +169,40 @@ def plain(prop: dict | None) -> str:
     return "" if v is None else str(v)
 
 
+def comparable(prop: dict | None) -> Any:
+    """A property value (as written or as read back) reduced to what must match: text, option names,
+    numbers, instants, booleans, relation targets."""
+    if not prop:
+        return None
+    kind = next(k for k in prop if k not in ("id", "type", "has_more")) if "type" not in prop else prop["type"]
+    v = prop.get(kind)
+    if kind in ("title", "rich_text"):
+        return "".join(x.get("plain_text") or x.get("text", {}).get("content", "") for x in v or []) or None
+    if kind == "select":
+        return (v or {}).get("name")
+    if kind == "multi_select":
+        return sorted(o["name"] for o in v or [])
+    if kind == "date":
+        start = (v or {}).get("start")
+        # Notion keeps a date-time to the minute
+        return int(datetime.fromisoformat(start.replace("Z", "+00:00")).timestamp()) // 60 if start else None
+    if kind == "relation":
+        return sorted(r["id"] for r in v or [])
+    return v
+
+
 # ── the schema: one place, generated from the kernel's vocabulary ────────────
+# Rules (guarded by tests/test_notion.py): a column SQLite constrains to a set of values is a select;
+# an id that points at another row is a relation, and every relation is dual, so each edge of the
+# holarchy reads from both ends; nothing is mirrored that another property or relation already says.
 @dataclass
 class Prop:
     name: str
-    kind: str                      # title | rich_text | select | multi_select | number | date
+    kind: str                      # title | rich_text | select | multi_select | number | date | checkbox
     get: Callable[[dict], Any]
     options: tuple = ()
+    column: str | None = None      # the SQLite column it mirrors, when one does (for the guard tests)
+    dynamic: Callable[[Any], Any] | None = None  # options the instance defines (profiles, drivers, classes)
 
 
 @dataclass
@@ -177,7 +210,8 @@ class Rel:
     name: str
     target: str                    # entity key
     get: Callable[[dict], list]    # holon ids
-    synced: str | None = None      # the reverse property Notion maintains (dual relation)
+    synced: str                    # the reverse property Notion maintains on the target
+    column: str | None = None      # the SQLite column it mirrors (None: a join table)
 
 
 @dataclass
@@ -188,95 +222,153 @@ class Entity:
     props: list
     rels: list
     inputs: dict                   # Chair-writable properties: name -> schema
+    retired: tuple = ()            # properties earlier versions created; `check --repair` removes them
 
 
+SCHEMA_EVENT = "schema"  # queued for data_source/database schema webhooks
 GRADES = tuple(f"G{g}" for g in range(5))
+PRIORITIES = tuple(f"P{p}" for p in vocab.PRIORITIES)
 WORK_STATUSES = tuple(dict.fromkeys(vocab.WORK_STATUSES + vocab.STAGE_STATUSES))
+OUTCOMES = tuple(dict.fromkeys(o for outs in vocab.OUTCOMES.values() for o in outs))
 
 
 def _grade(r: dict) -> str | None:
     return f"G{r['grade']}" if r.get("grade") is not None else None
 
 
+def _emp(ref: str | None) -> list:
+    return [ref[4:]] if ref and ref.startswith("emp:") else []
+
+
+def _profiles(k) -> list:
+    from holon.execution import genome
+    return sorted(genome.profile_paths(k.home))
+
+
+def _drivers(k) -> list:
+    from holon.execution import drivers
+    return sorted(drivers.available(k.home))
+
+
+def _classes(k) -> list:
+    configured = [c for cls in (k.config.get("classes") or {}).values() for c in cls]
+    used = [r[0] for r in k.wconn.execute("SELECT DISTINCT task_class FROM tasks WHERE task_class IS NOT NULL")]
+    return sorted(set(configured + used))
+
+
 ENTITIES = [
     Entity("departments", "Holon · Departments", "SELECT * FROM departments ORDER BY created_at", [
-        Prop("Name", "title", lambda r: r["name"]),
-        Prop("Holon ID", "rich_text", lambda r: r["id"]),
-        Prop("Slug", "rich_text", lambda r: r["slug"]),
-        Prop("Mission", "rich_text", lambda r: r["mission"]),
-        Prop("Profile", "rich_text", lambda r: r["profile"]),
-        Prop("Status", "select", lambda r: r["status"], ("active", "closed")),
-        Prop("Created", "date", lambda r: r["created_at"]),
+        Prop("Name", "title", lambda r: r["name"], column="name"),
+        Prop("Holon ID", "rich_text", lambda r: r["id"], column="id"),
+        Prop("Slug", "rich_text", lambda r: r["slug"], column="slug"),
+        Prop("Mission", "rich_text", lambda r: r["mission"], column="mission"),
+        Prop("Profile", "select", lambda r: r["profile"], column="profile", dynamic=_profiles),
+        Prop("Status", "select", lambda r: r["status"], ("active", "closed"), column="status"),
+        Prop("Created", "date", lambda r: r["created_at"], column="created_at"),
     ], [
-        Rel("Parent department", "departments", lambda r: [r["parent_id"]] if r["parent_id"] else []),
-        Rel("Head", "employees", lambda r: [r["head_id"]] if r["head_id"] else []),
+        Rel("Parent department", "departments", lambda r: [r["parent_id"]] if r["parent_id"] else [],
+            synced="Sub-departments", column="parent_id"),
+        Rel("Head", "employees", lambda r: [r["head_id"]] if r["head_id"] else [], synced="Head of", column="head_id"),
     ], {}),
     Entity("employees", "Holon · Employees", "SELECT * FROM employees ORDER BY hired_at", [
-        Prop("Name", "title", lambda r: r["name"]),
-        Prop("Holon ID", "rich_text", lambda r: r["id"]),
-        Prop("Title", "rich_text", lambda r: r["title"]),
-        Prop("Roles", "multi_select", lambda r: json.loads(r["roles"] or "[]"), vocab.ROLES),
-        Prop("Status", "select", lambda r: r["status"], vocab.EMPLOYEE_STATUSES),
-        Prop("Driver", "rich_text", lambda r: r["driver"]),
-        Prop("Job description", "rich_text", lambda r: r["job_description"]),
-        Prop("Hired", "date", lambda r: r["hired_at"]),
+        Prop("Name", "title", lambda r: r["name"], column="name"),
+        Prop("Holon ID", "rich_text", lambda r: r["id"], column="id"),
+        Prop("Title", "rich_text", lambda r: r["title"], column="title"),
+        Prop("Roles", "multi_select", lambda r: json.loads(r["roles"] or "[]"), vocab.ROLES, column="roles"),
+        Prop("Task classes", "multi_select", lambda r: json.loads(r["task_classes"] or "[]"), column="task_classes",
+             dynamic=_classes),
+        Prop("Status", "select", lambda r: r["status"], vocab.EMPLOYEE_STATUSES, column="status"),
+        Prop("Driver", "select", lambda r: r["driver"], column="driver", dynamic=_drivers),
+        Prop("Job description", "rich_text", lambda r: r["job_description"], column="job_description"),
+        Prop("Hired", "date", lambda r: r["hired_at"], column="hired_at"),
     ], [
-        Rel("Department", "departments", lambda r: [r["dept_id"]], synced="Employees"),
-        Rel("Reports to", "employees", lambda r: [r["reports_to"]] if r["reports_to"] else []),
+        Rel("Department", "departments", lambda r: [r["dept_id"]], synced="Employees", column="dept_id"),
+        Rel("Reports to", "employees", lambda r: [r["reports_to"]] if r["reports_to"] else [],
+            synced="Direct reports", column="reports_to"),
     ], {}),
     Entity("work", "Holon · Work", "SELECT * FROM tasks ORDER BY depth, created_at, rowid", [
-        Prop("Title", "title", lambda r: r["title"]),
-        Prop("Holon ID", "rich_text", lambda r: r["id"]),
-        Prop("Kind", "select", lambda r: "stage" if r["stage"] else "work", ("work", "stage")),
-        Prop("Stage", "select", lambda r: r["stage"], vocab.STAGES),
-        Prop("Status", "select", lambda r: r["status"], WORK_STATUSES),
-        Prop("Outcome", "rich_text", lambda r: r["outcome"]),
-        Prop("Grade", "select", _grade, GRADES),
-        Prop("Priority", "number", lambda r: r["priority"]),
-        Prop("Risk", "select", lambda r: r["risk"], vocab.RISKS),
-        Prop("Source", "select", lambda r: r["source"], vocab.SOURCES),
-        Prop("Task class", "rich_text", lambda r: r["task_class"]),
-        Prop("Approver", "rich_text", lambda r: r["approver"]),
-        Prop("Intent", "rich_text", lambda r: r["intent"]),
-        Prop("Acceptance", "rich_text", lambda r: r["acceptance"]),
-        Prop("Blocked reason", "rich_text", lambda r: r["blocked_reason"]),
-        Prop("Decision note", "rich_text", lambda r: r["decision_note"]),
+        Prop("Title", "title", lambda r: r["title"], column="title"),
+        Prop("Holon ID", "rich_text", lambda r: r["id"], column="id"),
+        Prop("Stage", "select", lambda r: r["stage"], vocab.STAGES, column="stage"),
+        Prop("Status", "select", lambda r: r["status"], WORK_STATUSES, column="status"),
+        Prop("Outcome", "select", lambda r: r["outcome"], OUTCOMES, column="outcome"),
+        Prop("Grade", "select", _grade, GRADES, column="grade"),
+        Prop("Grade reasons", "rich_text", lambda r: "\n".join(json.loads(r["grade_reasons"] or "[]")),
+             column="grade_reasons"),
+        Prop("Priority", "select", lambda r: f"P{r['priority']}", PRIORITIES, column="priority"),
+        Prop("Risk", "select", lambda r: r["risk"], vocab.RISKS, column="risk"),
+        Prop("Source", "select", lambda r: r["source"], vocab.SOURCES, column="source"),
+        Prop("Task class", "select", lambda r: r["task_class"], column="task_class", dynamic=_classes),
+        Prop("Chair", "checkbox", lambda r: vocab.CHAIR in (r["approver"], r["decided_by"]), column="decided_by"),
+        Prop("Intent", "rich_text", lambda r: r["intent"], column="intent"),
+        Prop("Acceptance", "rich_text", lambda r: r["acceptance"], column="acceptance"),
+        Prop("Blocked reason", "rich_text", lambda r: r["blocked_reason"], column="blocked_reason"),
+        Prop("Decision note", "rich_text", lambda r: r["decision_note"], column="decision_note"),
         Prop("Result", "rich_text", lambda r: r.get("_summary")),
-        Prop("Workdir", "rich_text", lambda r: r["workdir"]),
-        Prop("Attempt", "number", lambda r: r["attempt"]),
-        Prop("Depth", "number", lambda r: r["depth"]),
-        Prop("Created", "date", lambda r: r["created_at"]),
-        Prop("Updated", "date", lambda r: r["updated_at"]),
+        Prop("Workdir", "rich_text", lambda r: r["workdir"], column="workdir"),
+        Prop("Due", "date", lambda r: r["due"], column="due"),
+        Prop("Created", "date", lambda r: r["created_at"], column="created_at"),
+        Prop("Updated", "date", lambda r: r["updated_at"], column="updated_at"),
     ], [
-        Rel("Parent", "work", lambda r: [r["parent_id"]] if r["parent_id"] else [], synced="Children"),
-        Rel("Needs", "work", lambda r: r.get("_needs") or []),
-        Rel("Department", "departments", lambda r: [r["dept_id"]] if r["dept_id"] else []),
-        Rel("Assignee", "employees", lambda r: [r["assignee"]] if r["assignee"] else []),
+        Rel("Parent", "work", lambda r: [r["parent_id"]] if r["parent_id"] else [],
+            synced="Children", column="parent_id"),
+        Rel("Needs", "work", lambda r: r.get("_needs") or [], synced="Needed by"),
+        Rel("Department", "departments", lambda r: [r["dept_id"]] if r["dept_id"] else [],
+            synced="Work", column="dept_id"),
+        Rel("Assignee", "employees", lambda r: [r["assignee"]] if r["assignee"] else [],
+            synced="Assigned work", column="assignee"),
+        Rel("Approver", "employees", lambda r: _emp(r["approver"]), synced="Approvals", column="approver"),
     ], {"Chair decision": {"select": {"options": [{"name": d} for d in vocab.OUTCOMES["approve"]]}},
-        "Chair note": {"rich_text": {}}, "Chair answer": {"rich_text": {}}}),
+        "Chair note": {"rich_text": {}}, "Chair answer": {"rich_text": {}}},
+        retired=("Kind", "Attempt", "Depth")),
     Entity("runs", "Holon · Runs", "SELECT * FROM runs ORDER BY started_at", [
-        Prop("Run", "title", lambda r: r["id"]),
-        Prop("Holon ID", "rich_text", lambda r: r["id"]),
-        Prop("Stage kind", "select", lambda r: r["kind"], vocab.STAGES),
-        Prop("Status", "select", lambda r: r["status"], vocab.RUN_STATUSES),
-        Prop("Driver", "rich_text", lambda r: r["driver"]),
-        Prop("Exit code", "number", lambda r: r["exit_code"]),
-        Prop("Tokens in", "number", lambda r: r["tokens_in"]),
-        Prop("Tokens out", "number", lambda r: r["tokens_out"]),
-        Prop("Cost", "number", lambda r: r["cost"]),
-        Prop("Started", "date", lambda r: r["started_at"]),
-        Prop("Ended", "date", lambda r: r["ended_at"]),
+        Prop("Run", "title", lambda r: f"{r['kind']} · {r['id'][-8:]}"),
+        Prop("Holon ID", "rich_text", lambda r: r["id"], column="id"),
+        Prop("Stage kind", "select", lambda r: r["kind"], vocab.STAGES, column="kind"),
+        Prop("Status", "select", lambda r: r["status"], vocab.RUN_STATUSES, column="status"),
+        Prop("Driver", "select", lambda r: r["driver"], column="driver", dynamic=_drivers),
+        Prop("Exit code", "number", lambda r: r["exit_code"], column="exit_code"),
+        Prop("Tokens in", "number", lambda r: r["tokens_in"], column="tokens_in"),
+        Prop("Tokens out", "number", lambda r: r["tokens_out"], column="tokens_out"),
+        Prop("Cost", "number", lambda r: r["cost"], column="cost"),
+        Prop("Started", "date", lambda r: r["started_at"], column="started_at"),
+        Prop("Ended", "date", lambda r: r["ended_at"], column="ended_at"),
     ], [
-        Rel("Stage", "work", lambda r: [r["task_id"]], synced="Runs"),
-        Rel("Employee", "employees", lambda r: [r["employee_id"]] if r["employee_id"] else []),
+        Rel("Stage", "work", lambda r: [r["task_id"]], synced="Runs", column="task_id"),
+        Rel("Employee", "employees", lambda r: [r["employee_id"]] if r["employee_id"] else [],
+            synced="Runs", column="employee_id"),
     ], {}),
 ]
 BY_KEY = {e.key: e for e in ENTITIES}
 
+# Columns deliberately not mirrored, and where their information lives instead. With ENTITIES this
+# accounts for every column of the four tables; a new kernel column fails the guard test until it
+# is mirrored or listed here.
+UNMIRRORED = {
+    "departments": {"genome": "the resolved genome; Profile names it"},
+    "employees": {
+        "skills": "resolved from the skill library (holon skill list)",
+        "max_concurrency": "dispatch tuning (holon emp card)",
+        "hired_reason": "HR history (holon emp card)", "retired_at": "HR history", "retired_reason": "HR history",
+        "successor_id": "HR history; the successor inherits the role and memory",
+        "key_hash": "a credential: never leaves the kernel"},
+    "work": {
+        "root_id": "the Parent chain", "depth": "the Parent chain", "requested_by": "Source",
+        "project_ref": "the goals tree is not mirrored", "attempt": "the Runs relation",
+        "max_attempts": "kernel policy", "grade_floor": "Grade reasons", "grade_proposed": "Grade reasons",
+        "decided_at": "Updated", "recurring": "kernel policy (holon plan show)"},
+    "runs": {
+        "attempt": "the Stage's Runs", "lease_until": "kernel liveness", "heartbeat_at": "kernel liveness",
+        "brief_path": "a local path (holon run show)", "log_path": "a local path (holon run show)",
+        "token_hash": "a credential: never leaves the kernel"},
+}
+TABLES = {"departments": "departments", "employees": "employees", "work": "tasks", "runs": "runs"}
 
-def prop_schema(p: Prop) -> dict:
+
+def prop_schema(p: Prop, k=None) -> dict:
     if p.kind in ("select", "multi_select"):
-        return {p.kind: {"options": [{"name": o} for o in p.options]}}
+        names = list(dict.fromkeys([*p.options, *(p.dynamic(k) if p.dynamic and k is not None else [])]))
+        return {p.kind: {"options": [{"name": o} for o in names]}}
     return {p.kind: {}}
 
 
@@ -293,18 +385,18 @@ def prop_value(p: Prop, v: Any) -> dict:
         return {"number": v}
     if p.kind == "date":
         return {"date": _date(v)}
+    if p.kind == "checkbox":
+        return {"checkbox": bool(v)}
     raise ValueError(p.kind)
 
 
 def rel_schema(rel: Rel, ds_ids: dict) -> dict:
-    if rel.synced:
-        return {"relation": {"data_source_id": ds_ids[rel.target], "type": "dual_property",
-                             "dual_property": {"synced_property_name": rel.synced}}}
-    return {"relation": {"data_source_id": ds_ids[rel.target], "type": "single_property", "single_property": {}}}
+    return {"relation": {"data_source_id": ds_ids[rel.target], "type": "dual_property",
+                         "dual_property": {"synced_property_name": rel.synced}}}
 
 
-def expected_schema(e: Entity, ds_ids: dict) -> dict:
-    return {**{p.name: prop_schema(p) for p in e.props}, **e.inputs,
+def expected_schema(e: Entity, ds_ids: dict, k=None) -> dict:
+    return {**{p.name: prop_schema(p, k) for p in e.props}, **e.inputs,
             **{r.name: rel_schema(r, ds_ids) for r in e.rels}}
 
 
@@ -355,12 +447,15 @@ class Sync:
         if self.cfg.get("data_sources"):
             raise SystemExit(f"already set up ({self.cfg_path}); use `check --repair` to fix the schema")
         ds_ids, db_ids = {}, {}
+        k = self.kernel()
+        try:
+            for e in ENTITIES:
+                props = {p.name: prop_schema(p, k) for p in e.props} | e.inputs
+                db_ids[e.key], ds_ids[e.key] = self.notion.create_database(parent_page, e.title, props)
+        finally:
+            k.close()
         for e in ENTITIES:
-            props = {p.name: prop_schema(p) for p in e.props} | e.inputs
-            db_ids[e.key], ds_ids[e.key] = self.notion.create_database(parent_page, e.title, props)
-        for e in ENTITIES:
-            if e.rels:
-                self.notion.update_data_source(ds_ids[e.key], {r.name: rel_schema(r, ds_ids) for r in e.rels})
+            self.notion.update_data_source(ds_ids[e.key], {r.name: rel_schema(r, ds_ids) for r in e.rels})
         self.cfg.update({"parent_page": parent_page, "databases": db_ids, "data_sources": ds_ids,
                          "bot_id": self.notion.me().get("id"), "chair_users": chair_users,
                          "api_base": self.notion.base})
@@ -369,30 +464,51 @@ class Sync:
 
     # schema drift
     def check(self, repair: bool = False) -> list[str]:
+        """Diff the live schema against ENTITIES. `repair` adds what is missing, recreates what has the
+        wrong type (values come back on the next push), and removes properties a newer schema retired."""
         ds_ids, problems = self.cfg["data_sources"], []
+        k = self.kernel()
+        try:
+            wanted = {e.key: expected_schema(e, ds_ids, k) for e in ENTITIES}
+        finally:
+            k.close()
         for e in ENTITIES:
             live = self.notion.data_source(ds_ids[e.key]).get("properties", {})
-            fix = {}
-            for name, want in expected_schema(e, ds_ids).items():
+            add, drop = {}, {}
+            for name, want in wanted[e.key].items():
                 kind = next(iter(want))
                 have = live.get(name)
-                if not have or have.get("type") != kind:
-                    problems.append(f"{e.key}: property {name!r} is {have.get('type') if have else 'missing'}, "
-                                    f"expected {kind}")
-                    fix[name] = want
+                if not have:
+                    problems.append(f"{e.key}: property {name!r} is missing")
+                    add[name] = want
+                elif have.get("type") != kind:
+                    problems.append(f"{e.key}: property {name!r} is {have.get('type')}, expected {kind}")
+                    drop[name], add[name] = None, want
                 elif kind in ("select", "multi_select"):
                     names = {o["name"] for o in have.get(kind, {}).get("options", [])}
                     missing = [o["name"] for o in want[kind]["options"] if o["name"] not in names]
                     if missing:
                         problems.append(f"{e.key}: {name!r} lacks options {missing}")
-                        fix[name] = {kind: {"options": [{"name": n} for n in sorted(names)]
+                        add[name] = {kind: {"options": [{"name": n} for n in sorted(names)]
                                             + [{"name": n} for n in missing]}}
-                elif kind == "relation" and have["relation"].get("data_source_id") != \
-                        want["relation"]["data_source_id"]:
-                    problems.append(f"{e.key}: relation {name!r} points at another data source")
-                    fix[name] = want
-            if repair and fix:
-                self.notion.update_data_source(ds_ids[e.key], fix)
+                elif kind == "relation":
+                    h, w = have["relation"], want["relation"]
+                    if h.get("data_source_id") != w["data_source_id"] or h.get("type") != "dual_property" or \
+                            (h.get("dual_property") or {}).get("synced_property_name") != \
+                            w["dual_property"]["synced_property_name"]:
+                        problems.append(f"{e.key}: relation {name!r} is not the dual relation to "
+                                        f"{w['dual_property']['synced_property_name']!r}")
+                        drop[name], add[name] = None, want
+            for name in e.retired:
+                if name in live:
+                    problems.append(f"{e.key}: property {name!r} is retired")
+                    drop[name] = None
+            if repair and (add or drop):
+                if drop:  # a type cannot always be converted in place: remove, then create
+                    self.notion.update_data_source(ds_ids[e.key], drop)
+                if add:
+                    self.notion.update_data_source(ds_ids[e.key], add)
+                self.db.execute("UPDATE pages SET hash=NULL WHERE entity=?", (e.key,))  # re-push every value
         if repair and problems:
             self.log("repair", "; ".join(problems))
         return problems
@@ -408,6 +524,15 @@ class Sync:
         for r in out["work"]:
             r["_needs"], r["_summary"] = needs.get(r["id"], []), summaries.get(r["id"])
         return out
+
+    def forget_page(self, page_id: str) -> bool:
+        """A page deleted for good: push recreates it, and re-pushes every row, because relations on
+        other pages still name the old page."""
+        if not self.db.execute("DELETE FROM pages WHERE page_id=?", (page_id,)).rowcount:
+            return False
+        self.db.execute("UPDATE pages SET hash=NULL")
+        self.log("forgotten", f"page {page_id} was deleted in Notion; it is recreated on the next push")
+        return True
 
     def _page_of(self, entity: str, hid: str) -> str | None:
         r = self.db.execute("SELECT page_id FROM pages WHERE entity=? AND holon_id=?", (entity, hid)).fetchone()
@@ -524,15 +649,71 @@ class Sync:
             r = self.db.execute("SELECT holon_id FROM pages WHERE entity='departments' AND page_id=?",
                                 (dept_pages[0],)).fetchone()
             dept = r[0] if r else None
+        priority, due = plain(props.get("Priority")), ((props.get("Due") or {}).get("date") or {}).get("start")
         k = self.kernel()
         try:
             w = k.work.add_work(title, plain(props.get("Intent")) or title, dept=dept, source="chair",
-                                acceptance=plain(props.get("Acceptance")) or None)
+                                acceptance=plain(props.get("Acceptance")) or None,
+                                priority=int(priority[1:]) if priority in PRIORITIES else 3,
+                                risk=plain(props.get("Risk")) or "normal",
+                                task_class=plain(props.get("Task class")) or None, due=due)
+        except (ValueError, KeyError) as err:  # e.g. a task class the department does not use
+            self.log("new-work-refused", f"Notion page {page['id']}: {err}")
+            return f"refused: {err}"
         finally:
             k.close()
         self.db.execute("INSERT INTO pages VALUES ('work',?,?,NULL,NULL)", (w["id"], page["id"]))
         self.log("new-work", f"{w['id']} from Notion page {page['id']}")
         return f"new work {w['id']}"
+
+    def verify(self) -> list[str]:
+        """Every live page against SQLite: one page per row, every mirrored value equal, every relation
+        pointing at the right pages, and every dual relation's reverse side agreeing. Read-only."""
+        k = self.kernel()
+        try:
+            data = self.rows(k)
+        finally:
+            k.close()
+        live = {e.key: {p["id"]: p for p in self.notion.query(self.cfg["data_sources"][e.key])} for e in ENTITIES}
+        problems = []
+        for e in ENTITIES:
+            pages = live[e.key]
+            mapped = set()
+            for r in data[e.key]:
+                pid = self._page_of(e.key, r["id"])
+                page = pages.get(pid)
+                if page is None:
+                    problems.append(f"{e.key} {r['id']}: no live page")
+                    continue
+                mapped.add(pid)
+                props = page["properties"]
+                for p in e.props:
+                    want, have = comparable(prop_value(p, p.get(r))), comparable(props.get(p.name))
+                    if want != have:
+                        problems.append(f"{e.key} {r['id']}: {p.name} is {have!r}, SQLite says {want!r}")
+                for rel in e.rels:
+                    want = sorted(self._page_of(rel.target, i) or f"<unmapped {i}>" for i in rel.get(r) if i)
+                    if props.get(rel.name, {}).get("has_more"):
+                        continue  # ponytail: >25 targets need the property-item endpoint; not compared
+                    have = comparable(props.get(rel.name))
+                    if want != have:
+                        problems.append(f"{e.key} {r['id']}: {rel.name} points at {have}, SQLite says {want}")
+                    for target in have or []:  # the reverse side names this page
+                        back = live[rel.target].get(target, {}).get("properties", {}).get(rel.synced, {})
+                        if not back.get("has_more") and pid not in (comparable(back) or []):
+                            problems.append(f"{e.key} {r['id']}: {rel.target} page {target} lacks it in {rel.synced}")
+            for pid in set(pages) - mapped:
+                problems.append(f"{e.key}: live page {pid} has no Holon row")
+        return problems
+
+    def heal(self) -> list[str]:
+        """verify(), and if anything drifted, re-push every row (the next push rewrites it)."""
+        with self.lock:
+            problems = self.verify()
+            if problems:
+                self.db.execute("UPDATE pages SET hash=NULL")
+                self.log("heal", f"{len(problems)} drifted: " + "; ".join(problems[:20]))
+            return problems
 
     def reconcile(self) -> dict:
         """Catch what webhooks missed: human edits since the last pass, trashed and unknown pages."""
@@ -561,7 +742,7 @@ class Sync:
                         except NotionError as err:
                             if err.status != 404:
                                 raise
-                            self.db.execute("DELETE FROM pages WHERE page_id=?", (r[0],))  # recreated on push
+                            self.forget_page(r[0])
                         self.db.execute("UPDATE pages SET hash=NULL WHERE page_id=?", (r[0],))
                         out["restored"] += 1
             self.cfg["reconciled_at"] = started
@@ -595,9 +776,30 @@ class Sync:
         entity = body.get("entity") or {}
         if entity.get("type") == "page":
             inbox.put(entity["id"])
+        elif entity.get("type") in ("data_source", "database") and "schema" in body.get("type", ""):
+            inbox.put(SCHEMA_EVENT)
+        else:
+            return 200, "not ours to act on"
         return 200, "queued"
 
-    def serve(self, port: int, push_every: float = 20, reconcile_every: float = 300) -> None:
+    def handle_event(self, item: str) -> str:
+        """One queued webhook event: a schema change is checked and repaired; a page is handled."""
+        with self.lock:
+            if item == SCHEMA_EVENT:
+                problems = self.check(repair=True)
+                return f"schema: repaired {problems}" if problems else "schema: matches"
+            try:
+                page = self.notion.page(item)
+            except NotionError as err:
+                if err.status != 404:
+                    raise
+                if not self.forget_page(item):
+                    return "ignored: unknown page"
+                return "deleted for good; recreated on the next push"
+            return self.handle_page(page)
+
+    def serve(self, port: int, push_every: float = 20, reconcile_every: float = 300,
+              verify_every: float = 3600) -> None:
         inbox: queue.Queue[str] = queue.Queue()
         sync = self
 
@@ -616,12 +818,12 @@ class Sync:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         print(f"holon-notion: webhooks on http://127.0.0.1:{port}/ (expose it over HTTPS, e.g. a tunnel)", flush=True)
         last_push = last_rec = 0.0
+        last_verify = time.monotonic()
         while True:
             try:
                 try:
-                    pid = inbox.get(timeout=1)
-                    with self.lock:
-                        print(f"event {pid}: {self.handle_page(self.notion.page(pid))}", flush=True)
+                    item = inbox.get(timeout=1)
+                    print(f"event {item}: {self.handle_event(item)}", flush=True)
                     last_push = 0  # act on it now
                 except queue.Empty:
                     pass
@@ -629,6 +831,10 @@ class Sync:
                 if now - last_rec >= reconcile_every:
                     print(f"reconcile: {self.reconcile()}", flush=True)
                     last_rec, last_push = now, 0
+                if now - last_verify >= verify_every:
+                    drift = self.heal()
+                    print(f"verify: {len(drift)} drifted; re-pushing" if drift else "verify: in sync", flush=True)
+                    last_verify, last_push = now, 0
                 if now - last_push >= push_every:
                     r = self.push()
                     if r["created"] or r["updated"]:
@@ -653,11 +859,13 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("reconcile")
     c = sub.add_parser("check")
     c.add_argument("--repair", action="store_true")
+    sub.add_parser("verify", help="compare every live page, value and relation with SQLite (read-only)")
     sub.add_parser("status")
     v = sub.add_parser("serve")
     v.add_argument("--port", type=int, default=8787)
     v.add_argument("--push-every", type=float, default=20)
     v.add_argument("--reconcile-every", type=float, default=300)
+    v.add_argument("--verify-every", type=float, default=3600)
     a = ap.parse_args(argv)
     if os.environ.get("HOLON_NOTION_IPV4"):  # hosts whose IPv6 route is dead: urllib has no happy eyeballs
         gai = socket.getaddrinfo
@@ -691,6 +899,10 @@ def main(argv: list[str] | None = None) -> int:
         problems = sync.check(a.repair)
         print("\n".join(problems) or "schema matches")
         return 1 if problems and not a.repair else 0
+    elif a.cmd == "verify":
+        problems = sync.verify()
+        print("\n".join(problems) or "every page, value and relation matches SQLite")
+        return 1 if problems else 0
     elif a.cmd == "status":
         n = {r[0]: r[1] for r in sync.db.execute("SELECT entity, count(*) FROM pages GROUP BY entity")}
         dirty = sync.db.execute("SELECT count(*) FROM pages WHERE hash IS NULL").fetchone()[0]
@@ -699,7 +911,7 @@ def main(argv: list[str] | None = None) -> int:
         for r in sync.db.execute("SELECT * FROM log ORDER BY ts DESC LIMIT 10"):
             print(f"{r['ts']} {r['kind']}: {r['detail']}")
     elif a.cmd == "serve":
-        sync.serve(a.port, a.push_every, a.reconcile_every)
+        sync.serve(a.port, a.push_every, a.reconcile_every, a.verify_every)
     return 0
 
 
