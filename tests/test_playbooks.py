@@ -144,6 +144,7 @@ class Objectives(LaneCase):
     def decompose(self, children):
         c = self.k.claim("plan", self.hod, task_id=self.o["id"])
         self.assertIn("## Objective dashboard", (c.brief_dir / "context.md").read_text())
+        self.assertIn("- `executive`:", (c.brief_dir / "context.md").read_text(), "planners see who else to ask")
         a = self.k.submit(c.run["id"], {"kind": "decompose", "rationale": "a pool", "children": children})["approval"]
         return self.k.approve(a["id"])
 

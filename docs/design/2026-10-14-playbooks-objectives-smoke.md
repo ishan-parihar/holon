@@ -47,7 +47,7 @@ Compared with `~/.hermes/organism` (arch, AXE, agent-fabric, workforce-ops):
 | PDCA loop: self (worklog), peer, department, organization | memory lessons and promotion, retros, audits; now playbooks and objective reviews | built |
 | lean 5-step workflow template per department | playbooks per routine and task class | built (they start from the job and are refined) |
 | result classifier (failure taxonomy) | decision-model triage on incidents | built |
-| services offered/consumed between pools, with a registry | cross-department requests, no declared services | **gap**: a department's services in its genome, so planners and routing know what each offers |
+| services offered/consumed between pools, with a registry | cross-department requests, no declared services | partial: plan, shape and retro briefs list every other department and its mission; declared services per department are not built |
 | per-pool ADs and RGs (decisions with supersession, regression guards) | the kernel's regression ledger; department memory decisions; checks and smoke as guards | **partial**: no per-department regression ledger |
 | `cron-jobs/*.md` as the source of each cron | routines from `holon routine add` | built: `holon routine import` (dry run by default; `--apply` proposes each active routine) |
 | notice-board retention and weekly summaries | events, messages and run directories grow forever | **gap** (not urgent: 16 runs = 372 KB; 61 daily crons ≈ 1.5 MB/day of run directories) |

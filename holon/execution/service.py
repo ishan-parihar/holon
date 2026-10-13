@@ -444,6 +444,13 @@ class Kernel:
         if work.get("task_class") == "objective" and node["stage"] in ("plan", "retro"):
             extra.append(("Objective", OBJECTIVE_PLAN if node["stage"] == "plan" else OBJECTIVE_REVIEW))
             extra.append(("Objective dashboard", self.objective_dashboard(work["id"])))
+        if node["stage"] in ("plan", "shape", "retro"):
+            others = [d for d in self.org.depts() if d["id"] != work.get("dept_id")]
+            if others:
+                extra.append(("Other departments (what each is for)", "\n".join(
+                    f"- `{d['slug']}`: {d.get('mission') or d['name']}" for d in others)
+                    + "\n\nWork another department should do is a child with its `dept` (in a decomposition) or "
+                      "`$holon msg request <dept> …`; its head shapes it."))
         md, _ = compile_context(self.home, self.work, self.memory, node["id"],
                                 budget=int(self.config["context"]["budget_chars"]), run_id=run["id"],
                                 employee=emp, predecessors=self.org.predecessors(emp["id"]) if emp else None,
