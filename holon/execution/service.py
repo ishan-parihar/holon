@@ -1196,6 +1196,7 @@ class Kernel:
 
     def tick(self, foreground: bool = False) -> dict:
         """Idempotent heartbeat; call it from any timer (systemd, cron, a harness scheduler)."""
+        salvaged = self._salvage()
         swept = self.work.sweep_leases()
         triggered = self.triggers(swept)
         notified = self.notify()
@@ -1232,7 +1233,26 @@ class Kernel:
             else:
                 self._spawn([sys.executable, "-m", "holon", "--home", str(self.home.root), "run-script", sid])
                 fired.append({"script": sid, "spawned": True})
-        return {"swept": swept, "triggered": triggered, "fired": fired, "notified": notified, "delivered": delivered}
+        return {"swept": swept, "triggered": triggered, "fired": fired, "notified": notified, "delivered": delivered,
+                "salvaged": salvaged}
+
+    def _salvage(self) -> list[str]:
+        """A run whose lease expired but whose agent wrote its result (its dispatcher died after the harness
+        finished): the result is handed in instead of counting the run as failed and doing the work again."""
+        out = []
+        for (rid,) in self.wconn.execute("SELECT id FROM runs WHERE status='running' AND lease_until<?",
+                                         (now(),)).fetchall():
+            try:
+                if isolation.read_agent_file(self.home.run_dir(rid) / "result.json") is None:
+                    continue
+                self.submit(rid, defer=True)
+            except (isolation.IsolationError, TransitionError, ValueError):
+                continue
+            with write_txn(self.wconn):
+                self.work._event("run", rid, None, None, "salvaged: its result was on disk when its lease expired",
+                                 actor="kernel")
+            out.append(rid)
+        return out
 
     def _fire_recurring(self, s: dict) -> dict:
         """A fresh instance of the recurring plan, unless its work was cancelled (the schedule is turned off)

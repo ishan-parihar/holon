@@ -120,6 +120,8 @@ the run (the harness and its shell are killed). Once the run's result is in (the
 `holon_submit`) or the run was reclaimed, the dispatcher stops the harness within a minute: a
 closing reply cannot change the outcome and would only hold the department's budget slot. The heartbeat reclaims expired leases: the
 stage returns to the board, and an execute stage counts as a failed attempt.
+Except when the agent finished: a run whose `result.json` is in its run directory when its lease
+expires (its dispatcher died after the harness wrote it) is handed in by the heartbeat instead.
 
 ## 5. Staleness
 

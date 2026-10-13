@@ -92,6 +92,17 @@ class FastLane(LaneCase):
         self.assertEqual([f["post_execute"] for f in fired if "post_execute" in f], [w["id"]])
         self.assertEqual(self.status(w), "done", "the heartbeat judged it when no dispatcher did")
 
+    def test_a_result_left_on_disk_by_a_dead_dispatcher_is_handed_in_not_redone(self):
+        w = self.add(risk="low", task_class="c", lane="fast", dept="eng")
+        c = self.k.claim("execute", self.dev1, task_id=w["id"])
+        self.write_result(c.run["id"], self.exec_env())
+        self.k.wconn.execute("UPDATE runs SET lease_until='2000-01-01T00:00:00.000000Z'")
+        self.k.wconn.commit()
+        out = self.k.tick(foreground=True)
+        self.assertEqual(out["salvaged"], [c.run["id"]])
+        self.assertEqual(out["swept"], [], "not counted as a dead run")
+        self.assertEqual(self.k.work.latest(w["id"], "execute")["status"], "done")
+
     def test_an_unsure_rubric_keeps_the_verifier_and_tells_it_why(self):
         self.fake.answer = lambda s, q: {k: {"type": "noul", "noul": 0.4} for k in q}
         w = self.add(risk="low", task_class="c", lane="fast", dept="eng")
