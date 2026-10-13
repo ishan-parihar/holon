@@ -585,6 +585,58 @@ def cmd_routine_add(args, k):
     _out(args, {"approval": a, "plan": plan}, _plan_text(k, a) + "\n\nOn approval the schedule starts.")
 
 
+def legacy_cron(path: Path) -> dict:
+    """A legacy organism cron protocol (`cron-jobs/<job>.md`: YAML-ish frontmatter and a markdown body)
+    as routine fields. The frontmatter subset those files use: `key: value`, quoted values, indented
+    continuation lines, and `- item` lists."""
+    text = path.read_text()
+    meta: dict = {}
+    body = text
+    if text.startswith("---\n") and "\n---" in text[4:]:
+        end = text.index("\n---", 4)
+        key = None
+        for line in text[4:end].splitlines():
+            if line.startswith(("  ", "\t")) and key and not line.strip().startswith("- "):
+                meta[key] = f"{meta[key]} {line.strip()}".strip()
+            elif line.strip().startswith("- ") and key:
+                meta[key] = (meta[key] if isinstance(meta[key], list) else []) + [line.strip()[2:].strip().strip("\"'")]
+            elif ":" in line and not line.startswith(" "):
+                key, v = line.split(":", 1)
+                key, meta[key.strip()] = key.strip(), v.strip().strip("\"'")
+        body = text[end + 4:].lstrip("\n")
+    pool = path.resolve().parent.parent
+    script = None
+    if str(meta.get("no_agent")).lower() == "true" and meta.get("script"):
+        script = next((c for c in (pool / "scripts" / meta["script"], Path("~/.hermes/scripts").expanduser() / meta["script"])
+                       if c.exists()), pool / "scripts" / meta["script"])
+    return {"title": meta.get("name") or path.stem, "cron": meta.get("schedule", ""),
+            "intent": ((meta.get("description") or "") + "\n\n" + body.strip())[:20000].strip(),
+            "command": (f"python3 {script}" if str(script).endswith(".py") else str(script)) if script else None,
+            "deliver": bool(meta.get("deliver")), "workdir": str(pool), "paused": meta.get("status") != "active",
+            "source": str(path)}
+
+
+@command("routine import", "chair", "propose routines from legacy organism cron protocols (cron-jobs/*.md); a dry "
+         "run unless --apply", arg("files", nargs="+"), arg("--dept", required=True),
+         arg("--apply", action="store_true", help="create the routine proposals (each goes to its approver)"))
+def cmd_routine_import(args, k):
+    rows = []
+    for f in args.files:
+        r = legacy_cron(Path(f).expanduser())
+        if args.apply and not r["paused"]:
+            try:
+                a = k.add_routine(r["title"], r["intent"], dept=args.dept, cron=r["cron"], command=r["command"],
+                                  workdir=r["workdir"], deliver=r["deliver"], strict=False)
+                r.update(approval=a["id"], approver=a["approver"], grade=a["grade"])
+            except (ValueError, LookupError) as e:
+                r["error"] = str(e)
+        rows.append({k_: v for k_, v in r.items() if k_ != "intent"})
+    _out(args, rows, "\n".join(f"{'paused ' if r['paused'] else ''}{r['title']:<36} `{r['cron']}` "
+                               f"{'script: ' + r['command'] if r['command'] else 'agent'}{' deliver' if r['deliver'] else ''}"
+                               + (f"  -> {r['approval']} ({r['approver']}, G{r['grade']})" if r.get("approval") else "")
+                               + (f"  !! {r['error']}" if r.get("error") else "") for r in rows))
+
+
 @command("routine list", "any", "routines: lane, schedule, firings and outcomes", mutates=False)
 def cmd_routine_list(args, k):
     rs = k.routines()

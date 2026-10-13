@@ -112,6 +112,28 @@ class Delivery(LaneCase):
         self.assertIn("wrote hello.txt", sent.read_text())
 
 
+class LegacyImport(LaneCase):
+    def test_a_legacy_cron_protocol_becomes_a_routine_proposal(self):
+        from holon.cli import legacy_cron
+        pool = self.tmp / "venture"
+        (pool / "cron-jobs").mkdir(parents=True)
+        (pool / "scripts").mkdir()
+        (pool / "scripts" / "digest.py").write_text("print('ok')\n")
+        f = pool / "cron-jobs" / "daily-digest.md"
+        f.write_text('---\nname: "daily-digest"\ndescription: "One digest a day:\n  the actionable items."\n'
+                     'schedule: "0 11 * * *"\nstatus: "active"\nno_agent: true\ndeliver: "telegram:1:2"\n'
+                     'script: digest.py\nskills:\n- digest\n---\n\n# daily-digest\n\nRuns the digest script.\n')
+        r = legacy_cron(f)
+        self.assertEqual((r["title"], r["cron"], r["deliver"], r["paused"]), ("daily-digest", "0 11 * * *", True, False))
+        self.assertEqual(r["command"], f"python3 {pool / 'scripts' / 'digest.py'}")
+        self.assertIn("the actionable items", r["intent"])
+        self.assertIn("Runs the digest script", r["intent"])
+        a = self.k.add_routine(r["title"], r["intent"], dept="eng", cron=r["cron"], command=r["command"],
+                               workdir=r["workdir"], deliver=r["deliver"], strict=False)
+        body = self.k.work.plan_for_approval(a["id"])["output"]["body"]
+        self.assertEqual((body["lane"], body["deliver"]), ("script", True))
+
+
 class Objectives(LaneCase):
     def setUp(self):
         super().setUp()
