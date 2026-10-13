@@ -87,6 +87,14 @@ Proposed next, in order of leverage:
 
 ## 6. Limits
 
+- **Quota.** OpenRouter's free tier allows 50 decision requests a day per account (1000 a day after
+  a one-time 10-credit top-up). The live run used them up in an afternoon; a judged script then got
+  HTTP 429 and fell back to its verifier. Every failure is now an event and one line to the Chair
+  (`decision model unavailable …; results go to verifiers meanwhile`). The organism's crons alone
+  would need well over 50 a day.
+- **Cline.** The Cline API (`api.cline.bot/api/v1`) proxies chat completions only; it answers
+  `model not found` for `inception/mercury-decide:free` and has no decisions endpoint, so these
+  models cannot be reached through it.
 - Free decision models can be withdrawn or rate-limited; every use has a safe default, and
   `holon doctor` does not yet report a failing classifier (a failure is recorded in the result as
   `source: failed`).

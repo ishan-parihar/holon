@@ -176,6 +176,15 @@ class Classifier(LaneCase):
         self.assertEqual((lane, cls["source"]), ("full", "failed"))
         self.assertIn("HTTP 500", cls["error"])
 
+    def test_a_decision_model_that_is_down_is_never_silent(self):
+        self.fake.status = 429
+        w = self.add(risk="low", task_class="c", lane="fast", dept="eng")
+        self.k.dispatch(self.dev1, "execute")
+        self.assertEqual(self.pipeline_of(w)[-1], ("verify", "ready"), "no judge: a verifier looks")
+        line = [x for x in self.k.pending_for_chair(0) if x.startswith("decision model unavailable")]
+        self.assertEqual(len(line), 1)
+        self.assertIn("HTTP 429", line[0])
+
     def test_reports_to_the_chair_do_not_count_as_reaching_outside(self):
         self.k.classify("Inbox digest", "send the Chair a digest on Telegram")
         q = self.fake.requests[-1]["questions"]["external"]

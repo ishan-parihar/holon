@@ -702,10 +702,20 @@ class Kernel:
         return {"skill": name, "file": file, "layer": layer, "path": str(path), "text": text}
 
     # ── lanes: the cheapest way to do each job, chosen at intake and enforced (docs/GENOME.md §10) ──
+    def _ask(self, why: str, state: str, questions: dict) -> dict | None:
+        """A decision, or None. A failure (rate limit, outage) is recorded as an event and reaches the Chair:
+        every caller then takes its safe default, which costs verifier sessions until the model is back."""
+        a = self.decider.ask(state, questions)
+        if a is None and self.decider.on:
+            with write_txn(self.wconn):
+                self.work._event("classifier", "decider", None, "failed",
+                                 f"decision model unavailable ({why}): {self.decider.error}"[:600], actor="kernel")
+        return a
+
     def classify(self, title: str, intent: str, command: str | None = None) -> dict:
         """The decision model's view of a job: which lane it needs and whether it reaches outside the
         organization. `lane` is None when the model is off, failed, or is less sure than `min_confidence`."""
-        a = self.decider.ask(f"Job: {title}\n\n{intent}" + (f"\n\nCommand: {command}" if command else ""), {
+        a = self._ask("lane", f"Job: {title}\n\n{intent}" + (f"\n\nCommand: {command}" if command else ""), {
             "lane": choice("What is the cheapest way to do this job reliably?", LANE_OPTIONS),
             "external": noul("Does the job send, post or publish anything to people outside the organization: "
                              "clients, leads, recruiters, applications, emails or messages to third parties, public "
@@ -837,7 +847,7 @@ class Kernel:
                  f"{env['documentation'][:12000]}")
         if gold:
             state += f"\n\n--- Gold standard ({gold['work_id']}) ---\n{gold['summary']}\n{(gold['documentation'] or '')[:6000]}"
-        a = self.decider.ask(state, qs)
+        a = self._ask("rubric", state, qs)
         if a is None:
             return None
         scores = {("gold standard" if q == "gold" else rubric[int(q[1:])]): round(p_yes(a[q]), 3) for q in qs}
@@ -911,7 +921,7 @@ class Kernel:
         depts = [d for d in self.org.depts() if d["slug"] != EXECUTIVE]
         if len(depts) < 2:
             return {"dept": depts[0]["slug"] if depts else None, "source": "only one"}
-        a = self.decider.ask(f"Work: {title}\n\n{intent}", {"dept": choice(
+        a = self._ask("routing", f"Work: {title}\n\n{intent}", {"dept": choice(
             "Which department should own this work?",
             {d["slug"]: f"{d['name']}: {d.get('mission') or ''}"[:300] for d in depts})})
         if a is None:
@@ -928,7 +938,7 @@ class Kernel:
             tail = Path(r[0]).read_text(errors="replace")[-6000:] if r else ""
         except OSError:
             tail = ""
-        a = self.decider.ask(f"Log of a failed agent run:\n{tail}", {"cause": choice(
+        a = self._ask("triage", f"Log of a failed agent run:\n{tail}", {"cause": choice(
             "What most likely made this run fail?", FAILURE_CAUSES)}) if tail else None
         if a is None:
             return ""
@@ -1156,6 +1166,10 @@ class Kernel:
                 lines.append(f"incident: {e['title']}")
             elif e["stage"] is None and (e["note"] or "").startswith("lane breach"):
                 lines.append(f"{e['note'][:200]} on {e['title']} (holon task show {e['id']})")
+        down = self.wconn.execute("SELECT note FROM events WHERE entity='classifier' AND to_status='failed' AND seq>? "
+                                  "ORDER BY seq DESC LIMIT 1", (since_seq,)).fetchone()
+        if down:
+            lines.append(f"{down[0][:240]}; results go to verifiers meanwhile")
         n = self.wconn.execute("SELECT count(*) FROM audit_samples WHERE verdict IS NULL AND sampled_at>?",
                                (self._setting("notify_ts") or "",)).fetchone()[0]
         if n:

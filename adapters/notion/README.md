@@ -55,6 +55,12 @@ restored. That is what keeps the two from drifting: Notion never holds a fact Ho
 - **Deleted for good**: the page is recreated on the next push, and every row is re-pushed so the
   relations that named the old page name the new one.
 
+## Upgrades
+
+The service checks and repairs the live schema every time it starts (`upgrade_schema`), so a
+kernel upgrade that adds a mirrored column reaches Notion with the restart that loads the new code.
+Restart `holon-notion` after pulling.
+
 ## Limits
 
 - **One instance, one parent page.** Two instances mirroring into the same page would fight over

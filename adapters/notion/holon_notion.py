@@ -855,9 +855,16 @@ class Sync:
         threading.Thread(target=server.serve_forever, daemon=True).start()
         return server
 
+    def upgrade_schema(self) -> list[str]:
+        """Bring the live databases up to this module's schema (what a schema webhook also triggers). Run when
+        the service starts, so a kernel upgrade that adds a column reaches Notion with the restart that loads
+        it, instead of every push failing on a property that does not exist yet."""
+        return self.check(repair=True)
+
     def serve(self, port: int, push_every: float = 20, poll_every: float = 60, reconcile_every: float = 900,
               verify_every: float = 3600) -> None:
         inbox: queue.Queue[str] = queue.Queue()
+        print(f"schema: {self.upgrade_schema() or 'matches'}", flush=True)
         self.receiver(port, inbox)
         print(f"holon-notion: webhooks on http://127.0.0.1:{port}{self.webhook_path()} (expose it over HTTPS, "
               f"e.g. a tunnel); polling every {poll_every:g}s as the fallback", flush=True)

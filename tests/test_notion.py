@@ -274,6 +274,13 @@ class NotionMirror(KernelCase):
         plan = self.k.work.latest(w["id"], "plan")
         self.assertEqual(self.prop(plan["id"], "Outcome"), "plan", "values come back as selects")
 
+    def test_a_column_added_by_a_kernel_upgrade_reaches_notion_when_the_service_starts(self):
+        self.fake.ds[self.ds["work"]]["properties"].pop("Lane")  # a workspace built before the column existed
+        self.add(dept="eng")
+        self.assertTrue(any("Lane" in p for p in self.sync.upgrade_schema()))
+        self.sync.push()
+        self.assertEqual(self.sync.check(), [])
+
     def test_chair_created_work_carries_its_selects(self):
         self.sync.push()
         eng = self.sync._page_of("departments", self.k.org.dept("eng")["id"])

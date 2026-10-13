@@ -116,6 +116,8 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | Notion webhooks | a public receiver would store whichever verification token reached it first | `test_the_receiver_answers_only_on_its_secret_path` |
 | Notion webhooks | a resent verification token got 401 because one was already stored, so a subscription could never be verified after a first miss | `test_webhooks_are_verified_and_bots_ignored` |
 | Notion webhooks | the tunnel dialled the edge over a dead IPv6 route after each network blip | `test_a_new_machine_gets_every_database_and_a_rerun_changes_nothing` (edge-ip-version 4) |
+| Notion, lanes deploy | a new kernel column (`lane`) made every push fail on the live workspace until a manual `check --repair` | `test_a_column_added_by_a_kernel_upgrade_reaches_notion_when_the_service_starts` |
 | Notion webhooks | without webhooks, Chair edits waited for the 5-minute full pass | `test_the_poll_fallback_asks_only_for_pages_edited_since` |
+| Decision models, live script routine | the free tier's 50 decisions a day ran out (HTTP 429); the judge fell back to a verifier, but nothing said why | `test_a_decision_model_that_is_down_is_never_silent` |
 | Decision models, live run over 61 venture crons | "reaches outside the organization" counted digests to the Chair, flagging 58 of 61 jobs (9 after the fix) | `test_reports_to_the_chair_do_not_count_as_reaching_outside` |
 | Notion webhooks | the public URL was set up by hand, so a new machine had no webhooks | `test_a_new_machine_gets_every_database_and_a_rerun_changes_nothing` |
