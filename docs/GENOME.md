@@ -218,7 +218,8 @@ and the kernel enforces the lane cheapest first:
 - with the model off or unsure, the requested lane stands (default `full`).
 A routine runs unattended, so it is a proposal graded at least G2 (G3 when the model judges it
 reaches outside the organization) for the approver that grade names; on approval its schedule
-starts (`holon routine list`). Each firing of a script or fast routine enters at execute with the
+starts (`holon routine list`). With `--deliver`, each finished firing's result goes to the Chair
+through `[notify]` (a digest in the Chair's chat), retried by the heartbeat until it is sent. Each firing of a script or fast routine enters at execute with the
 standing plan; a full routine plans every firing afresh.
 
 **Rubric and gold standard.** A routine carries a rubric (`--rubric`, repeatable; else its

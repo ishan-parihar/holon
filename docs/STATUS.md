@@ -89,7 +89,7 @@ window (G2), then one venture as a pilot department of routines.
 3. `AGENTS.md`: the code map, the laws lint enforces, the regression ledger.
 4. `docs/GENOME.md` (departments, roles, configuration) and `docs/CONTRACT.md` (the harness
    contract).
-5. `docs/design/` newest first: `2026-10-13-trust-boundary.md`, `2026-10-13-lanes-and-decision-models.md`, `2026-10-13-paperclip-contrast.md`, then
+5. `docs/design/` newest first: `2026-10-14-playbooks-objectives-smoke.md`, `2026-10-13-trust-boundary.md`, `2026-10-13-lanes-and-decision-models.md`, `2026-10-13-paperclip-contrast.md`, then
    `2026-10-13-system-red-team.md`; older records explain why things are the way they are.
 6. The README of the adapter you touch (`adapters/<name>/README.md`), which records what the real
    harness does.

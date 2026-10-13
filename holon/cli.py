@@ -573,13 +573,14 @@ def cmd_schedule_add(args, k):
          arg("--command", help="the script lane: a command the kernel runs (no agent)"),
          arg("--rubric", action="append", default=[], help="a criterion each result is judged on (repeat)"),
          arg("--why", help="required for a costlier lane than the classifier's, or an agent for a deterministic job"),
+         arg("--deliver", action="store_true", help="send each result to the Chair through [notify] (a digest)"),
          arg("--workdir"), arg("--task-class"), arg("--risk", default="normal", choices=list(vocab.RISKS)),
          arg("--project"))
 def cmd_routine_add(args, k):
     a = k.add_routine(args.title, _text_arg(args.intent), dept=args.dept, cron=args.cron, lane=args.lane,
                       command=args.command, rubric=args.rubric, why=args.why, task_class=args.task_class,
                       workdir=str(Path(args.workdir).expanduser().resolve()) if args.workdir else None,
-                      risk=args.risk, project_ref=args.project)
+                      risk=args.risk, project_ref=args.project, deliver=args.deliver)
     plan = k.work.plan_for_approval(a["id"])
     _out(args, {"approval": a, "plan": plan}, _plan_text(k, a) + "\n\nOn approval the schedule starts.")
 

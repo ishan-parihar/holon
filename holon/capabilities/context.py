@@ -155,6 +155,14 @@ FAST_LANE = ("There is no separate plan or approval: this work is routine (its g
              "`blockers` saying why: it then goes through the full pipeline.")
 
 
+ROUTINE_RUN = ("This is one run of an approved routine: no separate plan or approval. Follow its playbook (above), "
+               "stay inside the workdir and your department's reach, and send nothing outside the organization "
+               "unless the routine was approved to. List the `writes` you made and any `external_effects`; the kernel "
+               "grades them against the routine's approval. If this run cannot be done as the playbook says, change "
+               "nothing and return outcome `noop` with `blockers` saying why: what you found feeds the playbook's next "
+               "refinement.")
+
+
 def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
                     budget: int = DEFAULT_BUDGET_CHARS, run_id: str | None = None,
                     employee: dict | None = None, predecessors: list[str] | None = None,
@@ -223,9 +231,10 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
                   _render_output(approved, approved["output"])
                   + (f"\n\nApprover's note ({a['decided_by']}): {a['decision_note']}" if a["decision_note"] else ""))
             if task["lane"] == "fast" and stage == "execute":
-                b.add("Fast lane", FAST_LANE)
+                b.add("Fast lane", ROUTINE_RUN if (task.get("requested_by") or "").startswith("recurring:")
+                      else FAST_LANE)
             rubric = (approved["output"] or {"body": {}})["body"].get("rubric")
-            if rubric:
+            if rubric and not any(title.startswith("Playbook:") for title, _ in extra or []):
                 b.add("Rubric (each result is judged on these)", "\n".join(f"- {c}" for c in rubric))
         gold = work.gold_standard(task)
         if gold:

@@ -829,7 +829,8 @@ class Kernel:
     def add_routine(self, title: str, intent: str, *, dept: str, cron: str, lane: str | None = None,
                     command: str | None = None, rubric: list[str] | None = None, why: str | None = None,
                     workdir: str | None = None, task_class: str | None = None, risk: str = "normal",
-                    project_ref: str | None = None, objective_id: str | None = None, strict: bool = True) -> dict:
+                    project_ref: str | None = None, objective_id: str | None = None, strict: bool = True,
+                    deliver: bool = False) -> dict:
         """A routine (a cron job) as a proposal for the approver its grade names. The lane is enforced
         cheapest first: a job the classifier judges deterministic must be a script (`command`); a costlier lane
         than the classifier's needs `why`, which is recorded; a cheaper one is raised to the classifier's.
@@ -889,7 +890,7 @@ class Kernel:
             title=f"Routine: {title}", intent=intent, steps=steps, apply={"kind": "routine", "cron": cron},
             approver=approver, grade=floor, task_class=task_class, dept=dept_id, author=self.actor,
             reasons=reasons + notes, body={"lane": lane, "rubric": list(rubric or []), "classification": cls,
-                                           "playbook": playbooks.for_routine(title),
+                                           "playbook": playbooks.for_routine(title), "deliver": bool(deliver),
                                            **({"command": command} if command else {})},
             acceptance="; ".join(rubric) if rubric else None, workdir=workdir, risk=risk, project_ref=project_ref,
             objective_id=objective_id)
@@ -1148,6 +1149,7 @@ class Kernel:
         swept = self.work.sweep_leases()
         triggered = self.triggers(swept)
         notified = self.notify()
+        delivered = self._deliver()
         fired = []
         for s in self.schedules.take_due():
             if s["kind"] == "recurring":
@@ -1174,7 +1176,7 @@ class Kernel:
             else:
                 self._spawn([sys.executable, "-m", "holon", "--home", str(self.home.root), "run-script", sid])
                 fired.append({"script": sid, "spawned": True})
-        return {"swept": swept, "triggered": triggered, "fired": fired, "notified": notified}
+        return {"swept": swept, "triggered": triggered, "fired": fired, "notified": notified, "delivered": delivered}
 
     def _fire_recurring(self, s: dict) -> dict:
         """A fresh instance of the recurring plan, unless its work was cancelled (the schedule is turned off)
@@ -1414,6 +1416,35 @@ class Kernel:
             self.work._event("notify", "chair", None, "sent" if ok else "failed",
                              f"{len(lines)} items" + ("" if ok else f": {detail}"), actor="kernel")
         return {"items": len(lines), "sent": ok}
+
+    def _deliver(self) -> list[str]:
+        """Routines approved with `deliver`: each finished firing's result goes to the Chair through [notify]
+        (the legacy crons' digests to a chat thread). A delivery that fails is retried on the next heartbeat."""
+        command = (self.config.get("notify") or {}).get("command")
+        if not command:
+            return []
+        since = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        out = []
+        for w in self.wconn.execute(
+                "SELECT * FROM tasks WHERE stage IS NULL AND status IN ('done','failed') AND requested_by LIKE "
+                "'recurring:%' AND updated_at>? AND id NOT IN (SELECT entity_id FROM events WHERE entity='delivery' "
+                "AND to_status='sent') ORDER BY updated_at", (since,)).fetchall():
+            body = (self.work.output(w["requested_by"][10:]) or {"body": {}})["body"]
+            if not body.get("deliver"):
+                continue
+            ex = self.work.last_execute_output(w["id"]) or {}
+            text = f"{w['title']} [{w['status']}]\n{ex.get('summary') or ''}\n\n{(ex.get('documentation') or '')[:3000]}"
+            try:
+                p = subprocess.run(command.replace("{message}", shlex.quote(text)), shell=True, capture_output=True,
+                                   text=True, timeout=60)
+                ok = p.returncode == 0
+            except (OSError, subprocess.TimeoutExpired):
+                ok = False
+            with write_txn(self.wconn):
+                self.work._event("delivery", w["id"], None, "sent" if ok else "failed", None, actor="kernel")
+            if ok:
+                out.append(w["id"])
+        return out
 
     # ── feedback loops (R5): sensors that post work when something needs attention ──
     def triggers(self, swept: list[dict] | None = None) -> list[dict]:

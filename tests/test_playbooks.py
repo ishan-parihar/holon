@@ -69,7 +69,10 @@ class Playbooks(LaneCase):
         pb = playbooks.read(self.k.skills, "eng", NAME)
         self.assertEqual((pb["version"], pb["rubric"][0]), (2, "lists every unread thread by sender and subject"))
         w, out = self.run_once(plan)
-        self.assertIn(f"## Playbook: {NAME} v2", (self.home.run_dir(out["run"]["id"]) / "context.md").read_text())
+        ctx = (self.home.run_dir(out["run"]["id"]) / "context.md").read_text()
+        self.assertIn(f"## Playbook: {NAME} v2", ctx)
+        self.assertNotIn("## Rubric (each result", ctx, "the playbook is the one rubric: the plan's copy is v1")
+        self.assertIn("one run of an approved routine", ctx)
         self.assertEqual({r[0] for r in self.k.wconn.execute("SELECT version FROM judgments WHERE work_id=?", (w["id"],))},
                          {2}, "later runs are judged against the refined rubric")
 
@@ -92,6 +95,21 @@ class Playbooks(LaneCase):
         made = [t for t in self.k.triggers() if t.get("refinement")]
         self.assertEqual([m["playbook"] for m in made], ["class-greeting"])
         self.assertTrue(self.k.work.get(made[0]["refinement"])["title"].startswith("Write playbook"))
+
+
+class Delivery(LaneCase):
+    def test_a_delivering_routine_sends_each_result_to_the_chair_once(self):
+        sent = self.tmp / "sent.txt"
+        self.configure(f'[notify]\ncommand = "echo {{message}} >> {sent}"\n')
+        self.fake.choose(lane="fast", external=0.02)
+        a, plan = self.routine("Inbox digest", deliver=True)
+        self.k.approve(a["id"])
+        self.fake.answer = lambda s, q: {x: {"type": "noul", "noul": 0.97} for x in q}
+        w = self.fire(plan)
+        self.k.dispatch(self.dev1, "execute", w["id"])
+        self.assertEqual(self.k._deliver(), [w["id"]])
+        self.assertEqual(self.k._deliver(), [], "once")
+        self.assertIn("wrote hello.txt", sent.read_text())
 
 
 class Objectives(LaneCase):

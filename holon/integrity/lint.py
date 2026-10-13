@@ -307,6 +307,13 @@ def _refs(k, f: Findings) -> None:
         for p in paths:
             if not Path(p).expanduser().exists():
                 f.add("warning", "ref.path", where, f"{p} does not exist ({cmd[:120]})")
+    from holon.capabilities import playbooks
+    for r in k.routines():
+        src = k.work.get(k.work.get(r["plan"])["parent_id"])
+        name = (k.work.output(r["plan"]) or {"body": {}})["body"].get("playbook")
+        if r["enabled"] and name and not playbooks.read(k.skills, k._dept_slug(src["dept_id"]), name):
+            f.add("error", "ref.playbook", f"routine {r['title']}", f"its playbook {name} is missing from its "
+                  "department's skills: its runs have no protocol and the judge no rubric")
     smoked = {s["dept"] for s in k.smoke_checks()}
     scoped = set((k.config.get("scope", {}).get("dept") or {})) | set(((k.config.get("checks") or {}).get("dept") or {}))
     scripted = {k._dept_slug(k.work.get(k.work.get(r["plan"])["parent_id"])["dept_id"]) for r in k.routines()
