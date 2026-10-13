@@ -94,6 +94,7 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | VPS deployment | an auto-committer sharing the tree tripped the read-only guard, so it was switched off | `test_a_shared_tree_others_commit_to_or_write_ignored_paths_in_is_not_a_breach` |
 | Red-team R1 | the Chair key reached a harness's environment | `test_the_chair_key_never_reaches_a_harness` |
 | Red-team R1 | a harness name leaked into the kernel | `test_no_harness_named_in_kernel` |
+| Metrics loop | metrics were read only when a retro happened to run; a failing department with no proposals never got one | `test_a_rate_past_its_bound_makes_a_department_retro_due` |
 | jcode usage | a run stopped after `holon_submit` recorded no tokens, and the `--json` summary counted cached input twice | `test_a_harness_still_running_after_its_result_is_in_is_stopped` (driver `usage_line`) |
 | jcode install | a rerun failed (`provider add` without `--overwrite`) and then duplicated the `[features]` block | `test_a_rerun_keeps_one_copy_of_the_features_block` |
 | jcode conformance | a planner spent its whole 3600 s timeout reading Holon's source to derive the grade floor | `test_planners_are_told_the_grade_floor_and_the_approver` |

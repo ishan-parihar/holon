@@ -45,6 +45,9 @@ DEFAULT_CONFIG = {
     "healing": {"incident_dept": "it", "lease_expiries_for_incident": 2, "schedule_failures_for_incident": 3,
                 "run_failures_for_incident": 3, "doctor_every_min": 30},
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
+    # a department rate past its bound (over min_samples) makes its retro due without proposals;
+    # a _min of 0 or a _max of 1 turns that bound off
+    "metrics": {"min_samples": 5, "verify_pass_rate_min": 0.5, "rework_rate_max": 0.5, "rejection_rate_max": 0.5},
     "budget": {"max_running_per_dept": 0, "max_runs_per_dept_per_day": 0},   # 0 = no cap
     "notify": {"command": ""},   # e.g. a chat CLI with {message}; empty = no notifications
     # what employees may reach beyond their work's workdir; [scope.dept.<slug>] adds to it per department
@@ -992,7 +995,8 @@ class Kernel:
                 continue
             props = self.work.messages(to_refs=[f"dept:{d['slug']}"], kind="proposal", unacked=True, limit=500)
             props = [m for m in props if m["to_ref"] == f"dept:{d['slug']}"]
-            if len(props) < int(c["dept_retro_min_proposals"]):
+            breaches = self._metric_breaches(d["slug"])
+            if len(props) < int(c["dept_retro_min_proposals"]) and not breaches:
                 continue
             last = self.wconn.execute("SELECT max(created_at) FROM tasks WHERE stage IS NULL AND task_class='retro' "
                                       "AND dept_id=?", (d["id"],)).fetchone()[0]
@@ -1005,11 +1009,27 @@ class Kernel:
             with write_txn(self.wconn):
                 w = self.work._add_work(f"Department retro: {d['slug']} {now()[:10]}",
                                         f"Review {len(props)} pending proposals and the department's metrics "
-                                        "(`holon metrics --dept " + d["slug"] + "`); turn what should change into actions.",
+                                        "(`holon metrics --dept " + d["slug"] + "`); turn what should change into actions."
+                                        + "".join(f"\nOut of bounds: {b}." for b in breaches),
                                         dept=d["id"], source="kernel", requested_by="kernel", task_class="retro",
                                         expand=False)
                 self.work._add_stage(w, "retro", [])
-            out.append({"dept_retro": w["id"], "dept": d["slug"], "proposals": len(props)})
+            out.append({"dept_retro": w["id"], "dept": d["slug"], "proposals": len(props), "breaches": breaches})
+        return out
+
+    def _metric_breaches(self, dept: str) -> list[str]:
+        """The department's rates past their [metrics] bounds, over enough samples to mean something."""
+        c, m = self.config["metrics"], self.metrics(dept)
+        out = []
+        for key, bound in c.items():
+            name, _, side = key.rpartition("_")
+            if side not in ("min", "max") or m[name]["value"] is None or m[name]["n"] < int(c["min_samples"]):
+                continue
+            v = m[name]["value"]
+            if v < bound if side == "min" else v > bound:
+                counter = m[name]["counter"]
+                out.append(f"{name} {v} is {'below' if side == 'min' else 'above'} {bound} over {m[name]['n']} "
+                           f"(its counter-metric {counter} is {m[counter]['value']})")
         return out
 
     # ── sensors for the loops: what stewards, heads and the Chair steer by ──
@@ -1048,12 +1068,13 @@ class Kernel:
         return {
             "dept": dept or "(organization)", "days": days,
             "budget": {**self.budget(dept), **self.budget_usage(dept_id)} if dept_id else None,
-            "first_pass_rate": {"value": ratio(first[1] or 0, first[0]), "counter": "verify_pass_rate"},
-            "verify_pass_rate": {"value": ratio(verifies[1] or 0, verifies[0]), "counter": "rework_rate"},
-            "rework_rate": {"value": ratio(execs[1] or 0, execs[0]), "counter": "first_pass_rate"},
+            "first_pass_rate": {"value": ratio(first[1] or 0, first[0]), "n": first[0], "counter": "verify_pass_rate"},
+            "verify_pass_rate": {"value": ratio(verifies[1] or 0, verifies[0]), "n": verifies[0],
+                                 "counter": "rework_rate"},
+            "rework_rate": {"value": ratio(execs[1] or 0, execs[0]), "n": execs[0], "counter": "first_pass_rate"},
             "gate_latency_h": {"value": round(gates[1], 2) if gates[1] is not None else None,
                                "counter": "rejection_rate"},
-            "rejection_rate": {"value": ratio(gates[2] or 0, gates[0]), "counter": "gate_latency_h"},
+            "rejection_rate": {"value": ratio(gates[2] or 0, gates[0]), "n": gates[0], "counter": "gate_latency_h"},
             "cycle_time_h_by_stage": cycle,
             "backlog": {"ready_stages": backlog[0], "oldest_age_h": backlog_age_h},
             "research_reuse": {"value": ratio(terrain[1] or 0, terrain[0]), "counter": "first_pass_rate"},

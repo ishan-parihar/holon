@@ -73,6 +73,16 @@ class Loops(KernelCase):
         self.assertEqual(self.status(retro[0]["dept_retro"]), "done")
         self.assertEqual(self.k.work.messages(to_refs=["dept:ops"], kind="proposal", unacked=True), [])
 
+    def test_a_rate_past_its_bound_makes_a_department_retro_due(self):
+        self.k.config["metrics"]["min_samples"] = 2
+        t = self.add("Tune alerts", dept="ops", task_class="alerts")
+        self.k.reject(self.plan(t, planner=self.maker)["id"], "too broad")
+        self.assertFalse([x for x in self.k.tick()["triggered"] if "dept_retro" in x], "one sample is not a rate")
+        self.k.reject(self.plan(t, planner=self.maker)["id"], "still too broad")
+        retro = [x for x in self.k.tick()["triggered"] if "dept_retro" in x]
+        self.assertEqual((retro[0]["dept"], retro[0]["proposals"]), ("ops", 0), "no proposal was needed")
+        self.assertIn("rejection_rate 1.0 is above 0.5 over 2", self.k.work.get(retro[0]["dept_retro"])["intent"])
+
     def test_runs_that_keep_dying_open_an_incident(self):
         t = self.add("Flaky", dept="ops", task_class="restart")
         for _ in range(2):

@@ -105,6 +105,8 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[healing]` | `run_failures_for_incident` | 3 | runs of one stage that ended without a valid result before an incident opens; past it the stage waits 10 min before the next try, doubling per failure (at most a day) |
 | `[cadence]` | `dept_retro_days` | 7 | how often a department retro may run over pending proposals |
 | `[cadence]` | `dept_retro_min_proposals` | 1 | proposals needed before a department retro is due |
+| `[metrics]` | `min_samples` | 5 | samples a rate needs before its bound counts |
+| `[metrics]` | `verify_pass_rate_min`, `rework_rate_max`, `rejection_rate_max` | 0.5 each | a rate past its bound makes the department retro due (every `dept_retro_days`) without proposals, and the retro is told which; `_min = 0` / `_max = 1` turns a bound off |
 | `[cadence]` | `probation_days` | 14 | days before a new hire's confirmation goes to their head |
 | `[budget]` | `max_running_per_dept` | 0 (no cap) | runs a department may have in flight; `[budget.dept.<slug>]` overrides |
 | `[notify]` | `command` | "" (off) | run on each heartbeat that finds something new for the Chair; `{message}` is the text (an adapter fills this in, e.g. a chat CLI) |

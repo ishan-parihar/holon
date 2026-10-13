@@ -55,7 +55,7 @@ Chair ── holon CLI (Chair key) ──────────────┐
 | Self-evolving skills | retro action → executor edits the department's skill layer → re-export | **broken on sandboxed harnesses** (G-B below) |
 | Earned authority | verified results, audit disagreements → authority up or down | **inert in practice**: novelty floors every new task class at G2 (G-E) |
 | Probation, audit sampling | time, samples → confirmation, re-judging | **works** (tests) |
-| Metrics | sensors, each paired with a counter-metric | **read by retros only**; nothing acts on them automatically |
+| Metrics | sensors, each paired with a counter-metric → a rate past its `[metrics]` bound makes the department retro due, naming the breach | **wired** 2026-10-13 (tests); needs volume to fire in production |
 
 ## 4. Can regressions get through?
 
@@ -198,5 +198,8 @@ Notion webhooks are served through a dedicated Cloudflare tunnel that `install.p
 edited-since poll as the fallback. A run stopped after `holon_submit` now keeps its token usage: drivers
 may declare a per-call `usage_line` (jcode's `--trace`), which the kernel sums.
 
-Still open: the VPS redeploy of all of the above (after the Chair's local verification); nothing yet
-acts on metrics automatically beyond retros.
+Metrics now act: verify pass, rework and rejection rates past their `[metrics]` bounds (over
+`min_samples`) make the department retro due without proposals
+(`test_a_rate_past_its_bound_makes_a_department_retro_due`).
+
+Still open: the VPS redeploy of all of the above (after the Chair's local verification).
