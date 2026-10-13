@@ -235,7 +235,7 @@ def pack_ref(k, f: Findings) -> None:
     if contract_doc.exists():
         from holon.execution import drivers
         brief = {"stage": "plan", "run_id": "r", "task_id": "t", "brief_md": "/x/BRIEF.md", "result_path": "/x/r"}
-        expected = set(drivers.run_env(k.home, brief, "tok"))
+        expected = set(drivers.run_env(k.home, brief, "tok", broker="@b"))  # every variable, isolation included
         documented = set(re.findall(r"\b(HOLON_[A-Z_]+|HOLON|PYTHONPATH)\b", contract_doc.read_text()))
         for var in sorted(expected - documented):
             f.add("error", "ref.env", "docs/CONTRACT.md", f"the driver sets {var} but the contract does not document it")

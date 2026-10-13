@@ -76,7 +76,8 @@ class Doctor(KernelCase):
         c = self.k.claim("execute", self.dev1)
         self.k.submit(c.run["id"], self.exec_env())
         self.k.verify(t["id"], "pass", "ok")
-        self.assertEqual(doctor.run(self.k), [])
+        self.assertEqual([f["check"] for f in doctor.run(self.k)], ["isolation.off"],
+                         "healthy, except that agents still run as the kernel's user (a warning until isolated)")
 
     def test_a_rewritten_audit_trail_is_detected(self):
         self.add(dept="eng")

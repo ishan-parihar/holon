@@ -78,6 +78,8 @@ class Library:
         return sorted(found)
 
     def resolve(self, name: str, file: str = "SKILL.md", dept: str | None = None) -> tuple[str, Path]:
+        if not NAME_RE.match(name) or (dept is not None and not NAME_RE.match(dept)):
+            raise SkillError(f"invalid skill name {name!r}")
         if ".." in Path(file).parts or Path(file).is_absolute():
             raise SkillError(f"invalid skill file {file!r}")
         for layer, root in self.layers(dept):

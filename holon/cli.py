@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -24,6 +25,9 @@ from holon.core import vocab
 from holon.core.paths import Home, HomeNotSet
 
 NOTHING, FORBIDDEN = 3, 4
+# what an agent may run through the broker (holon/execution/isolation.py): MCP's agent commands, plus these
+BROKER_EXTRA = ("submit", "whoami", "help", "task list", "plan queue")
+_FILES: dict[str, str] | None = None   # set while the broker serves a request: the files the client sent
 EXPORTED_HOLON = "${HOLON:-holon}"
 GRADE = {g: f"G{g} {n}" for g, n in vocab.GRADE_NAMES.items()}
 
@@ -78,12 +82,22 @@ def _line(t: dict) -> str:
             f"{t['title']}" + (f"  — {t['blocked_reason']}" if t.get("blocked_reason") else ""))
 
 
+def _read(path: str) -> str:
+    """A file a command was given. Under the broker only what the client sent: the broker runs as the
+    kernel's user and must never read a path an agent names."""
+    if _FILES is not None:
+        if path not in _FILES:
+            raise PermissionError(f"{path} was not sent with the request (unreadable by the caller?)")
+        return _FILES[path]
+    return Path(path).expanduser().read_text()
+
+
 def _text_arg(v: str | None) -> str | None:
     """'-' reads stdin; '@path' reads a file; anything else is literal."""
     if v == "-":
         return sys.stdin.read()
     if v and v.startswith("@"):
-        return Path(v[1:]).expanduser().read_text()
+        return _read(v[1:])
     return v
 
 
@@ -467,7 +481,7 @@ def _own_run(args, k, run_id: str) -> dict:
 @command("submit", "employee", "hand in a run's result (result.json, or --file)", arg("run_id"), arg("--file"))
 def cmd_submit(args, k):
     _own_run(args, k, args.run_id)
-    env = json.loads(Path(args.file).read_text()) if args.file else None
+    env = json.loads(_read(args.file)) if args.file else None
     out = k.submit(args.run_id, env)
     w = out.get("work") or {}
     msg = f"run {args.run_id} ({out['stage']}) ingested; work {w.get('id')} -> {w.get('status')}"
@@ -478,6 +492,18 @@ def cmd_submit(args, k):
     for p in (out.get("memory") or {}).get("promotions", []):
         msg += f"\nlesson promoted to {p['to']}: {p['item']}"
     _out(args, out, msg)
+
+
+@command("whoami", "any", "who you are authenticated as, and the run you are in", mutates=False)
+def cmd_whoami(args, k):
+    p = args.principal
+    data = {"principal": p.kind, "employee_id": p.employee_id, "run_id": p.run_id, "home": str(k.home.root)}
+    if p.run_id:
+        r = k.work.get_run(p.run_id)
+        s = k.work.get(r["task_id"])
+        data["stage"] = {key: s[key] for key in ("id", "stage", "parent_id", "title")}
+        data["brief_md"] = str(k.home.run_dir(p.run_id) / "BRIEF.md")
+    _out(args, data, f"{p.kind}" + (f" {p.employee_id}" if p.employee_id else "") + (f", run {p.run_id}" if p.run_id else ""))
 
 
 @command("run show", "any", "a run and its stage", arg("run_id"), mutates=False)
@@ -952,6 +978,47 @@ def cmd_adapter_test(args, k):
     return 0 if report["passed"] == len(report["clauses"]) else 1
 
 
+@command("broker", "kernel", "serve the organization to agents running as [isolation] agent_user (a user service)",
+         mutates=False)
+def cmd_broker(args, k):
+    import pwd
+    from holon.execution import isolation
+    iso = k.isolation
+    if not iso:
+        raise ValueError("[isolation] agent_user is not set: agents run as this user and need no broker")
+    allowed = {pwd.getpwnam(iso["agent_user"]).pw_uid, os.getuid()}
+    home = str(k.home.root)
+    k.close()
+    print(f"holon broker on {iso['broker']} for uids {sorted(allowed)}", flush=True)
+    isolation.serve_broker(home, iso["broker"], allowed)
+
+
+@command("isolation plan", "chair", "the one-time setup that runs agents as [isolation] agent_user: a script for "
+         "root and the ACLs this user applies", arg("--write", metavar="FILE", help="write the root script here"),
+         mutates=False)
+def cmd_isolation_plan(args, k):
+    from holon.execution import isolation
+    plan = isolation.setup_plan(k)
+    if args.write:
+        Path(args.write).write_text(plan["root_script"])
+    _out(args, plan, (f"1. as root, once: sudo sh {args.write}\n" if args.write else plan["root_script"] + "\n")
+         + f"2. as you: holon isolation apply   ({len(plan['acl'])} setfacl commands)\n"
+         f"3. start the broker: systemctl --user enable --now holon-broker (install.py writes the unit)\n"
+         f"4. holon doctor: the isolation checks probe what {plan['agent_user']} can reach\n\n"
+         f"writes: {', '.join(plan['writes']) or '-'}\nreads: {', '.join(plan['reads'])}\nruns: {plan['runs']}")
+
+
+@command("isolation apply", "chair", "apply the isolation ACLs (agents reach only their trees, run directories "
+         "and binaries; every other entry on the way is denied to them)")
+def cmd_isolation_apply(args, k):
+    from holon.execution import isolation
+    plan = isolation.setup_plan(k)
+    failed = isolation.apply(plan)
+    _out(args, {"applied": len(plan["acl"]) - len(failed), "failed": failed},
+         f"applied {len(plan['acl']) - len(failed)} of {len(plan['acl'])}" + "".join(f"\nFAILED {f}" for f in failed))
+    return 1 if failed else 0
+
+
 @command("mcp", "any", "serve the organization as MCP tools over stdio (for MCP-capable harnesses)", mutates=False)
 def cmd_mcp(args, k):
     from holon import mcp
@@ -997,16 +1064,33 @@ def _allowed(cmd: Command, principal) -> bool:
     return cmd.actor == "employee" and principal.kind == "employee"
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, broker: dict | None = None) -> int:
+    """`broker`: set by the broker (isolation.py) for an agent's request: who it is comes only from its
+    token or key, only agent commands run, and file arguments come from the request."""
+    global _FILES
     from holon.execution.security import AuthError
     args = build_parser().parse_args(argv)
     cmd: Command = args._command
+    if broker is None and os.environ.get("HOLON_BROKER"):  # an agent under isolation: the broker decides
+        if cmd.path == ("mcp",):
+            from holon import mcp
+            mcp.serve()
+            return 0
+        from holon.execution import isolation
+        return isolation.forward(list(sys.argv[1:] if argv is None else argv), os.environ["HOLON_BROKER"])
+    if broker is not None:
+        from holon.mcp import AGENT_COMMANDS
+        if " ".join(cmd.path) not in (*AGENT_COMMANDS, *BROKER_EXTRA):
+            print(f"holon: `{' '.join(cmd.path)}` is not available to agents", file=sys.stderr)
+            return FORBIDDEN
+        _FILES = broker.get("files") or {}
     k = None
     try:
         from holon.execution.service import Kernel
         home = Home.resolve(args.home)
         k = Kernel(home, actor="anonymous")
-        principal = k.auth.principal(args.token)
+        principal = k.auth.agent_principal(broker.get("token"), broker.get("key")) if broker is not None \
+            else k.auth.principal(args.token)
         if principal.legacy and cmd.mutates and cmd.path != ("init",):
             print("holon: authentication is not configured (open mode); run `holon init` to create the Chair key",
                   file=sys.stderr)
@@ -1030,5 +1114,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"holon: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
     finally:
+        _FILES = None
         if k is not None:
             k.close()

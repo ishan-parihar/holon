@@ -1,0 +1,466 @@
+"""Isolation: agents run as their own Unix user and reach the organization only through the broker.
+
+Without it, an agent runs as the kernel's user, so any agent with a shell can read the Chair key or
+write work.db directly, and every check the kernel makes can be walked around. With `[isolation]
+agent_user` set (docs/GENOME.md §11):
+
+  runner  a small service running AS THE AGENT USER (installed once by root). The kernel sends it a
+          command, a working directory and the run's environment; it starts the process, reports its
+          output and exit code, and stops it when the kernel says the run is over. Harnesses, machine
+          checks and script routines all start here, so nothing an agent wrote runs as the kernel.
+  broker  a small service running AS THE KERNEL'S USER (`holon broker`). An agent's `holon` command
+          (and `holon mcp`) sends its argv and its run token or employee key here instead of opening
+          the databases. The broker authenticates the token, never the Chair key, allows only the
+          commands an employee needs, never takes --home from the caller, and never reads a file on the
+          caller's behalf: file arguments travel inside the request, read by the client as the agent.
+
+Both listen on Linux abstract Unix sockets (no file to squat or chmod) and check the caller's uid
+(SO_PEERCRED). One request per line, JSON both ways.
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import os
+import select
+import signal
+import socket
+import struct
+import subprocess
+import sys
+import shutil
+import threading
+import time
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+
+MAX_REQUEST = 16 << 20
+MAX_FILE = 8 << 20
+
+
+class IsolationError(RuntimeError):
+    pass
+
+
+# ── sockets ─────────────────────────────────────────────────────────────
+def _addr(address: str) -> str:
+    """'@name' is a Linux abstract socket; anything else is a filesystem path."""
+    return "\0" + address[1:] if address.startswith("@") else address
+
+
+def peer_uid(conn: socket.socket) -> int:
+    creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    return struct.unpack("3i", creds)[1]
+
+
+def _send(conn: socket.socket, obj: dict) -> None:
+    conn.sendall(json.dumps(obj).encode() + b"\n")
+
+
+def _recv(f) -> dict | None:
+    line = f.readline(MAX_REQUEST + 1)
+    if not line:
+        return None
+    if len(line) > MAX_REQUEST:
+        raise IsolationError("request too large")
+    return json.loads(line)
+
+
+def listen(address: str) -> socket.socket:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(_addr(address))
+    s.listen(16)
+    return s
+
+
+def connect(address: str, timeout: float | None = 30) -> socket.socket:
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect(_addr(address))
+    except OSError as e:
+        s.close()
+        raise IsolationError(f"cannot reach {address}: {e}") from None
+    return s
+
+
+# ── the broker: the organization, for agents ─────────────────────────────
+def _strip_globals(argv: list[str]) -> list[str]:
+    """Drop the caller's --home and --token: the broker names the instance, the token travels apart."""
+    out, skip = [], False
+    for a in argv:
+        if skip:
+            skip = False
+        elif a in ("--home", "--token"):
+            skip = True
+        elif not a.startswith(("--home=", "--token=")):
+            out.append(a)
+    return out
+
+
+def handle_broker(conn: socket.socket, home: str, allowed_uids: set[int]) -> None:
+    from holon import cli
+    with conn, conn.makefile("rb") as f:
+        if peer_uid(conn) not in allowed_uids:
+            _send(conn, {"code": cli.FORBIDDEN, "stdout": "", "stderr": "holon broker: your uid may not call it\n"})
+            return
+        try:
+            req = _recv(f)
+        except (ValueError, IsolationError) as e:
+            _send(conn, {"code": 2, "stdout": "", "stderr": f"holon broker: bad request: {e}\n"})
+            return
+        if req is None:
+            return
+        out, err = io.StringIO(), io.StringIO()
+        stdin = sys.stdin
+        sys.stdin = io.StringIO(req.get("stdin") or "")
+        try:
+            with redirect_stdout(out), redirect_stderr(err):
+                try:
+                    code = cli.main(["--home", home, *_strip_globals(list(req.get("argv") or []))],
+                                    broker={"token": req.get("token"), "key": req.get("key"),
+                                            "files": dict(req.get("files") or {})})
+                except SystemExit as e:  # argparse usage errors and --help
+                    code = e.code if isinstance(e.code, int) else 2
+        finally:
+            sys.stdin = stdin
+        _send(conn, {"code": code, "stdout": out.getvalue(), "stderr": err.getvalue()})
+
+
+def serve_broker(home: str, address: str, allowed_uids: set[int], stop: threading.Event | None = None,
+                 server: socket.socket | None = None) -> None:
+    """Serve until `stop` is set. ponytail: one request at a time (cli.main swaps sys.stdout); requests take
+    milliseconds, so a thread per request only matters if a slow agent command appears."""
+    srv = server or listen(address)
+    srv.settimeout(0.5)
+    with srv:
+        while not (stop and stop.is_set()):
+            try:
+                conn, _ = srv.accept()
+            except socket.timeout:
+                continue
+            conn.settimeout(60)
+            try:
+                handle_broker(conn, home, allowed_uids)
+            except OSError:
+                pass
+
+
+def _client_files(argv: list[str]) -> dict[str, str]:
+    """The file arguments of a command (@path for text, --file PATH), read here, as the agent."""
+    files, total = {}, 0
+    for i, a in enumerate(argv):
+        path = key = None
+        if a.startswith("@") and len(a) > 1:
+            path, key = os.path.expanduser(a[1:]), a[1:]
+        elif a == "--file" and i + 1 < len(argv):
+            path, key = argv[i + 1], argv[i + 1]
+        elif a.startswith("--file="):
+            path = key = a[len("--file="):]
+        if path is None or key is None:
+            continue
+        try:
+            with open(path) as fh:
+                files[key] = fh.read(MAX_FILE + 1)
+        except OSError:
+            continue  # the broker will say it was not sent
+        total += len(files[key])
+        if len(files[key]) > MAX_FILE or total > MAX_REQUEST // 2:
+            raise IsolationError(f"{path} is too large to send")
+    return files
+
+
+def forward(argv: list[str], address: str) -> int:
+    """The client: what `holon …` does when HOLON_BROKER is set (an agent under isolation)."""
+    token = os.environ.get("HOLON_RUN_TOKEN")
+    for i, a in enumerate(argv):
+        if a == "--token" and i + 1 < len(argv):
+            token = argv[i + 1]
+        elif a.startswith("--token="):
+            token = a[len("--token="):]
+    req = {"argv": argv, "token": token, "key": os.environ.get("HOLON_KEY"), "files": _client_files(argv),
+           "stdin": sys.stdin.read() if "-" in argv else ""}
+    try:
+        with connect(address, timeout=300) as s, s.makefile("rb") as f:
+            _send(s, req)
+            resp = _recv(f)
+    except (IsolationError, OSError, ValueError) as e:
+        print(f"holon: the broker is unreachable ({e})", file=sys.stderr)
+        return 1
+    if resp is None:
+        print("holon: the broker closed the connection", file=sys.stderr)
+        return 1
+    sys.stdout.write(resp.get("stdout") or "")
+    sys.stderr.write(resp.get("stderr") or "")
+    return int(resp.get("code") or 0)
+
+
+# ── the runner: processes, started as the agent user ──────────────────────
+def _kill(proc: subprocess.Popen, sig: int) -> None:
+    try:
+        os.killpg(proc.pid, sig)
+    except ProcessLookupError:
+        pass
+
+
+def handle_runner(conn: socket.socket, allowed_uids: set[int]) -> None:
+    with conn, conn.makefile("rb") as f:
+        if peer_uid(conn) not in allowed_uids:
+            _send(conn, {"error": "your uid may not start processes here"})
+            return
+        req = _recv(f)
+        if req is None:
+            return
+        try:
+            proc = subprocess.Popen(req["cmd"], shell=True, cwd=req["cwd"], env={**os.environ, **req.get("env", {})},
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+        except OSError as e:
+            _send(conn, {"exit_code": 127, "stdout": "", "stderr": f"runner: {e}"})
+            return
+        stopped = threading.Event()
+
+        def watch() -> None:  # the kernel says "stop" (the run is over) or hangs up
+            try:
+                msg = _recv(f)
+            except (OSError, ValueError, IsolationError):
+                msg = None
+            if msg is None or msg.get("stop"):
+                stopped.set()
+                _kill(proc, signal.SIGTERM)
+        threading.Thread(target=watch, daemon=True).start()
+        deadline = time.monotonic() + float(req.get("timeout_s") or 3600)
+        try:
+            stdout, stderr = proc.communicate(timeout=max(0.1, deadline - time.monotonic()))
+            code = proc.returncode
+        except subprocess.TimeoutExpired:
+            _kill(proc, signal.SIGKILL)
+            stdout, _ = proc.communicate()
+            code, stderr = 124, f"timed out after {req.get('timeout_s')}s"
+        if stopped.is_set():
+            _kill(proc, signal.SIGKILL)
+        try:
+            _send(conn, {"exit_code": code, "stdout": stdout, "stderr": stderr, "stopped": stopped.is_set()})
+        except OSError:
+            pass
+
+
+def serve_runner(address: str, allowed_uids: set[int], stop: threading.Event | None = None,
+                 server: socket.socket | None = None) -> None:
+    """One thread per process: runs are long and several run at once."""
+    srv = server or listen(address)
+    srv.settimeout(0.5)
+    with srv:
+        while not (stop and stop.is_set()):
+            try:
+                conn, _ = srv.accept()
+            except socket.timeout:
+                continue
+            threading.Thread(target=handle_runner, args=(conn, allowed_uids), daemon=True).start()
+
+
+def run(address: str, cmd: str, cwd: str, env: dict, timeout_s: float, alive=None,
+        alive_every_s: float = 60.0) -> tuple[int, str, str]:
+    """Start `cmd` through the runner and wait; `alive()` returning False stops it (the run's result is
+    already in). `env` is added to the runner's own environment: the kernel's never crosses over."""
+    s = connect(address, timeout=None)
+    with s, s.makefile("rb") as f:
+        _send(s, {"cmd": cmd, "cwd": cwd, "env": env, "timeout_s": timeout_s})
+        stop_sent = False
+        while not select.select([s], [], [], alive_every_s)[0]:  # select, not timeouts: a timed-out reader is dead
+            if not stop_sent and alive and alive() is False:
+                _send(s, {"stop": True})
+                stop_sent = True
+        resp = _recv(f)
+    if resp is None:
+        raise IsolationError("the runner closed the connection")
+    if "error" in resp:
+        raise IsolationError(resp["error"])
+    err = resp["stderr"] + ("\n[stopped: the run's result was already in]" if resp.get("stopped") else "")
+    return (0 if resp.get("stopped") else resp["exit_code"]), resp["stdout"], err
+
+
+def share_run_dir(path, agent_user: str) -> None:
+    """A run directory the agent user may read and add its result to, but where it cannot replace what the
+    kernel wrote: sticky, owned by the kernel, the agent granted rwx by ACL, kernel files readable only.
+    The kernel's log is created now, so the agent cannot plant a symlink where the kernel later writes."""
+    path = str(path)
+    open(os.path.join(path, "driver.log"), "a").close()
+    os.chmod(path, 0o1700)
+    files = [os.path.join(path, f) for f in os.listdir(path) if f != "result.json"]
+    for cmd in (["setfacl", "-m", f"u:{agent_user}:rwx", path],
+                *([["setfacl", "-m", f"u:{agent_user}:r", *files]] if files else [])):
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        if p.returncode:
+            raise IsolationError(f"{' '.join(cmd[:3])} failed: {p.stderr.strip()}")
+
+
+# ── reading what an agent wrote ──────────────────────────────────────────
+def read_agent_file(path) -> str | None:
+    """A file an agent wrote (result.json), read without following a symlink it may have planted and
+    only if it is a regular file of sane size. None if absent."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise IsolationError(f"{path}: refused ({e.strerror}: a symlink?)") from None
+    with os.fdopen(fd) as fh:
+        st = os.fstat(fh.fileno())
+        if not (st.st_mode & 0o170000 == 0o100000) or st.st_size > MAX_FILE:
+            raise IsolationError(f"{path}: not a regular file of at most {MAX_FILE} bytes")
+        return fh.read()
+
+
+# ── setting it up, and checking that it holds ─────────────────────────────
+def _chain(path: Path, top: Path) -> list[Path]:
+    """The directories from `top` down to (not including) `path`."""
+    rel = path.relative_to(top)
+    return [top.joinpath(*rel.parts[:i]) for i in range(len(rel.parts))]
+
+
+def reach(k) -> dict:
+    """What the agent user needs: trees it writes (the departments' reach, `[isolation] grants`, harness
+    homes named in driver environments), trees it only reads (`[isolation] reads`, the kernel distribution,
+    harness binaries) and the run directories."""
+    from holon.execution import drivers
+    c = k.config["isolation"]
+    writes = {Path(r).expanduser() for r in c.get("grants") or []}
+    for s in k.scopes():
+        writes |= {Path(r) for r in s["roots"]}
+    reads = {Path(r).expanduser() for r in c.get("reads") or []} | {Path(__file__).resolve().parents[2]}
+    for d in drivers.available(k.home).values():
+        writes |= {Path(v) for v in d.env.values() if v.startswith("/") and Path(v).is_dir()}
+        exe = d.command.split()[0] if d.command.split() else ""
+        found = shutil.which(exe) if exe else None
+        if found:
+            reads.add(Path(found).resolve())
+    return {"writes": sorted(p.resolve() for p in writes if p.exists()),
+            "reads": sorted(p.resolve() for p in reads if p.exists()), "runs": k.home.runs_dir.resolve()}
+
+
+def setup_plan(k) -> dict:
+    """The one-time setup: a script for root (the agent user and its runner service) and the ACLs the
+    kernel's user applies (`holon isolation apply`). Inside the kernel user's home, which agents must
+    never read, the agent may only traverse the directories leading to what it needs; every other entry
+    in those directories, and every future one, carries an explicit deny for the agent user, because
+    the files there are typically world-readable (0644) and only the home's own 0700 keeps others out."""
+    import pwd
+    iso = k.isolation
+    if not iso:
+        raise IsolationError("set [isolation] agent_user first")
+    agent, me = iso["agent_user"], pwd.getpwuid(os.getuid())
+    top = Path(me.pw_dir).resolve()
+    r = reach(k)
+    targets = [(p, "rwX") for p in r["writes"]] + [(p, "rX") for p in r["reads"]] + [(r["runs"], "x")]
+    chains: set[Path] = set()
+    for p, _ in targets:
+        if p.is_relative_to(top):
+            chains |= set(_chain(p, top))
+    keep = chains | {p for p, _ in targets}
+    acl: list[list[str]] = []
+    for d in sorted(chains):
+        acl.append(["setfacl", "-m", f"u:{agent}:x", str(d)])  # -d applies to a whole command: two commands
+        acl.append(["setfacl", "-d", "-m", f"u:{agent}:---", str(d)])
+        others = [str(c) for c in sorted(d.iterdir()) if c not in keep and not c.is_symlink()]
+        if others:
+            acl.append(["setfacl", "-m", f"u:{agent}:---", *others])
+    for p, mode in targets:
+        if mode == "x":
+            acl.append(["setfacl", "-m", f"u:{agent}:x", str(p)])
+            acl.append(["setfacl", "-d", "-m", f"u:{agent}:---", str(p)])
+        elif p.is_dir():
+            acl.append(["setfacl", "-R", "-m", f"u:{agent}:{mode}", str(p)])
+            acl.append(["setfacl", "-R", "-d", "-m", f"u:{agent}:{mode}", str(p)])
+        else:
+            acl.append(["setfacl", "-m", f"u:{agent}:{mode.replace('X', 'x')}", str(p)])
+    unit = f"holon-runner-{k.auth.instance_id}"
+    dist = Path(__file__).resolve().parents[2]
+    root = f"""#!/bin/sh
+# Holon isolation: the part only root can do, once (docs/GENOME.md §11). Creates the agent user and the
+# runner service that starts agent processes as that user for this instance's kernel (uid {me.pw_uid}).
+set -eu
+id -u {agent} >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/{agent} --shell /usr/sbin/nologin {agent}
+cat > /etc/systemd/system/{unit}.service <<'UNIT'
+[Unit]
+Description=Holon runner: agent processes as {agent} for {me.pw_name}'s instance {k.auth.instance_id}
+After=network-online.target
+
+[Service]
+User={agent}
+WorkingDirectory=/var/lib/{agent}
+Environment=PYTHONPATH={dist}
+ExecStart={sys.executable} -m holon.execution.isolation runner --address {iso["runner"]} --allow-uid {me.pw_uid}
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now {unit}.service
+"""
+    return {"agent_user": agent, "root_script": root, "acl": acl, "runner_unit": unit, **{k_: [str(x) for x in v]
+            for k_, v in (("writes", r["writes"]), ("reads", r["reads"]))}, "runs": str(r["runs"])}
+
+
+def secrets(k) -> list[str]:
+    """What an agent must never read: the Chair key and its directory's files, the databases, the config
+    and the dashboard's credentials."""
+    key = k.auth.chair_key_path()
+    out = {key, k.home.work_db, k.home.memory_db, k.home.config_file}
+    for d in {key.parent, key.parent.parent}:
+        if d.is_dir():
+            out |= {p for p in d.iterdir() if p.is_file()}
+    out |= set(k.home.root.glob("adapters/notion/*.json"))
+    return sorted(str(p) for p in out if p.exists())
+
+
+def probe(k) -> dict:
+    """Ask the runner, as the agent user, who it is and what it can reach (doctor's isolation checks)."""
+    import shlex
+    iso = k.isolation
+    r = reach(k)
+
+    def ask(test: str, paths: list, report_when: str) -> list[str]:  # in chunks: one shell argument is <128 KB
+        out = []
+        for i in range(0, len(paths), 200):
+            q = " ".join(shlex.quote(str(p)) for p in paths[i:i + 200])
+            _, o, _ = run(iso["runner"], f'for f in {q}; do test {test} "$f" {report_when} echo "$f"; done; true', "/",
+                          {}, 60)
+            out += [x for x in o.splitlines() if x]
+        return out
+    code, user, err = run(iso["runner"], "id -un", "/", {}, 30)
+    return {"user": user.strip(), "error": err.strip() if code else "",
+            "readable_secrets": ask("-r", secrets(k), "&&"), "unwritable": ask("-w", r["writes"], "||"),
+            "unreadable": ask("-r", r["reads"], "||")}
+
+
+def apply(plan: dict) -> list[str]:
+    """Apply the ACL plan as the kernel's user; returns the commands that failed (e.g. an entry owned by
+    another user), so the caller can say so. Re-running it is harmless."""
+    failed = []
+    for cmd in plan["acl"]:
+        p = subprocess.run(cmd, capture_output=True, text=True)
+        if p.returncode:
+            failed.append(f"{' '.join(cmd)}: {p.stderr.strip()}")
+    return failed
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`python3 -m holon.execution.isolation runner --address @NAME --allow-uid UID`: the runner, started
+    by its service as the agent user. It opens no instance: it only starts processes for the kernel."""
+    import argparse
+    ap = argparse.ArgumentParser(prog="holon-runner")
+    ap.add_argument("role", choices=["runner"])
+    ap.add_argument("--address", required=True)
+    ap.add_argument("--allow-uid", type=int, action="append", required=True)
+    a = ap.parse_args(argv)
+    print(f"holon runner on {a.address} as uid {os.getuid()}, for uids {a.allow_uid}", flush=True)
+    serve_runner(a.address, set(a.allow_uid))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

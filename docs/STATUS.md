@@ -66,13 +66,18 @@ whose inputs changed (AGENTS.md).
 
 - Redeploy the VPS with everything since the morning of 2026-10-13.
 - Turn on the workstation heartbeat (`holon-tick.timer`).
+- Run the one-time isolation setup on the workstation (root creates `holon-agent` and its runner;
+  `docs/design/2026-10-13-trust-boundary.md` §3). Until then `holon doctor` warns `isolation.off`.
+- Decision-model quota: OpenRouter's free tier allows 50 decisions a day (1000 after a one-time
+  10-credit top-up); the Cline API cannot serve these models.
 - Which venture moves first, as a pilot department of routines (`docs/design/2026-10-13-lanes-and-decision-models.md` §4).
 
 ## 6. What is next
 
 The ranked list is `docs/design/2026-10-13-paperclip-contrast.md` §4. G3 is built (lanes, routines,
-rubrics, decision models: `2026-10-13-lanes-and-decision-models.md`). In order: the trust boundary
-(G1, separate users and a broker), intake keys (G4), department secrets (G8), the Notion mirror
+rubrics, decision models: `2026-10-13-lanes-and-decision-models.md`) and so is G1 (the agent user,
+runner and broker: `2026-10-13-trust-boundary.md`; its root setup waits for the Chair). In order:
+intake keys (G4), department secrets (G8), the Notion mirror
 window (G2), then one venture as a pilot department of routines.
 
 ## 7. Reading order for a new agent
@@ -82,7 +87,7 @@ window (G2), then one venture as a pilot department of routines.
 3. `AGENTS.md`: the code map, the laws lint enforces, the regression ledger.
 4. `docs/GENOME.md` (departments, roles, configuration) and `docs/CONTRACT.md` (the harness
    contract).
-5. `docs/design/` newest first: `2026-10-13-lanes-and-decision-models.md`, `2026-10-13-paperclip-contrast.md`, then
+5. `docs/design/` newest first: `2026-10-13-trust-boundary.md`, `2026-10-13-lanes-and-decision-models.md`, `2026-10-13-paperclip-contrast.md`, then
    `2026-10-13-system-red-team.md`; older records explain why things are the way they are.
 6. The README of the adapter you touch (`adapters/<name>/README.md`), which records what the real
    harness does.

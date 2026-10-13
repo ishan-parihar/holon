@@ -127,6 +127,10 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[classifier]` | `min_confidence` | 0.8 | below it, a lane or routing choice falls back to the safe default (full, or the executive) |
 | `[classifier]` | `pass_p` | 0.85 | the probability every rubric criterion must reach for a result to close without a verifier |
 | `[metrics]` | `rubric_agreement_min` | 0.8 | the share of rubric-passed results a sampled verifier also passes; below it the department retro is due |
+| `[isolation]` | `agent_user` | "" (off) | the Unix user agents run as (§11); off, they run as the kernel's user and `holon doctor` warns |
+| `[isolation]` | `broker`, `runner` | `@holon-broker-<instance>`, `@holon-runner-<instance>` | the abstract Unix socket names of the broker and the runner |
+| `[isolation]` | `grants` | [] | trees the agent user may write beyond the departments' `[scope]` roots (workdirs, harness homes) |
+| `[isolation]` | `reads` | [] | trees it may only read (beyond the kernel distribution and the drivers' binaries) |
 | `[classes]` | `org`, `<dept slug>` | (any) | the task classes work may carry, organization-wide and per department; agents proposing work with another class breach the contract, `holon doctor` warns about open work outside it. Track records (novelty floors, earned authority, sampling) accrue per class, so a small shared taxonomy is what lets trust grow |
 
 ## 7. Operations
@@ -235,4 +239,36 @@ with calibrated probabilities in about a second, without spending an agent sessi
 The invariant: the model can make the organization more careful on its own; it lets work skip a
 step only where the kernel's deterministic floor allows it too. Its key lives in a 0600 file the
 kernel reads and never reaches a run's environment.
+
+## 11. Isolation: the trust boundary
+
+The kernel checks run tokens, separation of duties and grades inside the `holon` process. If that
+process runs as the agent's own Unix user, an agent with a shell can read the Chair key or write
+`work.db` and walk around all of it. Isolation puts a Unix user between them:
+
+| Part | Runs as | Does |
+|---|---|---|
+| runner (`python3 -m holon.execution.isolation runner`, a system service root installs once) | the agent user | starts harnesses, machine checks and script routines for the kernel, with only the run's environment; stops them when the kernel says the run is over |
+| broker (`holon broker`, a user service) | the kernel's user | answers agents' `holon` calls (and `holon mcp`'s): authenticates each by run token or employee key, never the Chair key; agent commands only; ignores `--home`; reads no file the client did not send |
+| run directories | the kernel's user, sticky, the agent granted by ACL | the agent reads its brief and writes `result.json`; it cannot replace what the kernel wrote |
+| ACLs (`holon isolation apply`) | the kernel's user | the agent may traverse only the directories leading to its trees (`[scope]` roots, `[isolation] grants`, harness homes), the kernel distribution and harness binaries; every other entry on the way, and every future one, is denied to it |
+
+Both services listen on abstract Unix sockets and check the caller's uid. Set up, once:
+
+```sh
+holon isolation plan --write /tmp/holon-isolation.sh   # review it
+sudo sh /tmp/holon-isolation.sh                        # root: the agent user and its runner service
+holon isolation apply                                  # you: the ACLs
+python3 install.py --systemd                           # writes and starts holon-broker
+holon doctor                                           # the isolation checks
+```
+
+`holon doctor` checks the boundary from the agent's side: it asks the runner, as the agent user, who
+it is, whether it can read any secret (the Chair key and the files beside it, the databases,
+`holon.toml`, the dashboard's credentials), whether it can write its trees and read its binaries,
+and whether the broker answers. Each failure is an error, so the heartbeat opens an incident.
+
+Limits: agents share one Unix user, so one agent could read another's run directory (and its run
+token); per-department users would close that. The model key a harness needs is readable by the
+agent user by design.
 

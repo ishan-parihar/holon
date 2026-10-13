@@ -130,6 +130,19 @@ class Auth:
             self.conn.execute("UPDATE employees SET key_hash=NULL WHERE id=?", (employee_id,))
 
     # ── resolution ────────────────────────────────────────────────────────
+    def agent_principal(self, token: str | None, key: str | None) -> Principal:
+        """Who an agent is, from what it sent the broker: a run token or an employee key, else nobody.
+        Never the Chair: the broker runs as the kernel's user, where the Chair key file is readable."""
+        if token:
+            return self.principal(token)
+        if key:
+            r = self.conn.execute("SELECT id FROM employees WHERE key_hash=? AND status IN ('active','probation')",
+                                  (digest(key.strip()),)).fetchone()
+            if r is None:
+                raise AuthError("employee key is unknown, revoked, or its employee is inactive")
+            return Principal("employee", r["id"])
+        return Principal("anonymous")
+
     def principal(self, token: str | None = None) -> Principal:
         token = token or os.environ.get("HOLON_RUN_TOKEN")
         if token:

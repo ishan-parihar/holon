@@ -148,7 +148,7 @@ def render(driver: Driver, brief: dict) -> tuple[str, str]:
     return cmd, cwd
 
 
-def run_env(home: Home, brief: dict, token: str | None) -> dict[str, str]:
+def run_env(home: Home, brief: dict, token: str | None, broker: str | None = None) -> dict[str, str]:
     """The environment every push-mode run gets (docs/CONTRACT.md §1 lists it; `holon lint` checks that)."""
     stage = brief["stage"]
     env = {**kernel_env(home), "HOLON_RUN_ID": brief["run_id"], "HOLON_TASK_ID": brief["task_id"],
@@ -157,56 +157,43 @@ def run_env(home: Home, brief: dict, token: str | None) -> dict[str, str]:
            "HOLON_RESULT_PATH": brief["result_path"]}
     if token:
         env["HOLON_RUN_TOKEN"] = token
+    if broker:  # isolation: the agent's `holon` talks to the broker, not to the databases
+        env["HOLON_BROKER"] = broker
     return env
 
 
 def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive=None,
-        alive_every_s: float = 60.0) -> dict:
+        alive_every_s: float = 60.0, isolation: dict | None = None) -> dict:
     """Invoke the harness and return {'exit_code', 'envelope' | None, 'log_path', 'stdout_tail'}.
     `alive()` is called every `alive_every_s` while the harness process runs (the kernel renews the
     run's lease with it), so a lease expires only when the dispatcher itself has died. When it returns
     False (the agent already handed in its result, or the run was reclaimed) the harness is stopped:
-    whatever it does after that cannot change the outcome and only holds the department's slot."""
+    whatever it does after that cannot change the outcome and only holds the department's slot.
+    `isolation` ({"runner", "broker"}): the harness starts through the runner, as the agent user, with only
+    the run's environment (never the kernel's), and reaches the organization through the broker."""
     if brief["stage"] not in driver.stages:
         raise DriverError(f"driver {driver.name} does not serve the '{brief['stage']}' stage")
     cmd, cwd = render(driver, brief)
     if not Path(cwd).is_dir():
         cwd = str(Path(brief["brief_md"]).parent)
-    clean = {k: v for k, v in os.environ.items() if k not in ("HOLON_CHAIR_KEY", "HOLON_KEY")}
-    env = {**clean, **run_env(home, brief, token), **driver.env}
     log_path = Path(brief["brief_md"]).parent / "driver.log"
-    proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            text=True, start_new_session=True)
-    deadline = time.monotonic() + driver.timeout_s
-    while True:
-        try:
-            stdout, stderr = proc.communicate(timeout=max(0.1, min(alive_every_s, deadline - time.monotonic())))
-            exit_code = proc.returncode
-            break
-        except subprocess.TimeoutExpired:
-            if time.monotonic() >= deadline:
-                os.killpg(proc.pid, signal.SIGKILL)  # the shell and the harness it started
-                stdout, _ = proc.communicate()
-                exit_code, stderr = 124, f"driver timed out after {driver.timeout_s}s"
-                break
-            if alive and alive() is False:
-                os.killpg(proc.pid, signal.SIGTERM)
-                try:
-                    stdout, stderr = proc.communicate(timeout=10)
-                except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                    stdout, stderr = proc.communicate()
-                exit_code, stderr = 0, (stderr or "") + "\n[stopped: the run's result was already in]"
-                break
+    if isolation:
+        from holon.execution import isolation as iso
+        env = {**run_env(home, brief, token, isolation["broker"]), **driver.env}
+        exit_code, stdout, stderr = iso.run(isolation["runner"], cmd, cwd, env, driver.timeout_s, alive, alive_every_s)
+    else:
+        clean = {k: v for k, v in os.environ.items() if k not in ("HOLON_CHAIR_KEY", "HOLON_KEY")}
+        env = {**clean, **run_env(home, brief, token), **driver.env}
+        exit_code, stdout, stderr = execute(cmd, cwd, env, driver.timeout_s, alive, alive_every_s)
     log_path.write_text(f"$ {cmd}\n[cwd] {cwd}\n[exit] {exit_code}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n")
     envelope = None
     outer = extract_last_json(stdout) if driver.result == "stdout-json" else None
-    result_path = Path(brief["result_path"])
-    if result_path.exists():
-        try:
-            envelope = json.loads(result_path.read_text())
-        except json.JSONDecodeError:
-            envelope = None
+    try:
+        from holon.execution.isolation import read_agent_file
+        text = read_agent_file(brief["result_path"])
+        envelope = json.loads(text) if text is not None else None
+    except (ValueError, OSError, RuntimeError):
+        envelope = None
     if envelope is None and outer is not None:
         envelope = outer
         reply = next((outer[k] for k in ("result", "text") if isinstance(outer.get(k), str)), None)
@@ -218,6 +205,35 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive
         usage = {**calls, "cost": (usage or {}).get("cost")}
     return {"exit_code": exit_code, "envelope": envelope, "log_path": str(log_path), "stdout_tail": stdout[-4000:],
             "stderr_tail": stderr[-2000:], "usage": usage}
+
+
+def execute(cmd: str, cwd: str, env: dict, timeout_s: float, alive=None, alive_every_s: float = 60.0
+            ) -> tuple[int, str, str]:
+    """Run a shell command in its own process group as this user; (exit code, stdout, stderr)."""
+    proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            text=True, start_new_session=True)
+    deadline = time.monotonic() + timeout_s
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=max(0.1, min(alive_every_s, deadline - time.monotonic())))
+            exit_code = proc.returncode
+            break
+        except subprocess.TimeoutExpired:
+            if time.monotonic() >= deadline:
+                os.killpg(proc.pid, signal.SIGKILL)  # the shell and the harness it started
+                stdout, _ = proc.communicate()
+                exit_code, stderr = 124, f"driver timed out after {timeout_s}s"
+                break
+            if alive and alive() is False:
+                os.killpg(proc.pid, signal.SIGTERM)
+                try:
+                    stdout, stderr = proc.communicate(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                    stdout, stderr = proc.communicate()
+                exit_code, stderr = 0, (stderr or "") + "\n[stopped: the run's result was already in]"
+                break
+    return exit_code, stdout, stderr
 
 
 def usage_of(outer: dict | None) -> dict | None:

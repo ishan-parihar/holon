@@ -22,6 +22,7 @@ reading order.
 | `holon/execution/service.py` | the kernel: genome rules, claims, ingestion, sampling, triggers, metrics |
 | `holon/execution/security.py` | the Chair key, employee keys, run tokens |
 | `holon/execution/{briefs,drivers,grading,schedules,staleness,cron}.py` | the harness contract and scheduling |
+| `holon/execution/isolation.py` | the trust boundary: the runner (agent processes as the agent user), the broker (the organization for agents), setup plan and doctor's probe |
 | `holon/capabilities/{memory,context,skills}.py` | memory (**only writer of memory.db**), context bundles, the skills library |
 | `holon/capabilities/decisions.py` | the decision-model client (`[classifier]`): lane choice, rubric judge, triage, routing; every caller has a safe default |
 | `holon/skills/` | the standard skills library; role skills hold the stage briefs |
@@ -118,6 +119,7 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | Notion webhooks | the tunnel dialled the edge over a dead IPv6 route after each network blip | `test_a_new_machine_gets_every_database_and_a_rerun_changes_nothing` (edge-ip-version 4) |
 | Notion, lanes deploy | a new kernel column (`lane`) made every push fail on the live workspace until a manual `check --repair` | `test_a_column_added_by_a_kernel_upgrade_reaches_notion_when_the_service_starts` |
 | Notion webhooks | without webhooks, Chair edits waited for the 5-minute full pass | `test_the_poll_fallback_asks_only_for_pages_edited_since` |
+| Trust boundary build | a skill name was never validated, so `skill show ../../…` read any file the kernel's user could; through the broker that is the Chair key | `test_skill_names_cannot_climb_out_of_the_library` |
 | Decision models, live script routine | the free tier's 50 decisions a day ran out (HTTP 429); the judge fell back to a verifier, but nothing said why | `test_a_decision_model_that_is_down_is_never_silent` |
 | Decision models, live run over 61 venture crons | "reaches outside the organization" counted digests to the Chair, flagging 58 of 61 jobs (9 after the fix) | `test_reports_to_the_chair_do_not_count_as_reaching_outside` |
 | Notion webhooks | the public URL was set up by hand, so a new machine had no webhooks | `test_a_new_machine_gets_every_database_and_a_rerun_changes_nothing` |

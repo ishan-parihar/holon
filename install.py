@@ -29,6 +29,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import tomllib
 import shutil
 import socket
 import sys
@@ -59,7 +60,7 @@ def holon(env: dict, *args: str, check: bool = True) -> subprocess.CompletedProc
 def unit(name: str, home: Path, extra_env: dict) -> str:
     text = (ROOT / ("adapters/notion" if name == "holon-notion.service" else "adapters/systemd") / name).read_text()
     text = text.replace("Environment=HOLON_HOME=%h/holon", f"Environment=HOLON_HOME={home}")
-    text = text.replace("%h/src/holon", str(ROOT)).replace("/usr/bin/env holon tick", f"{ROOT}/bin/holon tick")
+    text = text.replace("%h/src/holon", str(ROOT)).replace("/usr/bin/env holon ", f"{ROOT}/bin/holon ")
     env_lines = "".join(f"Environment={k}={v}\n" for k, v in extra_env.items())
     return text.replace("[Service]\n", "[Service]\n" + env_lines, 1)
 
@@ -192,7 +193,10 @@ def main(argv: list[str] | None = None) -> int:
         print("6. systemd user units")
         dest = Path(a.systemd_dir).expanduser()
         dest.mkdir(parents=True, exist_ok=True)
-        names = ["holon-tick.service", "holon-tick.timer"] + (["holon-notion.service"] if notion_cfg.exists() else [])
+        isolated = bool(tomllib.loads((home / "holon.toml").read_text()).get("isolation", {}).get("agent_user")) \
+            if (home / "holon.toml").exists() else False
+        names = ["holon-tick.service", "holon-tick.timer"] + (["holon-notion.service"] if notion_cfg.exists() else []) \
+            + (["holon-broker.service"] if isolated else [])
         for name in names:
             (dest / name).write_text(unit(name, home, {}))
             print(f"  wrote {dest / name}")
@@ -213,7 +217,7 @@ WantedBy=default.target
             names.append(f"cloudflared-{TUNNEL}.service")
             print(f"  wrote {dest / names[-1]}")
         if not a.no_start:
-            start = (["holon-tick.timer"] if a.heartbeat else []) + [n for n in names if "notion" in n]
+            start = (["holon-tick.timer"] if a.heartbeat else []) + [n for n in names if "notion" in n or "broker" in n]
             run(["systemctl", "--user", "daemon-reload"], env)
             if start:
                 run(["systemctl", "--user", "enable", *start], env)

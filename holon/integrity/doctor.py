@@ -14,6 +14,38 @@ from holon.core.db import event_hash, now
 from holon.execution import autonomy
 
 
+def _isolation(k, add) -> None:
+    """The trust boundary (docs/GENOME.md §11), checked from the agent's side: the runner is asked, as the
+    agent user, who it is and what it can reach."""
+    if not k.auth.configured:
+        return
+    if not k.isolation:
+        add("warning", "isolation.off", "agents run as the kernel's user: one with a shell can read the Chair key and "
+            "write work.db (set [isolation] agent_user; `holon isolation plan`)")
+        return
+    from holon.execution import isolation
+    try:
+        p = isolation.probe(k)
+    except (isolation.IsolationError, OSError) as e:
+        add("error", "isolation.runner", f"the runner does not answer ({e}): no agent can run")
+        return
+    if p["error"] or p["user"] != k.isolation["agent_user"]:
+        add("error", "isolation.runner", f"the runner runs as {p['user']!r}, not {k.isolation['agent_user']!r}"
+            + (f" ({p['error']})" if p["error"] else ""))
+    for f in p["readable_secrets"]:
+        add("error", "isolation.secrets", f"the agent user can read {f}")
+    for f in p["unwritable"]:
+        add("error", "isolation.reach", f"the agent user cannot write {f}, which is in its reach (holon isolation apply)")
+    for f in p["unreadable"]:
+        add("error", "isolation.reach", f"the agent user cannot read {f}, which it needs (holon isolation apply)")
+    try:
+        with isolation.connect(k.isolation["broker"], timeout=5):
+            pass
+    except isolation.IsolationError as e:
+        add("error", "isolation.broker", f"{e}: agents cannot reach the organization (systemctl --user start "
+            "holon-broker)")
+
+
 def run(k) -> list[dict]:
     out: list[dict] = []
 
@@ -22,6 +54,8 @@ def run(k) -> list[dict]:
 
     w = k.wconn
     q = lambda sql, *a: w.execute(sql, a).fetchall()  # noqa: E731
+
+    _isolation(k, add)
 
     # databases
     for name, conn in (("work.db", k.wconn), ("memory.db", k.mconn)):

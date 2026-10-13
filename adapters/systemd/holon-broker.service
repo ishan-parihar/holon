@@ -1,0 +1,14 @@
+[Unit]
+Description=Holon broker: the organization, for agents running as [isolation] agent_user
+After=network-online.target
+
+[Service]
+Environment=HOLON_HOME=%h/holon
+# `holon broker` is a kernel command (Chair key file). It serves agents' `holon` calls on an abstract
+# Unix socket, authenticating each by its run token or employee key, never by the Chair key.
+ExecStart=/usr/bin/env holon broker
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

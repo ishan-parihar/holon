@@ -97,35 +97,24 @@ def _run_cli(argv: list[str]) -> tuple[int, str, str]:
     return rc, out.getvalue(), err.getvalue()
 
 
-def _principal():
-    from holon.core.paths import Home
-    from holon.execution.service import Kernel
-    k = Kernel(Home.resolve(None), actor="anonymous")
-    try:
-        return k.auth.principal(None), k.home
-    finally:
-        k.close()
-
-
 def call(name: str, arguments: dict) -> tuple[bool, str]:
     """Run one tool; returns (is_error, text)."""
     from holon.cli import REGISTRY
     if name == "holon_whoami":
-        p, home = _principal()
-        if p.kind != "employee":
-            return False, json.dumps({"principal": p.kind, "note": "not an employee session"})
-        rc, card, err = _run_cli(["emp", "card", p.employee_id])
-        info = {"employee_id": p.employee_id, "run_id": p.run_id, "home": str(home),
-                "identity": json.loads(card).get("markdown") if rc == 0 else err.strip()}
-        if p.run_id:
-            rc, run, _ = _run_cli(["run", "show", p.run_id])
-            if rc == 0:
-                r = json.loads(run)
-                info["stage"] = {k: r["stage"][k] for k in ("id", "stage", "parent_id", "title")}
-                info["brief_md"] = str(home.run_dir(p.run_id) / "BRIEF.md")
+        rc, out, err = _run_cli(["whoami"])
+        if rc != 0:
+            return True, err.strip()
+        info = json.loads(out)
+        if info["principal"] != "employee":
+            return False, json.dumps({"principal": info["principal"], "note": "not an employee session"})
+        rc, card, err = _run_cli(["emp", "card", info["employee_id"]])
+        info["identity"] = json.loads(card).get("markdown") if rc == 0 else err.strip()
         return False, json.dumps(info, indent=2)
     if name == "holon_submit":
-        run_id = arguments.get("run_id") or _principal()[0].run_id
+        run_id = arguments.get("run_id")
+        if not run_id:
+            rc, out, _ = _run_cli(["whoami"])
+            run_id = json.loads(out).get("run_id") if rc == 0 else None
         if not run_id:
             return True, "no run: pass run_id, or call from a run (HOLON_RUN_TOKEN)"
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:

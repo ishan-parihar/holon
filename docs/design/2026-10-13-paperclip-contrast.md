@@ -55,7 +55,10 @@ billing) serves a product with many users. Holon serves one Chair; its leverage 
 Ranked by leverage: what the gap blocks (safety first, then running the ventures), divided by
 the effort to close it.
 
-### G1. Authority can be bypassed by any agent with a shell (safety; Chair)
+### G1. Authority can be bypassed by any agent with a shell (safety; Chair) — built
+
+Built as an agent user, a runner and a broker: `2026-10-13-trust-boundary.md`.
+
 
 The kernel checks run tokens, separation of duties and grades **inside the `holon` process**. That
 process runs as the same Unix user as the agent, so an agent with a general shell can read the

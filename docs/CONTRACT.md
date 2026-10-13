@@ -36,8 +36,13 @@ Environment in push mode:
 | `HOLON_EMPLOYEE_ID` | who is working |
 | `HOLON_BRIEF_DIR`, `HOLON_RESULT_PATH` | where the brief is and where the result goes |
 | `HOLON_RUN_TOKEN` | authenticates this employee for this run only (§6) |
+| `HOLON_BROKER` | set under isolation (GENOME §11): the broker's address; `holon` sends every call there |
 
-The kernel never passes `HOLON_CHAIR_KEY` to a harness.
+The kernel never passes `HOLON_CHAIR_KEY` to a harness. Under isolation the harness gets only these
+variables and the driver's `[env]`, added to the agent user's own environment, never the kernel's.
+The kernel reads `result.json` without following a symlink and only as a regular file of at most
+8 MB; a run directory is sticky, so an agent can add its result but not replace the files the
+kernel wrote.
 
 ## 2. Result envelopes
 
@@ -124,8 +129,11 @@ employee read, message, add to its own memory, heartbeat and submit **its own ru
 key (`HOLON_KEY`, issued with `holon hr key`) does the same for pull-mode sessions. The Chair key
 (`HOLON_CHAIR_KEY`, or the file at `HOLON_CHAIR_KEY_FILE`, by default
 `~/.config/holon/keys/<instance>.chair`) is created by `holon init` outside the instance. Adapters
-must keep it out of every agent's reach: deny `~/.config` to the harness, or run the kernel's
-timer as another user. `holon help --json` lists the actor class each command requires.
+must keep it out of every agent's reach. The kernel does that itself with isolation (GENOME §11):
+agents run as their own Unix user and reach the organization through the broker, which accepts
+only run tokens and employee keys and only the commands an employee needs (`holon mcp`'s tools,
+`submit`, `whoami`, `help`, `task list`, `plan queue`). `holon help --json` lists the actor class
+each command requires.
 
 ## 7. Adapters
 

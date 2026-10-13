@@ -49,6 +49,7 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
 | Routine | a recurring job (a cron job) in the cheapest lane that does it reliably, approved once | `holon routine add`, `execution.work.Work.instantiate_recurring` |
 | Rubric | what each result of a job is judged on, by a decision model before any verifier is spent | `execution.service.Kernel.judge` |
 | Gold standard | the last verified result of the same job: shown to its executor and its judge | `execution.work.Work.gold_standard` |
+| Trust boundary | agents run as their own Unix user and reach the organization only through the broker | `execution.isolation.serve_broker`, `holon isolation plan` |
 | Decision model | a fast classifier with calibrated probabilities for lane choice, judging, triage and routing | `capabilities.decisions.Decider`, `holon classify` |
 
 ## The feedback loops

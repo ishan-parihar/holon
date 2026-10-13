@@ -30,7 +30,7 @@ from holon.core.contract import EnvelopeError
 from holon.core.db import connect, migrate, now, write_txn
 from holon.core.paths import Home
 from holon.core.vocab import CHAIR, EXECUTIVE
-from holon.execution import autonomy, briefs, drivers, genome, grading, security
+from holon.execution import autonomy, briefs, drivers, genome, grading, isolation, security
 from holon.execution.briefs import kernel_env
 from holon.execution.org import Org, approver_ref
 from holon.execution.cron import Cron
@@ -63,6 +63,9 @@ DEFAULT_CONFIG = {
     "lanes": {"fast": True, "script_timeout_s": 600, "external_p_max": 0.5},
     # a decision model for lane choice, rubric judging, failure triage and routing; empty url = off
     "classifier": dict(decisions.DEFAULTS),
+    # the trust boundary (docs/GENOME.md §11): agents run as agent_user, through the runner, and reach the
+    # organization only through the broker; empty agent_user = off (agents run as the kernel's user)
+    "isolation": {"agent_user": "", "broker": "", "runner": "", "grants": []},
 }
 # what each lane costs and is for: the classifier's options, and the order "cheapest first" means
 LANE_OPTIONS = {
@@ -210,6 +213,26 @@ class Kernel:
         self.mconn.close()
 
     # ── helpers ───────────────────────────────────────────────────────────
+    @property
+    def isolation(self) -> dict | None:
+        """{"agent_user", "broker", "runner"} when agents run as their own user, else None."""
+        c = self.config["isolation"]
+        if not c["agent_user"]:
+            return None
+        iid = self.auth.instance_id
+        return {"agent_user": c["agent_user"], "broker": c["broker"] or f"@holon-broker-{iid}",
+                "runner": c["runner"] or f"@holon-runner-{iid}"}
+
+    def _exec(self, cmd: str, cwd: str, env: dict, timeout_s: float) -> tuple[int, str]:
+        """A command the kernel runs for a work (a check, a script): as the agent user when isolated, since
+        it runs code an agent may have written. (exit code, output)."""
+        iso = self.isolation
+        if iso:
+            code, out, err = isolation.run(iso["runner"], cmd, cwd, env, timeout_s)
+        else:
+            code, out, err = drivers.execute(cmd, cwd, {**self._check_env(), **env}, timeout_s)
+        return code, out + err
+
     def _dept_scope(self, dept_id: str | None) -> str | None:
         return f"dept:{self.org.dept(dept_id)['slug']}" if dept_id else None
 
@@ -389,6 +412,8 @@ class Kernel:
             md += self._grade_floor_section(self.work.work_of(node), slug, employee_id)
         bdir = briefs.build(self.home, run, node, md, self.skills, slug, emp,
                             self.identity(emp["id"]) if emp else None, token, scope=self.scope(slug))
+        if self.isolation:
+            isolation.share_run_dir(bdir, self.isolation["agent_user"])
         self.work.set_run_paths(run["id"], str(bdir), str(bdir / "driver.log"))
         return Claimed(run=self.work.get_run(run["id"]), node=node, brief_dir=bdir, token=token, employee=emp)
 
@@ -414,16 +439,19 @@ class Kernel:
         if run["status"] != "running":
             raise TransitionError(f"run {run_id} is '{run['status']}' (late result after lease expiry is discarded)")
         if envelope is None:
-            path = self.home.run_dir(run_id) / "result.json"
-            if path.exists():
-                try:
-                    envelope = json.loads(path.read_text())
-                except json.JSONDecodeError as e:
-                    envelope = {"_invalid_json": str(e)}
+            try:
+                text = isolation.read_agent_file(self.home.run_dir(run_id) / "result.json")
+                envelope = json.loads(text) if text is not None else None
+            except json.JSONDecodeError as e:
+                envelope = {"_invalid_json": str(e)}
+            except isolation.IsolationError as e:
+                envelope = {"_invalid_json": str(e)}
         stage = run["kind"]
         try:
             if envelope is None:
                 raise EnvelopeError(["no result.json and no JSON output"])
+            if "_invalid_json" in envelope:
+                raise EnvelopeError([f"result.json: {envelope['_invalid_json']}"])
             env = contract.validate(stage, envelope)
             self._check_org_refs(env, self.work.work_of(run["task_id"]))
             if stage == "execute":
@@ -901,14 +929,11 @@ class Kernel:
         cmd = self.work.approved_plan(node["parent_id"])["output"]["body"]["command"]
         rdir = self.home.run_dir(run["id"])
         rdir.mkdir(parents=True, exist_ok=True)
+        if self.isolation:
+            isolation.share_run_dir(rdir, self.isolation["agent_user"])
         cwd = node["workdir"] if node.get("workdir") and Path(node["workdir"]).is_dir() else str(rdir)
-        limit = int(self.config["lanes"]["script_timeout_s"])
-        try:
-            p = subprocess.run(cmd, shell=True, cwd=cwd, env=self._check_env(self.work.get(node["parent_id"])),
-                               capture_output=True, text=True, timeout=limit, start_new_session=True)
-            code, output = p.returncode, p.stdout + p.stderr
-        except subprocess.TimeoutExpired as e:
-            code, output = 124, f"{(e.stdout or '')}\ntimed out after {limit}s"
+        code, output = self._exec(cmd, cwd, {"HOLON_WORK_ID": node["parent_id"]},
+                                  int(self.config["lanes"]["script_timeout_s"]))
         (rdir / "driver.log").write_text(f"$ {cmd}\n[cwd] {cwd}\n[exit] {code}\n{output}")
         self.work.set_run_paths(run["id"], str(rdir), str(rdir / "driver.log"))
         env = {"outcome": "success" if code == 0 else "failure", "summary": f"`{cmd}` exited {code}",
@@ -963,7 +988,7 @@ class Kernel:
                 return True
             except TransitionError:  # the agent already submitted, or the run was swept: stop the harness
                 return False
-        out = drivers.run(self.home, drv, brief, claimed.token, alive=alive)
+        out = drivers.run(self.home, drv, brief, claimed.token, alive=alive, isolation=self.isolation)
         if out.get("usage"):
             self.work.set_run_usage(claimed.run["id"], **out["usage"])
         changed = staleness.changes(before, staleness.snapshot(Path(workdir), ignore)) if guard else []
@@ -1056,11 +1081,10 @@ class Kernel:
         return [*c.get("commands", []), *((c.get("dept") or {}).get(slug, {}).get("commands", []) if slug else []),
                 *((c.get("class") or {}).get(work.get("task_class") or "", {}).get("commands", []))]
 
-    def _check_env(self, work: dict) -> dict:
-        """The environment of a command the kernel runs for a work (checks, scripts): no Chair, employee or
-        run credential."""
+    def _check_env(self) -> dict:
+        """The kernel's environment for a command it runs itself: no Chair, employee or run credential."""
         env = {k: v for k, v in os.environ.items() if k not in ("HOLON_CHAIR_KEY", "HOLON_KEY", "HOLON_RUN_TOKEN")}
-        return {**env, "HOLON_WORK_ID": work["id"], "HOLON_HOME": str(self.home.root)}
+        return {**env, "HOLON_HOME": str(self.home.root)}
 
     def run_checks(self, work: dict) -> list[dict]:
         """Run the work's checks in its workdir. Every result is posted on the work (the verifier reads it
@@ -1069,15 +1093,10 @@ class Kernel:
         workdir = work.get("workdir")
         if not cmds or not workdir or not Path(workdir).is_dir():
             return []
-        env = self._check_env(work)
         results = []
         for cmd in cmds:
-            try:
-                p = subprocess.run(cmd, shell=True, cwd=workdir, env=env, capture_output=True, text=True,
-                                   timeout=int(self.config["checks"]["timeout_s"]))
-                code, tail = p.returncode, (p.stdout + p.stderr)[-1500:]
-            except subprocess.TimeoutExpired:
-                code, tail = 124, f"timed out after {self.config['checks']['timeout_s']}s"
+            code, tail = self._exec(cmd, workdir, {"HOLON_WORK_ID": work["id"]}, int(self.config["checks"]["timeout_s"]))
+            tail = tail[-1500:]
             results.append({"command": cmd, "exit_code": code, "ok": code == 0, "tail": tail.strip()})
         summary = ", ".join(f"`{r['command']}` {'ok' if r['ok'] else 'FAILED (' + str(r['exit_code']) + ')'}"
                             for r in results)
