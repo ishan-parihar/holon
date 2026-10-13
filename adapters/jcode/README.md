@@ -35,3 +35,9 @@ timer whose `PATH` differs still runs the same binary. Re-run the installer to c
 - An MCP server started with `shared: false` sees the run's environment (probe: a variable set for
   the run reached the server), which is what authenticates `holon_submit` and the other tools.
 - jcode's base prompt is large (about 15k input tokens before the brief); budget for it.
+- Conformance 5/5 on 2026-10-13 (free-stack): plan 6.2 min, approve 23.3, execute 10.4, verify
+  11.3. Plan and execute submitted through `holon_submit` and the dispatcher stopped the harness
+  once their results were in; that is why those two runs carry no token usage (it is only in the
+  final `--json` summary).
+- An earlier attempt timed out: the planner read Holon's source for an hour to derive the grade
+  floor. Plan contexts now state the floor and the approver.

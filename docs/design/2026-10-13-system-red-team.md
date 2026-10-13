@@ -184,7 +184,12 @@ ZeroClaw cron/SOP for the legacy loops, nor Holon's schedules for org work.
 Found while validating jcode for real, and fixed: a harness kept running a closing model turn
 (about 12 minutes on free-stack) after its agent had submitted through `holon_submit`; the
 dispatcher now stops it (`test_a_harness_still_running_after_its_result_is_in_is_stopped`).
+A planner also spent its whole 3600 s timeout reading Holon's source to derive the grade floor;
+plan contexts now state the floor and the approver
+(`test_planners_are_told_the_grade_floor_and_the_approver`). jcode conformance then passed 5/5
+(plan 6.2 min, approve 23.3, execute 10.4, verify 11.3).
 
 Still open: the Notion mirror against a real workspace (needs an integration token and a public
 URL for webhooks); the VPS redeploy of all of the above (after the Chair's local verification);
-nothing yet acts on metrics automatically beyond retros.
+nothing yet acts on metrics automatically beyond retros; a run that submits through `holon_submit`
+and is then stopped records no token usage.
