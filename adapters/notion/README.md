@@ -55,6 +55,13 @@ restored. That is what keeps the two from drifting: Notion never holds a fact Ho
 - **Deleted for good**: the page is recreated on the next push, and every row is re-pushed so the
   relations that named the old page name the new one.
 
+## Limits
+
+- **One instance, one parent page.** Two instances mirroring into the same page would fight over
+  every row. A second instance (the VPS and a workstation) gets its own page, token and webhook.
+- **Cost grows with history.** Every work node, stage and run is a page, and the full passes scan
+  all of them; at venture scale this needs a mirror window (`docs/design/2026-10-13-paperclip-contrast.md`, G2).
+
 ## Set up
 
 On a new machine, from the repository root:

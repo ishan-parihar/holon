@@ -4,6 +4,10 @@ This is the kernel source, not an instance: no state lives here, and instances l
 `$HOLON_HOME`. If you were handed a Holon brief, read its `BRIEF.md` instead. This file is for
 agents changing the kernel itself: where things are, and the laws every change must keep.
 
+**Start here:** `docs/INTENT.md` (what Holon is), then `docs/STATUS.md` (where it is deployed, the
+Chair's standing decisions, what is next), then this file. `docs/STATUS.md` §7 gives the full
+reading order.
+
 ## Map
 
 | Path | Owns |
@@ -27,7 +31,7 @@ agents changing the kernel itself: where things are, and the laws every change m
 | `adapters/systemd/` | the heartbeat timer (`holon tick` every 2 minutes) |
 | `adapters/notion/` | the Chair's dashboard: a live Notion mirror (not a harness); tested against `tests/fake_notion.py` |
 | `install.py` | cold start or upgrade of a machine: instance (SQLite + Chair key), launcher, Notion databases, user units; `tests/test_install.py` |
-| `docs/` | INTENT, GENOME, CONTRACT; `docs/design/` holds dated design records |
+| `docs/` | INTENT, STATUS (deployments, standing decisions, roadmap), GENOME, CONTRACT; `docs/design/` holds dated design records |
 
 ## Laws (enforced by `holon lint`, `holon doctor` and the tests)
 
@@ -56,7 +60,8 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
   an incident and reaches the Chair. Tests turn it off (`tests/helpers.py`) and test it explicitly.
 
 - **Read the dated design records** in `docs/design/` before changing a mechanism they cover; the
-  latest red-team (`2026-10-13-system-red-team.md`) lists what is built, what is open and why.
+  latest audit (`2026-10-13-paperclip-contrast.md`) ranks what is open, and
+  `2026-10-13-system-red-team.md` records what was built and why.
 - **A defect found by a real run gets a guard test and a ledger row in the same commit.** The
   ledger below is checked by `holon lint` (`ref.guard`): every row names a test, and every test
   it names must exist, so a guard cannot be deleted silently.

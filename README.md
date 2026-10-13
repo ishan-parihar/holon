@@ -62,7 +62,7 @@ capabilities/strategy/trajectory.db   goals tree (read-only to the kernel)
 capabilities/logbook/logbook.db       the Chair's logbook (read-only to the kernel)
 ```
 
-Docs: [INTENT](docs/INTENT.md) · [GENOME](docs/GENOME.md) · [CONTRACT](docs/CONTRACT.md) (for harness
+Docs: [INTENT](docs/INTENT.md) · [STATUS](docs/STATUS.md) · [GENOME](docs/GENOME.md) · [CONTRACT](docs/CONTRACT.md) (for harness
 authors) · [design records](docs/design/).
 
 ## Tests

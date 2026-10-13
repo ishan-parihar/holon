@@ -59,16 +59,19 @@ Chair ── holon CLI (Chair key) ──────────────┐
 
 ## 4. Can regressions get through?
 
+(Updated after §9's fixes. §5–§6 record the state found on the morning of 2026-10-13; §9 says what
+closed, and `2026-10-13-paperclip-contrast.md` ranks what is still open.)
+
 "Impossible" is not a property any system can promise; the achievable property is: **every
 regression is caught before it lands, or detected within one heartbeat and turned into work.**
 Where Holon stands, layer by layer:
 
 | Layer | Caught before it lands | Detected after | Gap |
 |---|---|---|---|
-| Kernel code | 124 tests; lint --strict; regression ledger (`ref.guard`) | — | no CI: nothing runs them unless a person does (G-C) |
-| Instance state | migrations with checksums | doctor: integrity, hash chain, invariants, drift | doctor runs only on demand; its errors notify nobody (G-C) |
+| Kernel code | tests; lint --strict; regression ledger (`ref.guard`); GitHub CI on every push | — | CI reports, it does not block a merge |
+| Instance state | migrations with checksums | doctor on the heartbeat: integrity, hash chain, invariants, drift, unstaffed stages; errors become incidents; scheduled backups | — |
 | Harness | conformance suite; installer checks (binary, aliases) | failing runs → incident | binary/skill-export drift is caught only for scope (G-B, G-C) |
-| Agent work | plan grading, Chair/approver gate, read-only guard, independent verifier | rework, retros | **verification is an LLM's judgment; no machine checks** (G-A) |
+| Agent work | plan grading, Chair/approver gate, read-only guard, machine checks (`[checks]`), independent verifier | rework, retros, metric-triggered retros | a shell-capable agent can bypass the kernel's checks (paperclip contrast, G1) |
 | Organism (the target repo) | — | `arch validate` when someone runs it | the commit-gate work item is still open; nothing blocks a red change |
 
 ## 5. Fragmentation and redundancy
@@ -174,7 +177,7 @@ ZeroClaw cron/SOP for the legacy loops, nor Holon's schedules for org work.
 | G-A machine checks | `[checks]` / `.dept.<slug>` / `.class.<class>` run by the kernel after execute; failure = rework, pass = evidence for the verifier | `test_a_failing_check_is_rework_without_spending_a_verifier` |
 | G-B skill evolution | `skill_changes` in the execute result, named in the plan (`skill:<skill>/<file>`, floor G2), applied by the kernel on verification, rolled back if `skill check` fails, re-exported to every registered harness directory; doctor `skills.export_stale` | `test_a_verified_change_lands_in_the_department_layer_and_every_export` |
 | G-C integrity on the heartbeat | `tick` runs doctor every `doctor_every_min`, one incident per failing check; GitHub Actions runs tests and lint --strict | `test_a_doctor_error_becomes_one_incident_and_the_check_waits_its_interval` |
-| G-D dashboard | `adapters/notion`: Departments, Employees, Work, Runs with the holarchy's relations; hash-based push, signed webhooks, reconcile, Chair-only inputs, `check --repair` | `tests/test_notion.py` against a strict fake API; **live Notion validation pending a token** |
+| G-D dashboard | `adapters/notion`: Departments, Employees, Work, Runs with the holarchy's relations; hash-based push, signed webhooks, reconcile, Chair-only inputs, `check --repair` | `tests/test_notion.py` against a strict fake API; verified live 2026-10-13, webhooks included (`adapters/notion/README.md`) |
 | G-E taxonomy | `[classes]`; agent-proposed work outside it breaches the contract; doctor `classes.unknown` | `test_agents_use_the_departments_task_classes` |
 | G-F cost and tokens | drivers record the `usage` a harness prints (jcode, Claude Code JSON) on the run | `test_a_harness_summary_is_unwrapped_and_its_usage_recorded` |
 | G-G guard on shared trees | file snapshots instead of git state; `[planner] guard_ignore` | `test_a_shared_tree_others_commit_to_or_write_ignored_paths_in_is_not_a_breach` |
