@@ -1559,7 +1559,20 @@ class Kernel:
         criteria = [dict(r) for r in self.wconn.execute(
             "SELECT criterion, avg(p) AS mean, count(*) AS n, sum(passed) AS passed FROM judgments WHERE playbook=? "
             "AND version=? AND created_at>? GROUP BY criterion ORDER BY mean", (name, version, since))]
-        return {"runs": len(runs), "done": sum(r["status"] == "done" for r in runs),
+        learned, notes = [], []
+        for r in runs:  # what the runs themselves taught: executors' learnings and proposals, verifiers' notes
+            ex = self.work.last_execute_output(r["id"])
+            body = (ex or {}).get("body") or {}
+            for x in (body.get("learnings") or []) + (body.get("proposals") or []):
+                text = x if isinstance(x, str) else x.get("content") or f"{x.get('title', '')}: {x.get('intent', '')}"
+                learned.append(f"{r['id']}: {text}")
+            for s in self.work.stages(r["id"], "verify", "done"):
+                o = self.work.output(s["id"])
+                if o:
+                    notes.append(f"{r['id']} ({s['outcome']}): {o['body'].get('note', '')}")
+        gold = self.work.gold_standard(runs[-1]) if runs else None
+        return {"runs": len(runs), "done": sum(r["status"] == "done" for r in runs), "learned": learned,
+                "verifier_notes": notes, "gold": gold,
                 "failed": sum(r["status"] == "failed" for r in runs),
                 "verify_fails": [{"work": f["parent_id"], "note": json.loads(f["body"]).get("note", "")} for f in fails],
                 "disagreements": sorted(judged_pass & {f["parent_id"] for f in fails}), "criteria": criteria,
@@ -1624,9 +1637,15 @@ class Kernel:
             crit = "\n".join(f"- {x['criterion']}: mean p={x['mean']:.2f} over {x['n']} ({x['passed']} passed)"
                              for x in ev["criteria"]) or "- (no judgments yet)"
             fails = "\n".join(f"- {f['work']}: {f['note'][:400]}" for f in ev["verify_fails"][:5]) or "- none"
+            learned = "\n".join(f"- {x[:400]}" for x in ev["learned"][-12:]) or "- none recorded"
+            vnotes = "\n".join(f"- {x[:600]}" for x in ev["verifier_notes"][-6:]) or "- none"
+            gold = (f"{ev['gold']['work_id']}: {(ev['gold']['summary'] or '')[:600]}" if ev.get("gold") else "none yet")
             body = (f"The playbook `{name}` (v{pb['version']}) needs refining: {'; '.join(why)}.\n\n"
                     f"Runs on v{pb['version']}: {ev['runs']} ({ev['done']} done, {ev['failed']} failed).\n\n"
                     f"Rubric judgments per criterion:\n{crit}\n\nVerifier failures:\n{fails}\n\n"
+                    f"What the runs learned and proposed (executors):\n{learned}\n\n"
+                    f"What verifiers checked (their notes, passes included):\n{vnotes}\n\n"
+                    f"Gold standard (the last verified result): {gold}\n\n"
                     f"Current protocol (`holon skill show {name} --dept {slug}`):\n\n{pb['protocol'][:3000]}\n\n"
                     f"Current rubric:\n" + "\n".join(f"- {c}" for c in pb["rubric"]))
         else:

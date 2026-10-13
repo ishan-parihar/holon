@@ -62,6 +62,7 @@ class Playbooks(LaneCase):
         self.assertIn("failed verification", ref["intent"])
         self.assertIn("names every unread thread: mean p=0.40", ref["intent"])
         self.assertIn("the digest missed a thread", ref["intent"])
+        self.assertIn("hello.txt lives at the workdir root", ref["intent"], "what the run learned is evidence too")
         self.assertFalse([t for t in self.k.triggers() if t.get("refinement")], "one refinement at a time")
         new_rubric = "# Rubric\n\n- lists every unread thread by sender and subject\n- fits in ten lines\n"
         res = self.refine(ref["title"], {"rubric.md": new_rubric})
