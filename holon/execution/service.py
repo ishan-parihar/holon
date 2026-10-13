@@ -166,6 +166,8 @@ class KernelRules(Rules):
         return bool(self.k.work.stages(work["id"], stage, "done"))
 
     def _needs_research(self, work: dict) -> bool:
+        if work.get("task_class") == "playbook-refinement" and work.get("source") == "kernel":
+            return False  # its intent is the research: the kernel compiled the evidence
         novel = self.k.work.verified_in_class(work.get("task_class")) < int(
             {**grading.DEFAULTS, **self.k.config.get("grading", {})}["novelty_min_verified"])
         return self._wants(work, "research", novel or work["risk"] in ("high", "irreversible"))

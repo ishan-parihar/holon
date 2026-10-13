@@ -77,6 +77,17 @@ class Playbooks(LaneCase):
         self.assertEqual({r[0] for r in self.k.wconn.execute("SELECT version FROM judgments WHERE work_id=?", (w["id"],))},
                          {2}, "later runs are judged against the refined rubric")
 
+    def test_refinement_skips_research_because_its_evidence_is_the_research(self):
+        self.pipeline = self.pipeline.replace('research = "never"', 'research = "auto"')
+        self.config = "[autonomy]\nverify_sample_rate = 0\n"  # a new task class is novel: research would run
+        self.configure("")
+        self.k.org.hire(name="Rae", title="Researcher", dept="eng", job_description="Maps terrain.",
+                        roles=["researcher"], driver="fake", reason="research", status="active")
+        plan = self.routine_on()
+        self.run_once(plan, judge_p=0.4, verify="fail")
+        ref = [t for t in self.k.triggers() if t.get("refinement")][0]["refinement"]
+        self.assertEqual([s["stage"] for s in self.k.work.stages(ref)], ["plan"])
+
     def test_enough_runs_on_one_version_make_refinement_due_without_failures(self):
         self.configure("[playbooks]\nrefine_after = 2\n")
         plan = self.routine_on()
