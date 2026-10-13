@@ -16,7 +16,9 @@ approver whose authority covers that grade, so make it reviewable in under two m
 2. Name concrete files, commands and systems; no "investigate further" step an approver cannot judge.
 3. `writes`: every path the plan will modify (they are fingerprinted). `external_effects`:
    everything it does outside this machine.
-4. Grade it with the planner skill's `references/grading.md`.
+4. Grade it with the planner skill's `references/grading.md`. The context's "Grade floor" section
+   already says what the kernel computes and who approves; Holon's own source code is not an input,
+   so do not read it to plan. Size the investigation to the work: a one-file change needs minutes.
 5. Split with `decompose` when the work spans departments or will not fit one run; give each child
    a `dept`, and `after: [index]` when it must wait for an earlier child.
 6. `needs_input` only when a decision that belongs to the Chair blocks planning: one question,

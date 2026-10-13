@@ -47,6 +47,13 @@ class Scope(KernelCase):
         beyond = self.plan(self.add("b", dept="eng", task_class="c", risk="low"), writes=["/elsewhere/b.txt"], grade="G0")
         self.assertEqual(beyond["grade"], 3)
 
+    def test_planners_are_told_the_grade_floor_and_the_approver(self):
+        self.add(dept="eng", task_class="fresh", risk="low")
+        md = (self.k.claim("plan", self.hod).brief_dir / "context.md").read_text()
+        self.assertIn("## Grade floor (computed by the kernel)", md)
+        self.assertIn("the floor is **G2**", md, "a novel task class floors at G2")
+        self.assertIn("plan goes to `", md)
+
     def test_doctor_catches_a_sandbox_built_for_another_scope(self):
         self.install_fake_driver("fake", extra=f'scope_fingerprint = "{self.k.scope_fingerprint()}"')
         self.assertNotIn("scope.drift", {f["check"] for f in doctor.run(self.k)})

@@ -346,10 +346,27 @@ class Kernel:
         if self.classes_for(slug) and node["stage"] in ("shape", "plan", "retro"):
             md += ("\n\n## Task classes\n\nNew or split work in " + (slug or "the organization") + " uses one of: "
                    + ", ".join(f"`{c}`" for c in self.classes_for(slug)) + ".\n")
+        if node["stage"] == "plan":
+            md += self._grade_floor_section(self.work.work_of(node), slug, employee_id)
         bdir = briefs.build(self.home, run, node, md, self.skills, slug, emp,
                             self.identity(emp["id"]) if emp else None, token, scope=self.scope(slug))
         self.work.set_run_paths(run["id"], str(bdir), str(bdir / "driver.log"))
         return Claimed(run=self.work.get_run(run["id"]), node=node, brief_dir=bdir, token=token, employee=emp)
+
+    def _grade_floor_section(self, work: dict, slug: str | None, author: str | None) -> str:
+        """What the kernel will compute for a plan of this work, so a planner never has to derive it."""
+        reach = self.scope(slug)["roots"]
+        g = grading.grade_plan(self.wconn, work, {"grade": "G0"}, self.config, reach=reach)
+        approver = self.org.resolve_approver(work, g["floor"], author)
+        inside = ", ".join(f"`{p}`" for p in ([work["workdir"]] if work.get("workdir") else []) + reach) or "none"
+        return ("\n\n## Grade floor (computed by the kernel)\n\n"
+                f"Before your plan's own effects, the floor is **G{g['floor']}**:\n"
+                + "".join(f"- {r}\n" for r in g["reasons"] if "planner proposed" not in r)
+                + f"\nIt rises to G2 for external effects, a decomposition or a `skill:` write; to G2 (G3 when the "
+                f"department has a reach) for writes outside {inside}; to G3 for sensitive paths. "
+                f"At G{g['floor']} the plan goes to `{approver}`. Propose your own grade from the planner skill's "
+                "`references/grading.md`; the effective grade is the higher of the two. `assignee` names the "
+                "employee who executes; leave it out and the department's executors claim it.\n")
 
     # ── ingestion: the one place agent output enters the organization ─────
     def submit(self, run_id: str, envelope: dict | None = None, exit_code: int | None = 0,

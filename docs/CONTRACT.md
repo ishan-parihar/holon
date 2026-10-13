@@ -19,7 +19,7 @@ For each run the kernel writes `$HOLON_HOME/execution/runtime/runs/<run_id>/`:
 | `BRIEF.md` | kernel | the stage's instructions, rendered from the role skill's `briefs/<stage>.md` |
 | `brief.json` | kernel | run, stage and work ids, role, posture, employee, every path below, the run token (mode 0600) |
 | `identity.md` | kernel | the employee's identity card, for harnesses that put it in the system prompt |
-| `context.md` | kernel | the compiled context: role, work, earlier stages' outputs, memory, lineage |
+| `context.md` | kernel | the compiled context: role, work, earlier stages' outputs, memory, lineage; for a plan, the kernel-computed grade floor and approver |
 | `result.json` | **agent** | the result envelope (§2) |
 | `driver.log` | kernel | command, exit code, stdout and stderr (push mode) |
 
