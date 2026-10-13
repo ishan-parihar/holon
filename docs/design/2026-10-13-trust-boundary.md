@@ -43,6 +43,14 @@ The kernel cannot create users or system services. On an instance:
 
 ## 4. Limits
 
+- **Adapters before isolating.** The jcode adapter keeps its model key in its own harness home
+  (granted), so it works as is. The Hermes driver reads `~/.config/holon/model.key` in its command,
+  which the agent user is denied: its installer must move the key into the harness home first. The
+  plan for the workstation (computed read-only on 2026-10-13): 16 directories traversed, 398 entries
+  of the Chair's home denied, writes to jcode's home only, so `[isolation] grants` must name the
+  departments' workdir trees.
+- Chain directories get a default ACL, so new files there take their mode from it instead of the
+  umask (the same 0644/0755 as a 022 umask; a program relying on umask 077 there would get 0644).
 - Agents share one Unix user: one agent can read another's run directory and its run token.
   Per-department users would close this; not built.
 - The model key a harness needs is readable by the agent user by design.
