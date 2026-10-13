@@ -30,6 +30,7 @@ import os
 import sqlite3
 import subprocess
 import shutil
+import socket
 import sys
 import time
 import urllib.error
@@ -41,10 +42,10 @@ NOTION = ROOT / "adapters" / "notion" / "holon_notion.py"
 TUNNEL, PORT = "holon-notion", 8787
 
 
-def run(cmd: list[str], env: dict, check: bool = True) -> subprocess.CompletedProcess:
+def run(cmd: list[str], env: dict, check: bool = True, quiet: bool = False) -> subprocess.CompletedProcess:
     print("  $ " + " ".join(cmd), flush=True)
     out = subprocess.run(cmd, env=env, text=True, capture_output=True)
-    for line in (out.stdout + out.stderr).strip().splitlines():
+    for line in (out.stderr if quiet else out.stdout + out.stderr).strip().splitlines():
         print("    " + line)
     if check and out.returncode:
         raise SystemExit(f"failed ({out.returncode}): {' '.join(cmd)}")
@@ -67,7 +68,8 @@ def tunnel(cloudflared: str, hostname: str, cf_dir: Path, env: dict) -> Path:
     """The dedicated tunnel, its DNS route and its config; returns the config path. A tunnel of its own:
     a hostname added to a tunnel whose connectors run different configs 404s on some requests."""
     def tunnels() -> list:
-        return json.loads(run([cloudflared, "tunnel", "list", "--output", "json"], env).stdout or "[]") or []
+        listed = run([cloudflared, "tunnel", "list", "--output", "json"], env, quiet=True).stdout
+        return json.loads(listed or "[]") or []
 
     found = next((t for t in tunnels() if t.get("name") == TUNNEL), None)
     if found is None:
@@ -97,10 +99,14 @@ ingress:
 
 
 def reachable(url: str, tries: int = 12) -> bool:
-    """The receiver answers a signed-less POST with 401; Cloudflare's own 404/5xx means not yet."""
+    """The receiver answers an unsigned POST with 401; Cloudflare's own 404/5xx means not yet. A new
+    DNS name can take a minute to resolve here (a resolver may have cached its absence)."""
+    gai = socket.getaddrinfo  # IPv4 first, as the Notion adapter does: hosts with a dead IPv6 route hang
+    socket.getaddrinfo = lambda *x, **kw: sorted(gai(*x, **kw), key=lambda r: r[0] != socket.AF_INET)
     for _ in range(tries):
-        try:
-            urllib.request.urlopen(urllib.request.Request(url, data=b"{}", method="POST"), timeout=10)
+        try:  # Cloudflare's browser integrity check refuses Python's default User-Agent (error 1010)
+            urllib.request.urlopen(urllib.request.Request(url, data=b"{}", method="POST",
+                                                          headers={"User-Agent": "holon-install/1"}), timeout=10)
         except urllib.error.HTTPError as e:
             e.close()
             if e.code == 401:
