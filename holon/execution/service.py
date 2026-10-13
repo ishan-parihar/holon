@@ -525,6 +525,7 @@ class Kernel:
             if env["kind"] == "needs_input":
                 out = self.work.submit_plan(run_id, env, exit_code=exit_code)
             else:
+                env = self._canonical_writes(env, work)
                 g = grading.grade_plan(self.wconn, work, env, self.config,
                                        reach=self.scope(self._dept_slug(work["dept_id"]))["roots"])
                 approver = self.org.resolve_approver(work, g["grade"], run["employee_id"])
@@ -607,6 +608,22 @@ class Kernel:
                                "blocked_reason=? AND updated_at<?", (HELD, CHECKING, b))
         return [r[0] for r in self.wconn.execute("SELECT parent_id FROM tasks WHERE stage='verify' AND status='ready' "
                                                  "AND blocked_reason=? AND updated_at<?", (HELD, a))]
+
+    def _canonical_writes(self, env: dict, work: dict) -> dict:
+        """A plan that names a file in its department's skill layer by path means a skill change: it becomes
+        `skill:<skill>/<file>`, so it is graded as one, its executor returns the file in `skill_changes`, and
+        it lands only when verified. Any other path into the instance (databases, config) is kernel state no
+        plan may write: it is kept as named, which grades it beyond the department's reach."""
+        slug = self._dept_slug(work.get("dept_id"))
+        if not slug or not env.get("writes") or not self.skills.instance:
+            return env
+        layer = (self.skills.instance / f"@{slug}").resolve()
+        out = []
+        for w in env["writes"]:
+            p = Path(w).expanduser() if isinstance(w, str) and not w.startswith("skill:") else None
+            rel = p.resolve().relative_to(layer) if p and p.is_absolute() and p.resolve().is_relative_to(layer) else None
+            out.append(f"skill:{rel.parts[0]}/{'/'.join(rel.parts[1:])}" if rel and len(rel.parts) >= 2 else w)
+        return {**env, "writes": out}
 
     def _consolidate(self, work: dict, run: dict, env: dict, emp: dict | None, stage: str) -> dict:
         if not any(env.get(k) for k in ("learnings", "decisions", "blockers", "terrain", "open_questions")) \

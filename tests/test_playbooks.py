@@ -88,6 +88,16 @@ class Playbooks(LaneCase):
         ref = [t for t in self.k.triggers() if t.get("refinement")][0]["refinement"]
         self.assertEqual([s["stage"] for s in self.k.work.stages(ref)], ["plan"])
 
+    def test_a_plan_naming_a_skill_file_by_path_is_a_skill_change(self):
+        plan = self.routine_on()
+        self.run_once(plan, judge_p=0.4, verify="fail")
+        ref = [t for t in self.k.triggers() if t.get("refinement")][0]["refinement"]
+        path = self.k.skills.instance / "@eng" / NAME / "rubric.md"
+        a = self.plan(self.k.work.get(ref), writes=[str(path)])
+        body = self.k.work.plan_for_approval(a["id"])["output"]["body"]
+        self.assertEqual(body["writes"], [f"skill:{NAME}/rubric.md"])
+        self.assertIn("changes how the department works", self.k.work.plan_for_approval(a["id"])["grade_reasons"])
+
     def test_enough_runs_on_one_version_make_refinement_due_without_failures(self):
         self.configure("[playbooks]\nrefine_after = 2\n")
         plan = self.routine_on()
