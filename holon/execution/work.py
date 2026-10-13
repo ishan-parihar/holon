@@ -32,6 +32,9 @@ from holon.core.ids import new_id
 from holon.execution.staleness import fingerprint
 
 TERMINAL = set(vocab.TERMINAL)
+# a verify stage the kernel holds while it runs a result's machine checks and rubric judge: no verifier may
+# claim it yet (that is the session the checks may save)
+HELD, CHECKING = "awaiting the kernel's checks", "the kernel's checks are running"
 
 
 class TransitionError(RuntimeError):
@@ -419,7 +422,8 @@ class Work:
                 q = f"SELECT t.* FROM tasks t WHERE t.status='ready' AND t.stage IN ({','.join('?' * len(stages))})"
                 q += " AND t.lane='script' AND t.stage='execute'" if kernel else \
                     " AND NOT (t.lane='script' AND t.stage='execute')"
-                args: list = list(stages)
+                q += " AND NOT (t.stage='verify' AND coalesce(t.blocked_reason,'') IN (?,?))"
+                args: list = list(stages) + [HELD, CHECKING]
                 if who.id:
                     q += (" AND ((t.stage='approve' AND t.approver=?) OR (t.stage<>'approve' AND (t.assignee=? OR"
                           " (t.assignee IS NULL AND (t.dept_id=? OR (t.dept_id IS NULL AND ?)"

@@ -37,7 +37,7 @@ from holon.execution.org import Org, approver_ref
 from holon.execution.cron import Cron
 from holon.execution.schedules import Schedules
 from holon.execution import staleness
-from holon.execution.work import Claimant, Rules, TransitionError, Work
+from holon.execution.work import CHECKING, HELD, Claimant, Rules, TransitionError, Work
 
 DEFAULT_CONFIG = {
     "context": {"budget_chars": DEFAULT_BUDGET_CHARS},
@@ -478,7 +478,10 @@ class Kernel:
 
     # ── ingestion: the one place agent output enters the organization ─────
     def submit(self, run_id: str, envelope: dict | None = None, exit_code: int | None = 0,
-               driver_output: dict | None = None) -> dict:
+               driver_output: dict | None = None, defer: bool = False) -> dict:
+        """`defer`: the caller is an agent's own process (`holon submit`, MCP, the broker), which its harness
+        may be stopped with at any moment once the result is in: an execute result is only recorded, and its
+        verify stage held until the kernel runs the checks and judge (`post_execute`) in its own process."""
         run = self.work.get_run(run_id)
         if run["status"] != "running":
             raise TransitionError(f"run {run_id} is '{run['status']}' (late result after lease expiry is discarded)")
@@ -521,23 +524,13 @@ class Kernel:
             out = self.decide(node["id"], env["decision"], env.get("note"), review_run=run_id)
         elif stage == "execute":
             out = self.work.submit_execute(run_id, env, exit_code)
-            if env["outcome"] != "failure" and self.work.latest(work["id"], "verify", "ready"):
-                checks = self.run_checks(self.work.get(work["id"]))
-                out["checks"] = checks
-                if checks and not all(c["ok"] for c in checks):
-                    failed = [c for c in checks if not c["ok"]]
-                    note = "Machine checks failed (run by the kernel; no verifier was spent):\n" + "\n".join(
-                        f"- `{c['command']}` exited {c['exit_code']}:\n```\n{c['tail']}\n```" for c in failed)
-                    out["work"] = self.verify(work["id"], "fail", note)["work"]
-            if not out.get("checks") or all(c["ok"] for c in out["checks"]):
-                w = self.work.get(work["id"])
-                skipped = self._lane_verification(w, run, env) if w["lane"] in ("fast", "script") \
-                    else self._sample_verification(w, run, env)
-                out["verification_skipped"] = bool(skipped)
-                if skipped:
-                    out["work"] = skipped
-                    if skipped["status"] == "done":
-                        out["skill_changes"] = self.apply_skill_changes(skipped)
+            v = self.work.latest(work["id"], "verify", "ready")
+            if v and defer:
+                with write_txn(self.wconn):
+                    self.wconn.execute("UPDATE tasks SET blocked_reason=? WHERE id=?", (HELD, v["id"]))
+                out["post_execute"] = "deferred to the kernel"
+            else:
+                out.update(self.post_execute(work["id"]))
         elif stage == "verify":
             out = self.verify(node["id"], env["verdict"], env["note"], run_id=run_id)
         else:
@@ -549,6 +542,62 @@ class Kernel:
         out["memory"] = self._consolidate(work, run, env, emp, stage)
         out["proposals_routed"] = self._route_proposals(work, env, emp)
         return {**out, "stage": stage}
+
+    def post_execute(self, work_id: str) -> dict:
+        """What follows an execute result, in the kernel's process: machine checks, then the lane's
+        verification (rubric judge) or trusted sampling. Idempotent and exclusive: a held verify stage is
+        taken by one process at a time; if this process dies, the heartbeat retakes it."""
+        v = self.work.latest(work_id, "verify", "ready")
+        if not v:
+            return {}
+        with write_txn(self.wconn):
+            if v["blocked_reason"] in (HELD, CHECKING) and not self.wconn.execute(
+                    "UPDATE tasks SET blocked_reason=?, updated_at=? WHERE id=? AND blocked_reason=?",
+                    (CHECKING, now(), v["id"], HELD)).rowcount:
+                return {"post_execute": "already running"}
+        ex = self.work.get(self.work.needs(v["id"])[0])
+        o = self.work.output(ex["id"])
+        env, run = {**o["body"], "documentation": o["documentation"]}, self.work.get_run(o["run_id"])
+        out: dict = {}
+        try:
+            if env["outcome"] != "failure":
+                checks = self.run_checks(self.work.get(work_id))
+                out["checks"] = checks
+                if checks and not all(c["ok"] for c in checks):
+                    failed = [c for c in checks if not c["ok"]]
+                    note = "Machine checks failed (run by the kernel; no verifier was spent):\n" + "\n".join(
+                        f"- `{c['command']}` exited {c['exit_code']}:\n```\n{c['tail']}\n```" for c in failed)
+                    self._release(v["id"])
+                    out["work"] = self.verify(work_id, "fail", note)["work"]
+            if not out.get("checks") or all(c["ok"] for c in out["checks"]):
+                self._release(v["id"])
+                w = self.work.get(work_id)
+                skipped = self._lane_verification(w, run, env) if w["lane"] in ("fast", "script") \
+                    else self._sample_verification(w, run, env)
+                out["verification_skipped"] = bool(skipped)
+                if skipped:
+                    out["work"] = skipped
+                    if skipped["status"] == "done":
+                        out["skill_changes"] = self.apply_skill_changes(skipped)
+        finally:
+            self._release(v["id"])  # whatever happened, a verifier may now look
+        return out
+
+    def _release(self, stage_id: str) -> None:
+        with write_txn(self.wconn):
+            self.wconn.execute("UPDATE tasks SET blocked_reason=NULL WHERE id=? AND blocked_reason IN (?,?)",
+                               (stage_id, HELD, CHECKING))
+
+    def held_checks(self) -> list[str]:
+        """Works whose result waits for the kernel's checks: held over a minute (the dispatcher had its
+        chance), or checking for over an hour (that process died)."""
+        a = (datetime.now(timezone.utc) - timedelta(minutes=1)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        b = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        with write_txn(self.wconn):
+            self.wconn.execute("UPDATE tasks SET blocked_reason=? WHERE stage='verify' AND status='ready' AND "
+                               "blocked_reason=? AND updated_at<?", (HELD, CHECKING, b))
+        return [r[0] for r in self.wconn.execute("SELECT parent_id FROM tasks WHERE stage='verify' AND status='ready' "
+                                                 "AND blocked_reason=? AND updated_at<?", (HELD, a))]
 
     def _consolidate(self, work: dict, run: dict, env: dict, emp: dict | None, stage: str) -> dict:
         if not any(env.get(k) for k in ("learnings", "decisions", "blockers", "terrain", "open_questions")) \
@@ -1130,8 +1179,9 @@ class Kernel:
                 with write_txn(self.wconn):
                     self.work._event("task", claimed.node["id"], None, None, f"read-only breach: {breach}",
                                      actor=f"emp:{claimed.employee['id']}" if claimed.employee else None)
+            post = self.post_execute(claimed.node["parent_id"]) if claimed.run["kind"] == "execute" else {}
             return {"stage": claimed.run["kind"], "submitted_by_agent": True, "breach": [breach] if changed else None,
-                    "work": self.work.work_of(claimed.node["id"])}
+                    **post, "work": self.work.work_of(claimed.node["id"])}
         if changed:
             return self._contract_breach(self.work.get_run(claimed.run["id"]), [breach], out, out["exit_code"])
         return self.submit(claimed.run["id"], out["envelope"], out["exit_code"], driver_output=out)
@@ -1166,6 +1216,12 @@ class Kernel:
             else:
                 self._spawn_dispatch(s["employee_id"], s["stage"], s["id"])
                 fired.append({"schedule": s["id"], "spawned": True})
+        for wid in self.held_checks():  # results an agent handed in itself, whose dispatcher did not finish them
+            if foreground:
+                fired.append({"post_execute": wid, **{k: v for k, v in self.post_execute(wid).items() if k != "work"}})
+            else:
+                self._spawn([sys.executable, "-m", "holon", "--home", str(self.home.root), "post-execute", wid])
+                fired.append({"post_execute": wid, "spawned": True})
         for (sid,) in self.wconn.execute("SELECT id FROM tasks WHERE status='ready' AND stage='execute' AND "
                                          "lane='script' ORDER BY priority, created_at").fetchall():
             if sid in self.backed_off():

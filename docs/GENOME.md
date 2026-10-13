@@ -184,7 +184,8 @@ commands = ["arch validate"]
 commands = ["python3 -m unittest discover -s tests -t .", "python3 -m holon --home \"$(mktemp -d)\" lint --strict"]
 ```
 
-After an execute stage succeeds (or is partial), the kernel runs `[checks]`, then the
+After an execute stage succeeds (or is partial), the kernel (never the agent's own process:
+`execution.service.Kernel.post_execute`) runs `[checks]`, then the
 department's, then the task class's commands in the work's `workdir` (the Chair's and run
 tokens are removed from their environment). A failing command is recorded as a failed
 verification with its output: the work goes to rework (`execute#n`) and no verifier is spent.

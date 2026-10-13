@@ -482,7 +482,7 @@ def _own_run(args, k, run_id: str) -> dict:
 def cmd_submit(args, k):
     _own_run(args, k, args.run_id)
     env = json.loads(_read(args.file)) if args.file else None
-    out = k.submit(args.run_id, env)
+    out = k.submit(args.run_id, env, defer=args.principal.kind == "employee")
     w = out.get("work") or {}
     msg = f"run {args.run_id} ({out['stage']}) ingested; work {w.get('id')} -> {w.get('status')}"
     if out.get("approval"):
@@ -669,6 +669,13 @@ def cmd_classify(args, k):
     _out(args, c, f"lane: {c['lane'] or 'unsure (full)'}" + (
         f" ({c['confidence']:.0%}; external effects p={c['external_p']})" if c["source"] == "classifier"
         else f" (classifier {c['source']}{': ' + c['error'] if c.get('error') else ''})"))
+
+
+@command("post-execute", "kernel", "run a handed-in result's machine checks and rubric judge (the heartbeat spawns "
+         "this)", arg("work_id"))
+def cmd_post_execute(args, k):
+    out = k.post_execute(args.work_id)
+    _out(args, out, f"{args.work_id}: " + (f"-> {out['work']['status']}" if out.get("work") else str(out or "nothing held")))
 
 
 @command("run-script", "kernel", "run a ready script-lane stage (the heartbeat spawns this)", arg("stage_id", nargs="?"))

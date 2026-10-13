@@ -60,6 +60,12 @@ in [`schemas/`](../schemas) (`holon contract schemas` prints them). Every envelo
 | verify | `{"verdict": pass \| fail, "note"}` |
 | retro | `{"summary", "cause", "actions"?: [work items]}` |
 
+**Handing in an execute result yourself** (`holon submit`, `holon_submit`, the broker) only records it.
+The kernel then runs the machine checks and the rubric judge in its own process (the dispatcher that
+started you, or the heartbeat: `holon post-execute`), and holds the verify stage from verifiers until
+it has. The dispatcher may stop your harness as soon as the result is in; nothing you started after
+handing it in can change the outcome.
+
 **Fast lane.** An execute run of `fast` work (GENOME §10) has no separate plan: the executor plans and
 acts in one session, lists the `writes` it made and any `external_effects`, and returns `noop` with
 `blockers` when the work is not routine after all (the work then goes through the full pipeline).

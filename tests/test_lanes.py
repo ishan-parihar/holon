@@ -73,6 +73,25 @@ class FastLane(LaneCase):
         self.assertEqual(self.pipeline_of(w)[-1], ("verify", "ready"))
         self.assertTrue(any(line.startswith("lane breach") for line in self.k.pending_for_chair(0)))
 
+    def test_an_agent_that_hands_in_its_own_result_is_still_judged_by_the_kernel(self):
+        self.install_fake_driver("fake", mode="self-submit")
+        w = self.add(risk="low", task_class="c", lane="fast", dept="eng")
+        out = self.k.dispatch(self.dev1, "execute")
+        self.assertTrue(out["submitted_by_agent"])
+        self.assertTrue(out["verification_skipped"], "the dispatcher judged it after stopping the harness")
+        self.assertEqual(self.status(w), "done")
+
+    def test_a_deferred_result_is_held_from_verifiers_until_the_kernel_checks_it(self):
+        w = self.add(risk="low", task_class="c", lane="fast", dept="eng")
+        c = self.k.claim("execute", self.dev1, task_id=w["id"])
+        self.k.submit(c.run["id"], self.exec_env(), defer=True)  # as an agent's own `holon submit`
+        self.assertIsNone(self.k.claim("verify", self.dev2), "no verifier session before the checks")
+        self.k.wconn.execute("UPDATE tasks SET updated_at='2000-01-01T00:00:00.000000Z' WHERE stage='verify'")
+        self.k.wconn.commit()
+        fired = self.k.tick(foreground=True)["fired"]
+        self.assertEqual([f["post_execute"] for f in fired if "post_execute" in f], [w["id"]])
+        self.assertEqual(self.status(w), "done", "the heartbeat judged it when no dispatcher did")
+
     def test_an_unsure_rubric_keeps_the_verifier_and_tells_it_why(self):
         self.fake.answer = lambda s, q: {k: {"type": "noul", "noul": 0.4} for k in q}
         w = self.add(risk="low", task_class="c", lane="fast", dept="eng")
