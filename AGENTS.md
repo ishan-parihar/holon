@@ -94,3 +94,4 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | Red-team R1 | the Chair key reached a harness's environment | `test_the_chair_key_never_reaches_a_harness` |
 | Red-team R1 | a harness name leaked into the kernel | `test_no_harness_named_in_kernel` |
 | jcode conformance | a planner spent its whole 3600 s timeout reading Holon's source to derive the grade floor | `test_planners_are_told_the_grade_floor_and_the_approver` |
+| Notion live setup | connection resets aborted push; a retried create whose reply was lost left an untracked twin page | `test_a_lost_reply_is_retried_and_the_orphan_it_leaves_is_trashed` |

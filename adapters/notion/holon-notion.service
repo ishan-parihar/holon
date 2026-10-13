@@ -6,6 +6,7 @@ After=network-online.target
 
 [Service]
 Environment=HOLON_HOME=%h/holon
+# Environment=HOLON_NOTION_IPV4=1   # if this host's IPv6 route is dead
 ExecStart=/usr/bin/env python3 %h/src/holon/adapters/notion/holon_notion.py serve --port 8787
 Restart=on-failure
 RestartSec=30

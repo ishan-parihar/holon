@@ -124,6 +124,21 @@ class NotionMirror(KernelCase):
         sig = "sha256=" + hmac.new(b"secret_x", ours, hashlib.sha256).hexdigest()
         self.assertEqual(self.sync.webhook(ours, {"X-Notion-Signature": sig}, inbox), (200, "our own change"))
 
+    def test_a_lost_reply_is_retried_and_the_orphan_it_leaves_is_trashed(self):
+        self.add(dept="eng")
+        self.fake.drop_next_create = True
+
+        def live_ids():
+            return sorted(hn.plain(p["properties"].get("Holon ID")) for p in self.fake.pages.values()
+                          if not p["in_trash"])
+
+        self.sync.push()
+        ids = live_ids()
+        self.assertEqual(len(ids) - len(set(ids)), 1, "the create landed, its reply was lost, the retry made a twin")
+        self.assertEqual(self.sync.reconcile()["orphans"], 1)
+        self.assertEqual(live_ids(), sorted(set(ids)))
+        self.assertEqual(self.sync.check(), [])
+
     def test_schema_drift_is_found_and_repaired(self):
         self.fake.drop_property(self.ds["work"], "Grade")
         self.assertTrue(any("Grade" in p for p in self.sync.check()))

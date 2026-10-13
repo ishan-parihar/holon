@@ -66,3 +66,11 @@ restored. That is what keeps the two from drifting: Notion never holds a fact Ho
 
 `status` shows the page counts, pending rows and the last events; `push` and `reconcile` run one
 pass by hand.
+
+Network: dropped connections are retried; a page create whose reply was lost is created again and
+the next `reconcile` trashes the untracked twin. On a host whose IPv6 route is dead (Python's urllib
+tries every IPv6 address before IPv4), set `HOLON_NOTION_IPV4=1`.
+
+Verified live on 2026-10-13 against the LifeOS workspace (page "Holon (local test)"): setup, schema
+check, push of 2 departments, 3 employees, 7 work nodes and 5 runs, then 54 relation values compared
+with SQLite (0 mismatches) and a second push writing nothing.

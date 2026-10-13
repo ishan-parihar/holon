@@ -31,6 +31,7 @@ class FakeNotion:
     def __init__(self):
         self.ids = (f"{i:08x}-0000-4000-8000-000000000000" for i in itertools.count(1))
         self.ds, self.pages, self.lock, self.requests = {}, {}, threading.Lock(), 0
+        self.drop_next_create = False  # the network loses the reply to one page create
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self._handler())
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}/v1"
@@ -166,6 +167,10 @@ class FakeNotion:
                     code, out = fake.handle(method, self.path, body)
                 except (ValueError, KeyError) as e:
                     code, out = 400, {"object": "error", "status": 400, "message": str(e)}
+                if fake.drop_next_create and method == "POST" and self.path == "/v1/pages":
+                    fake.drop_next_create = False
+                    self.close_connection = True
+                    return
                 data = json.dumps(out).encode()
                 self.send_response(code)
                 self.send_header("Content-Type", "application/json")

@@ -35,6 +35,7 @@ import hmac
 import json
 import os
 import queue
+import socket
 import sqlite3
 import sys
 import threading
@@ -89,6 +90,11 @@ class Notion:
                     time.sleep(float(e.headers.get("Retry-After") or 2 ** attempt))
                     continue
                 raise NotionError(e.code, text) from None
+            except OSError as e:  # reset or timed-out connection (URLError is an OSError)
+                if attempt < 5:  # a POST whose reply was lost leaves an orphan page; reconcile trashes it
+                    time.sleep(2 ** attempt)
+                    continue
+                raise NotionError(0, f"network: {e}") from None
         raise NotionError(0, "retries exhausted")
 
     def me(self) -> dict:
@@ -533,14 +539,19 @@ class Sync:
         with self.lock:
             since = self.cfg.get("reconciled_at") or "1970-01-01T00:00:00.000Z"
             started = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 60))  # clock skew margin
-            out = {"handled": 0, "restored": 0}
+            out = {"handled": 0, "restored": 0, "orphans": 0}
             for e in ENTITIES:
                 ds = self.cfg["data_sources"][e.key]
                 live = self.notion.query(ds)
                 seen = {p["id"] for p in live}
+                known = {r[0] for r in self.db.execute("SELECT page_id FROM pages WHERE entity=?", (e.key,))}
                 for p in live:
-                    if p.get("last_edited_time", "") >= since and (p.get("last_edited_by") or {}).get("id") != \
-                            self.cfg.get("bot_id"):
+                    by_us = (p.get("last_edited_by") or {}).get("id") == self.cfg.get("bot_id")
+                    if by_us and p["id"] not in known:  # a create whose reply was lost, then retried
+                        self.notion.update_page(p["id"], in_trash=True)
+                        self.log("orphan", f"{e.key} page {p['id']} was ours and untracked; trashed")
+                        out["orphans"] += 1
+                    elif p.get("last_edited_time", "") >= since and not by_us:
                         self.handle_page(p)
                         out["handled"] += 1
                 for r in self.db.execute("SELECT page_id FROM pages WHERE entity=?", (e.key,)).fetchall():
@@ -648,6 +659,9 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--push-every", type=float, default=20)
     v.add_argument("--reconcile-every", type=float, default=300)
     a = ap.parse_args(argv)
+    if os.environ.get("HOLON_NOTION_IPV4"):  # hosts whose IPv6 route is dead: urllib has no happy eyeballs
+        gai = socket.getaddrinfo
+        socket.getaddrinfo = lambda host, port, family=0, *rest, **kw: gai(host, port, socket.AF_INET, *rest, **kw)
     home = Home(Path(a.holon_home).expanduser())
     if a.cmd == "setup":
         cfg_dir = home.root / "adapters" / "notion"
