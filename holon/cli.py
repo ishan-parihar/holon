@@ -292,15 +292,24 @@ def cmd_emp_card(args, k):
          arg("--dept"), arg("--assign", help="employee id"), arg("--priority", type=int, default=3,
                                                                   choices=list(vocab.PRIORITIES)),
          arg("--task-class"), arg("--risk", default="normal", choices=list(vocab.RISKS)), arg("--workdir"),
-         arg("--due"), arg("--max-attempts", type=int, default=2))
+         arg("--due"), arg("--max-attempts", type=int, default=2),
+         arg("--lane", default="auto", choices=["auto", "fast", "full"],
+             help="auto: the decision model picks; fast runs only if the kernel grades the work G0"))
 def cmd_task_add(args, k):
-    t = k.work.add_work(args.title, _text_arg(args.intent), acceptance=_text_arg(args.acceptance),
-                        project_ref=args.project, parent_id=args.parent, needs=args.after, dept=args.dept,
+    intent = _text_arg(args.intent)
+    routed = k.route_dept(args.title, intent) if args.dept == "auto" else None
+    lane, cls = k.intake_lane(args.title, intent, None if args.lane == "auto" else args.lane)
+    t = k.work.add_work(args.title, intent, acceptance=_text_arg(args.acceptance),
+                        project_ref=args.project, parent_id=args.parent, needs=args.after,
+                        dept=routed["dept"] if routed else args.dept,
                         assignee=args.assign, priority=args.priority, source=vocab.CHAIR, task_class=args.task_class,
                         risk=args.risk, workdir=str(Path(args.workdir).expanduser().resolve()) if args.workdir else None,
-                        due=args.due, max_attempts=args.max_attempts)
+                        due=args.due, max_attempts=args.max_attempts, lane=lane)
     stage = k.work.stages(t["id"])
-    _out(args, t, _line(t) + (f"\n  first stage: {stage[0]['stage']} {stage[0]['id']}" if stage else ""))
+    _out(args, {**t, "routing": routed, "classification": cls},
+         _line(t) + f"\n  lane: {t['lane']}" + (f" (asked for {lane})" if t["lane"] != lane else "")
+         + (f"\n  department: {routed['dept'] or 'executive (unsure)'}" if routed else "")
+         + (f"\n  first stage: {stage[0]['stage']} {stage[0]['id']}" if stage else ""))
 
 
 @command("task list", "any", "work nodes (or stages with --stages)", arg("--status"), arg("--project"),
@@ -528,6 +537,53 @@ def cmd_tick(args, k):
 def cmd_schedule_add(args, k):
     row = k.schedules.add(args.kind, args.cron, employee_id=args.as_, stage=args.stage, template_id=args.plan)
     _out(args, row, f"{row['id']}  {row['kind']} '{row['cron']}' next {row['next_run_at']}")
+
+
+@command("routine add", "chair", "a recurring job, in the cheapest lane that does it reliably (script, fast, full); "
+         "the classifier enforces the lane and the routine goes to its approver", arg("title"),
+         arg("--intent", required=True, help="what each firing does: text, '-' for stdin, or @file"),
+         arg("--dept", required=True), arg("--cron", required=True, help="5-field cron, e.g. '0 7 * * *'"),
+         arg("--lane", choices=list(vocab.LANES), help="default: the classifier's"),
+         arg("--command", help="the script lane: a command the kernel runs (no agent)"),
+         arg("--rubric", action="append", default=[], help="a criterion each result is judged on (repeat)"),
+         arg("--why", help="required for a costlier lane than the classifier's, or an agent for a deterministic job"),
+         arg("--workdir"), arg("--task-class"), arg("--risk", default="normal", choices=list(vocab.RISKS)),
+         arg("--project"))
+def cmd_routine_add(args, k):
+    a = k.add_routine(args.title, _text_arg(args.intent), dept=args.dept, cron=args.cron, lane=args.lane,
+                      command=args.command, rubric=args.rubric, why=args.why, task_class=args.task_class,
+                      workdir=str(Path(args.workdir).expanduser().resolve()) if args.workdir else None,
+                      risk=args.risk, project_ref=args.project)
+    plan = k.work.plan_for_approval(a["id"])
+    _out(args, {"approval": a, "plan": plan}, _plan_text(k, a) + "\n\nOn approval the schedule starts.")
+
+
+@command("routine list", "any", "routines: lane, schedule, firings and outcomes", mutates=False)
+def cmd_routine_list(args, k):
+    rs = k.routines()
+    _out(args, rs, "\n".join(f"{r['schedule']}  {'on ' if r['enabled'] else 'off'} {r['lane']:<6} {r['cron']:<14} "
+                             f"{r['title']}  ({r['fired']} fired, {r['done']} done, {r['failed']} failed)"
+                             for r in rs) or "no routines")
+
+
+@command("classify", "employee", "ask the decision model which lane a job needs (script, fast, full)",
+         arg("title"), arg("--intent", required=True, help="text, '-' for stdin, or @file"), arg("--command"),
+         mutates=False)
+def cmd_classify(args, k):
+    c = k.classify(args.title, _text_arg(args.intent), args.command)
+    _out(args, c, f"lane: {c['lane'] or 'unsure (full)'}" + (
+        f" ({c['confidence']:.0%}; external effects p={c['external_p']})" if c["source"] == "classifier"
+        else f" (classifier {c['source']}{': ' + c['error'] if c.get('error') else ''})"))
+
+
+@command("run-script", "kernel", "run a ready script-lane stage (the heartbeat spawns this)", arg("stage_id", nargs="?"))
+def cmd_run_script(args, k):
+    out = k.run_script(args.stage_id)
+    if out is None:
+        _out(args, {"ran": None}, "no script stage ready")
+        return NOTHING
+    w = out.get("work") or {}
+    _out(args, out, f"script run done; work {w.get('id')} -> {w.get('status')}")
 
 
 @command("schedule list", "any", "schedules", mutates=False)

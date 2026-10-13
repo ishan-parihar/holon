@@ -30,6 +30,13 @@ class Schedules:
 
     def add(self, kind: str, cron: str, *, employee_id: str | None = None, stage: str | None = None,
             template_id: str | None = None) -> dict:
+        with write_txn(self.conn):
+            sid = self.insert(kind, cron, employee_id=employee_id, stage=stage, template_id=template_id)
+        return self.get(sid)
+
+    def insert(self, kind: str, cron: str, *, employee_id: str | None = None, stage: str | None = None,
+               template_id: str | None = None) -> str:
+        """`add` inside the caller's transaction (an approval that creates a routine's schedule)."""
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}")
         c = Cron(cron)
@@ -46,13 +53,12 @@ class Schedules:
             if stage and stage not in stages:
                 raise ValueError(f"employee {employee_id} has no role that performs the '{stage}' stage")
         sid = new_id("schedule")
-        with write_txn(self.conn):
-            self.conn.execute(
-                "INSERT INTO schedules (id, kind, cron, employee_id, stage, template_id, next_run_at, created_at)"
-                " VALUES (?,?,?,?,?,?,?,?)",
-                (sid, kind, cron, employee_id, stage, template_id, _iso(c.next_after(datetime.now(timezone.utc))), now()))
-            self.work._event("schedule", sid, None, "enabled", f"{kind} '{cron}'")
-        return self.get(sid)
+        self.conn.execute(
+            "INSERT INTO schedules (id, kind, cron, employee_id, stage, template_id, next_run_at, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?)",
+            (sid, kind, cron, employee_id, stage, template_id, _iso(c.next_after(datetime.now(timezone.utc))), now()))
+        self.work._event("schedule", sid, None, "enabled", f"{kind} '{cron}'")
+        return sid
 
     def get(self, sid: str) -> dict:
         r = self.conn.execute("SELECT * FROM schedules WHERE id=?", (sid,)).fetchone()

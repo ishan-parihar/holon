@@ -19,7 +19,9 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from holon.capabilities import decisions
 from holon.capabilities.context import DEFAULT_BUDGET_CHARS, compile_context, identity_card
+from holon.capabilities.decisions import Decider, choice, noul, p_yes, picked
 from holon.capabilities.memory import Memory
 from holon.capabilities import skills as skills_mod
 from holon.capabilities.skills import Library
@@ -31,6 +33,7 @@ from holon.core.vocab import CHAIR, EXECUTIVE
 from holon.execution import autonomy, briefs, drivers, genome, grading, security
 from holon.execution.briefs import kernel_env
 from holon.execution.org import Org, approver_ref
+from holon.execution.cron import Cron
 from holon.execution.schedules import Schedules
 from holon.execution import staleness
 from holon.execution.work import Claimant, Rules, TransitionError, Work
@@ -47,7 +50,8 @@ DEFAULT_CONFIG = {
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
     # a department rate past its bound (over min_samples) makes its retro due without proposals;
     # a _min of 0 or a _max of 1 turns that bound off
-    "metrics": {"min_samples": 5, "verify_pass_rate_min": 0.5, "rework_rate_max": 0.5, "rejection_rate_max": 0.5},
+    "metrics": {"min_samples": 5, "verify_pass_rate_min": 0.5, "rework_rate_max": 0.5, "rejection_rate_max": 0.5,
+                "rubric_agreement_min": 0.8},
     "budget": {"max_running_per_dept": 0, "max_runs_per_dept_per_day": 0},   # 0 = no cap
     "notify": {"command": ""},   # e.g. a chat CLI with {message}; empty = no notifications
     # what employees may reach beyond their work's workdir; [scope.dept.<slug>] adds to it per department
@@ -55,12 +59,33 @@ DEFAULT_CONFIG = {
     # machine checks the kernel runs in the workdir after every execute, before any verifier;
     # [checks.dept.<slug>] and [checks.class.<task_class>] add their own
     "checks": {"commands": [], "timeout_s": 600},
+    # lanes (docs/GENOME.md §10): fast = one session for routine (G0) work; script = the kernel runs a command
+    "lanes": {"fast": True, "script_timeout_s": 600, "external_p_max": 0.5},
+    # a decision model for lane choice, rubric judging, failure triage and routing; empty url = off
+    "classifier": dict(decisions.DEFAULTS),
+}
+# what each lane costs and is for: the classifier's options, and the order "cheapest first" means
+LANE_OPTIONS = {
+    "script": "deterministic: fixed inputs and fixed steps with no judgment; a shell or Python command does it "
+              "the same way every time",
+    "fast": "needs some language judgment (read, summarise, classify, draft, decide) but is small, bounded and "
+            "routine; one agent session does it",
+    "full": "open-ended, multi-step, risky, novel or consequential; needs a plan, an approval and an independent "
+            "check",
+}
+assert tuple(LANE_OPTIONS) == vocab.LANES
+FAILURE_CAUSES = {
+    "harness": "the agent harness crashed, hung, looped or misbehaved",
+    "model": "the model endpoint errored, refused, rate-limited, timed out or returned garbage",
+    "brief": "the agent misunderstood the task or did not return the result contract",
+    "environment": "a missing tool, file, permission, credential or network path",
+    "work": "the work itself is impossible, contradictory or underspecified",
 }
 CONFIG_KEYS = {s: set(v) for s, v in DEFAULT_CONFIG.items() if s not in ("grading", "autonomy", "pipeline")}
 CONFIG_KEYS["budget"].add("dept")  # [budget.dept.<slug>] overrides
 CONFIG_KEYS["scope"].add("dept")   # [scope.dept.<slug>] additions
-CONFIG_KEYS["checks"] |= {"dept", "class"}
-CONFIG_KEYS["classes"] = set()   # [classes] org = [...], <dept slug> = [...]: checked by lint against departments   # [checks.dept.<slug>], [checks.class.<task_class>]
+CONFIG_KEYS["checks"] |= {"dept", "class"}  # [checks.dept.<slug>], [checks.class.<task_class>]
+CONFIG_KEYS["classes"] = set()   # [classes] org = [...], <dept slug> = [...]: checked by lint against departments
 
 
 def load_config(home: Home) -> dict:
@@ -146,6 +171,15 @@ class KernelRules(Rules):
         if work["status"] == "failed":
             self._retro(work, f"work failed: {work.get('blocked_reason') or ''}")
 
+    def fast_refusal(self, work: dict) -> str | None:
+        """The fast lane skips plan and approval, so only work the kernel itself would grade G0 may take it
+        (low risk, a task class with a verified track record); whoever asked for the lane."""
+        if not self.k.config["lanes"]["fast"]:
+            return "[lanes] fast is off"
+        g = grading.grade_plan(self.k.wconn, work, {"grade": "G0"}, self.k.config,
+                               reach=self.k.scope(self.k._dept_slug(work.get("dept_id")))["roots"])
+        return None if g["floor"] == 0 else f"its grade floor is G{g['floor']} ({'; '.join(g['reasons'])})"
+
 
 class Kernel:
     def __init__(self, home: Home, actor: str = CHAIR):
@@ -164,6 +198,8 @@ class Kernel:
         self.work.appliers["authority"] = lambda a: self.org.write_authority(
             a["approver"], a["task_class"], a["max_grade"], a["reason"])
         self.work.appliers["employee_status"] = self._apply_status
+        self.work.appliers["routine"] = self._apply_routine
+        self.decider = Decider(self.config["classifier"])
         self.skills = Library(home)
         self.schedules = Schedules(self.wconn, actor)
         self.org.bootstrap()
@@ -413,7 +449,7 @@ class Kernel:
             out = self.decide(node["id"], env["decision"], env.get("note"), review_run=run_id)
         elif stage == "execute":
             out = self.work.submit_execute(run_id, env, exit_code)
-            if env["outcome"] != "failure":
+            if env["outcome"] != "failure" and self.work.latest(work["id"], "verify", "ready"):
                 checks = self.run_checks(self.work.get(work["id"]))
                 out["checks"] = checks
                 if checks and not all(c["ok"] for c in checks):
@@ -422,7 +458,9 @@ class Kernel:
                         f"- `{c['command']}` exited {c['exit_code']}:\n```\n{c['tail']}\n```" for c in failed)
                     out["work"] = self.verify(work["id"], "fail", note)["work"]
             if not out.get("checks") or all(c["ok"] for c in out["checks"]):
-                skipped = self._sample_verification(self.work.get(work["id"]), run, env)
+                w = self.work.get(work["id"])
+                skipped = self._lane_verification(w, run, env) if w["lane"] in ("fast", "script") \
+                    else self._sample_verification(w, run, env)
                 out["verification_skipped"] = bool(skipped)
                 if skipped:
                     out["work"] = skipped
@@ -663,6 +701,240 @@ class Kernel:
                              actor=f"emp:{emp['id']}" if emp else self.actor)
         return {"skill": name, "file": file, "layer": layer, "path": str(path), "text": text}
 
+    # ── lanes: the cheapest way to do each job, chosen at intake and enforced (docs/GENOME.md §10) ──
+    def classify(self, title: str, intent: str, command: str | None = None) -> dict:
+        """The decision model's view of a job: which lane it needs and whether it reaches outside the
+        organization. `lane` is None when the model is off, failed, or is less sure than `min_confidence`."""
+        a = self.decider.ask(f"Job: {title}\n\n{intent}" + (f"\n\nCommand: {command}" if command else ""), {
+            "lane": choice("What is the cheapest way to do this job reliably?", LANE_OPTIONS),
+            "external": noul("Does the job send, post or publish anything to people outside the organization: "
+                             "clients, leads, recruiters, applications, emails or messages to third parties, public "
+                             "posts or comments, payments, orders or trades? Reports, digests and notifications to "
+                             "the Chair or the organization's own channels do not count.",
+                             "it reaches third parties or the public",
+                             "it only reads, writes the organization's files, or reports to the Chair")})
+        if a is None:
+            return {"lane": None, "confidence": None, "external_p": None, "source": "off" if not self.decider.on
+                    else "failed", "error": self.decider.error}
+        lane, conf = picked(a["lane"])
+        return {"lane": lane if conf >= float(self.decider.cfg["min_confidence"]) else None,
+                "model_lane": lane, "confidence": round(conf, 3), "probabilities": a["lane"].get("probabilities"),
+                "external_p": round(p_yes(a["external"]), 3), "source": "classifier"}
+
+    def _external(self, cls: dict) -> bool:
+        return (cls.get("external_p") or 0) >= float(self.config["lanes"]["external_p_max"])
+
+    def intake_lane(self, title: str, intent: str, requested: str | None = None) -> tuple[str, dict]:
+        """The lane for one-off work: the requested one, or the classifier's when it is sure. A job it judges
+        deterministic still runs fast (one-off work has no approved command); one that reaches outside the
+        organization runs full. The kernel re-checks the fast lane against the grade floor either way."""
+        if requested in ("fast", "full"):
+            return requested, {"source": "requested"}
+        cls = self.classify(title, intent)
+        lane = "full" if cls["lane"] in (None, "full") or self._external(cls) else "fast"
+        return lane, cls
+
+    def add_routine(self, title: str, intent: str, *, dept: str, cron: str, lane: str | None = None,
+                    command: str | None = None, rubric: list[str] | None = None, why: str | None = None,
+                    workdir: str | None = None, task_class: str | None = None, risk: str = "normal",
+                    project_ref: str | None = None) -> dict:
+        """A routine (a cron job) as a proposal for the approver its grade names. The lane is enforced
+        cheapest first: a job the classifier judges deterministic must be a script (`command`); a costlier lane
+        than the classifier's needs `why`, which is recorded; a cheaper one is raised to the classifier's.
+        A routine runs unattended, so its floor is G2 (G3 when it reaches outside the organization)."""
+        Cron(cron)
+        if lane not in (None, *vocab.LANES):
+            raise ValueError(f"lane must be one of {vocab.LANES}")
+        if command and lane not in (None, "script"):
+            raise ValueError("--command makes a script routine; drop --lane or --command")
+        if lane == "script" and not command:
+            raise ValueError("the script lane runs an approved --command")
+        cls = self.classify(title, intent, command)
+        order = list(vocab.LANES)
+        notes = []
+        if command:
+            lane = "script"
+            if cls["lane"] and cls["lane"] != "script":
+                notes.append(f"the classifier judged this a {cls['lane']} job ({cls['confidence']:.0%}); the rubric "
+                             "judge and the verifier will tell whether the command is enough")
+        elif cls["lane"] == "script" and not why:
+            raise ValueError(f"this job looks deterministic (script, {cls['confidence']:.0%}): give it as a script "
+                             "with --command (have the department write one: `holon task add`), or say --why an "
+                             "agent must do it")
+        elif lane is None:
+            lane = cls["lane"] if cls["lane"] in ("fast", "full") else "full"
+        elif cls["lane"] and order.index(lane) < order.index(cls["lane"]):
+            notes.append(f"raised from {lane} to {cls['lane']}: the classifier is {cls['confidence']:.0%} sure it "
+                         "needs that much care")
+            lane = cls["lane"]
+        elif cls["lane"] and order.index(lane) > order.index(cls["lane"]):
+            if not why:
+                raise ValueError(f"the classifier says {cls['lane']} is enough ({cls['confidence']:.0%}); a {lane} "
+                                 "routine costs more on every firing: say --why")
+        if why:
+            notes.append(f"lane chosen by the Chair over the classifier: {why}")
+        external = self._external(cls)
+        floor = max(2, grading.RISK_FLOOR.get(risk, 1), 3 if external else 0)
+        reasons = ["a routine runs unattended on a schedule: floor G2"]
+        if external:
+            reasons.append(f"the classifier judges it reaches outside the organization (p={cls['external_p']}): "
+                           "floor G3")
+        if grading.RISK_FLOOR.get(risk, 1) > 2:
+            reasons.append(f"risk={risk}: floor G{grading.RISK_FLOOR[risk]}")
+        dept_id = self.org.dept(dept)["id"]
+        approver = self.org.resolve_approver({"dept_id": dept_id, "task_class": task_class}, floor, None)
+        steps = {"script": f"The kernel runs `{command}` in {workdir or 'its run directory'} on `{cron}`; checks and "
+                           "the rubric judge each result.",
+                 "fast": f"On `{cron}`, one agent session does the job; the rubric judge checks each result and a "
+                         "verifier sees the unsure ones.",
+                 "full": f"On `{cron}`, a fresh piece of work is planned, approved, executed and verified."}[lane]
+        return self.work.propose(
+            title=f"Routine: {title}", intent=intent, steps=steps, apply={"kind": "routine", "cron": cron},
+            approver=approver, grade=floor, task_class=task_class, dept=dept_id, author=self.actor,
+            reasons=reasons + notes, body={"lane": lane, "rubric": list(rubric or []), "classification": cls,
+                                           **({"command": command} if command else {})},
+            acceptance="; ".join(rubric) if rubric else None, workdir=workdir, risk=risk, project_ref=project_ref)
+
+    def _apply_routine(self, a: dict) -> None:
+        """On approval: the plan becomes a standing (recurring) plan and its schedule starts."""
+        self.wconn.execute("UPDATE tasks SET recurring=1 WHERE id=?", (a["_plan"],))
+        self.schedules.insert("recurring", a["cron"], template_id=a["_plan"])
+
+    def routines(self) -> list[dict]:
+        out = []
+        for s in self.schedules.list():
+            if s["kind"] != "recurring":
+                continue
+            plan = self.work.get(s["template_id"])
+            body = (self.work.output(plan["id"]) or {"body": {}})["body"]
+            runs = self.wconn.execute(
+                "SELECT count(*), sum(status='done'), sum(status='failed') FROM tasks WHERE stage IS NULL AND "
+                "requested_by=?", (f"recurring:{plan['id']}",)).fetchone()
+            out.append({"schedule": s["id"], "enabled": bool(s["enabled"]), "cron": s["cron"], "plan": plan["id"],
+                        "title": self.work.get(plan["parent_id"])["title"].removeprefix("Routine: "),
+                        "lane": body.get("lane") or "full", "command": body.get("command"),
+                        "rubric": body.get("rubric") or [], "next_run_at": s["next_run_at"],
+                        "fired": runs[0], "done": runs[1] or 0, "failed": runs[2] or 0})
+        return out
+
+    def rubric(self, work: dict) -> list[str]:
+        """What a result of this work is judged on: the routine's rubric, else its acceptance criteria."""
+        plan = self.work.approved_plan(work["id"])
+        r = ((plan or {}).get("output") or {"body": {}})["body"].get("rubric")
+        return list(r) if r else [work["acceptance"] or f"The result does what was asked: {work['intent'][:400]}"]
+
+    def judge(self, work: dict, env: dict) -> dict | None:
+        """The rubric judge: the decision model's probability that the result meets each criterion, and that
+        it is as good as the gold standard. None when the model is off or failed."""
+        rubric, gold = self.rubric(work)[:12], self.work.gold_standard(work)
+        qs = {f"c{i}": noul(f"Does the result meet this criterion: {c}", "the result shows it is met",
+                            "it is not met, or the result does not show it") for i, c in enumerate(rubric)}
+        if gold:
+            qs["gold"] = noul("Is this result at least as complete and correct as the gold standard (the last "
+                              "verified run of the same job)?", "as good or better",
+                              "worse, or missing something the gold standard had")
+        state = (f"Job: {work['title']}\n{work['intent']}\n\nResult ({env['outcome']}): {env['summary']}\n\n"
+                 f"{env['documentation'][:12000]}")
+        if gold:
+            state += f"\n\n--- Gold standard ({gold['work_id']}) ---\n{gold['summary']}\n{(gold['documentation'] or '')[:6000]}"
+        a = self.decider.ask(state, qs)
+        if a is None:
+            return None
+        scores = {("gold standard" if q == "gold" else rubric[int(q[1:])]): round(p_yes(a[q]), 3) for q in qs}
+        return {"pass": all(v >= float(self.decider.cfg["pass_p"]) for v in scores.values()), "scores": scores}
+
+    def _lane_verification(self, work: dict, run: dict, env: dict) -> dict | None:
+        """Script and fast work skip the verifier when nothing calls for one: graded again on what it did
+        (beyond its approved grade: a lane breach, which the Chair is told about), then judged against its
+        rubric. Unsure, failing, sampled or breaching results keep their verify stage."""
+        if work["status"] != "open" or env["outcome"] != "success" or not self.work.latest(work["id"], "verify", "ready"):
+            return None
+        approved = self.work.approved_plan(work["id"])
+        g = grading.grade_plan(self.wconn, work, {"writes": env.get("writes") or [], "grade": "G0",
+                                                  "external_effects": env.get("external_effects") or []},
+                               self.config, reach=self.scope(self._dept_slug(work["dept_id"]))["roots"])
+        if approved and g["floor"] > approved["grade"]:
+            with write_txn(self.wconn):
+                self.work._event("task", work["id"], None, None, f"lane breach: a {work['lane']} result graded "
+                                 f"G{g['floor']} above its approved G{approved['grade']}: {'; '.join(g['reasons'])}"[:900],
+                                 actor="kernel")
+            return None
+        verdict = self.judge(work, env)
+        if verdict is None:
+            if work["lane"] == "script" and not self.decider.on:
+                return self.work.skip_verification(work["id"], "script exited 0 and its checks passed", by="checks")
+            return self._sample_verification(work, run, env) if work["lane"] == "fast" else None
+        scores = "; ".join(f"{c[:80]}: {p}" for c, p in verdict["scores"].items())
+        pol = self.org.policy(work["dept_id"])
+        sampled = work["lane"] == "fast" and autonomy.sampled(f"verify:{run['id']}", pol["verify_sample_rate"])
+        with write_txn(self.wconn):
+            self.work._event("task", work["id"], None, None,
+                             f"rubric {'pass' if verdict['pass'] else 'unsure'}{' (sampled)' if sampled else ''}: "
+                             + scores[:800], actor="kernel")
+            if not verdict["pass"] or sampled:
+                self.work._message("kernel", "Rubric judge (decision model, probability each criterion is met; "
+                                   f"{'sampled for a verifier' if sampled else 'below the pass bar'}):\n"
+                                   + "\n".join(f"- {c}: {p}" for c, p in verdict["scores"].items()),
+                                   f"task:{work['id']}", kind="channel", task_id=work["id"])
+        if verdict["pass"] and not sampled:
+            return self.work.skip_verification(work["id"], f"rubric judge passed: {scores}"[:900], by="rubric")
+        return None
+
+    def run_script(self, stage_id: str | None = None) -> dict | None:
+        """Run a ready script stage: the routine's approved command, in its workdir, by the kernel (no agent).
+        Its exit code is the outcome; the result goes through checks and the rubric judge like any other."""
+        token, token_hash = security.new_token()
+        got = self.work.claim(Claimant(), ["execute"], "script", stage_id, token_hash, kernel=True)
+        if got is None:
+            return None
+        node, run = got
+        cmd = self.work.approved_plan(node["parent_id"])["output"]["body"]["command"]
+        rdir = self.home.run_dir(run["id"])
+        rdir.mkdir(parents=True, exist_ok=True)
+        cwd = node["workdir"] if node.get("workdir") and Path(node["workdir"]).is_dir() else str(rdir)
+        limit = int(self.config["lanes"]["script_timeout_s"])
+        try:
+            p = subprocess.run(cmd, shell=True, cwd=cwd, env=self._check_env(self.work.get(node["parent_id"])),
+                               capture_output=True, text=True, timeout=limit, start_new_session=True)
+            code, output = p.returncode, p.stdout + p.stderr
+        except subprocess.TimeoutExpired as e:
+            code, output = 124, f"{(e.stdout or '')}\ntimed out after {limit}s"
+        (rdir / "driver.log").write_text(f"$ {cmd}\n[cwd] {cwd}\n[exit] {code}\n{output}")
+        self.work.set_run_paths(run["id"], str(rdir), str(rdir / "driver.log"))
+        env = {"outcome": "success" if code == 0 else "failure", "summary": f"`{cmd}` exited {code}",
+               "documentation": f"```\n{output[-8000:].strip() or '(no output)'}\n```"}
+        return self.submit(run["id"], env, code)
+
+    def route_dept(self, title: str, intent: str) -> dict:
+        """Which department should own new work, from their missions. `dept` is None when the model is off or
+        unsure: the work then goes to the executive, whose CEO shapes and routes it."""
+        depts = [d for d in self.org.depts() if d["slug"] != EXECUTIVE]
+        if len(depts) < 2:
+            return {"dept": depts[0]["slug"] if depts else None, "source": "only one"}
+        a = self.decider.ask(f"Work: {title}\n\n{intent}", {"dept": choice(
+            "Which department should own this work?",
+            {d["slug"]: f"{d['name']}: {d.get('mission') or ''}"[:300] for d in depts})})
+        if a is None:
+            return {"dept": None, "source": "off" if not self.decider.on else "failed", "error": self.decider.error}
+        slug, conf = picked(a["dept"])
+        return {"dept": slug if conf >= float(self.decider.cfg["min_confidence"]) else None, "model_dept": slug,
+                "confidence": round(conf, 3), "source": "classifier"}
+
+    def _failure_cause(self, task_id: str) -> str:
+        """Failure triage for an incident: the decision model's reading of the last failed run's log."""
+        r = self.wconn.execute("SELECT log_path FROM runs WHERE task_id=? AND status IN ('failed','timeout') AND "
+                               "log_path IS NOT NULL ORDER BY started_at DESC LIMIT 1", (task_id,)).fetchone()
+        try:
+            tail = Path(r[0]).read_text(errors="replace")[-6000:] if r else ""
+        except OSError:
+            tail = ""
+        a = self.decider.ask(f"Log of a failed agent run:\n{tail}", {"cause": choice(
+            "What most likely made this run fail?", FAILURE_CAUSES)}) if tail else None
+        if a is None:
+            return ""
+        cause, conf = picked(a["cause"])
+        return f"\nLikely cause (decision model, {conf:.0%}): {cause}: {FAILURE_CAUSES.get(cause, '')}."
+
     # ── push mode ─────────────────────────────────────────────────────────
     def run_driver(self, claimed: Claimed, driver_name: str) -> dict:
         drv = drivers.get(self.home, driver_name)
@@ -727,6 +999,16 @@ class Kernel:
             else:
                 self._spawn_dispatch(s["employee_id"], s["stage"], s["id"])
                 fired.append({"schedule": s["id"], "spawned": True})
+        for (sid,) in self.wconn.execute("SELECT id FROM tasks WHERE status='ready' AND stage='execute' AND "
+                                         "lane='script' ORDER BY priority, created_at").fetchall():
+            if sid in self.backed_off():
+                continue
+            if foreground:
+                res = self.run_script(sid)
+                fired.append({"script": sid, "work": (res or {}).get("work", {}).get("status")})
+            else:
+                self._spawn([sys.executable, "-m", "holon", "--home", str(self.home.root), "run-script", sid])
+                fired.append({"script": sid, "spawned": True})
         return {"swept": swept, "triggered": triggered, "fired": fired, "notified": notified}
 
     def _fire_recurring(self, s: dict) -> dict:
@@ -748,9 +1030,11 @@ class Kernel:
         return {"schedule": s["id"], "recurring_work": self.work.instantiate_recurring(s["template_id"])["id"]}
 
     def _spawn_dispatch(self, employee_id: str, stage: str | None, schedule_id: str) -> None:
+        self._spawn([sys.executable, "-m", "holon", "--home", str(self.home.root), "dispatch", "--as", employee_id,
+                     "--schedule", schedule_id] + (["--stage", stage] if stage else []))
+
+    def _spawn(self, cmd: list[str]) -> None:
         log = self.home.runtime_dir / "dispatch.log"
-        cmd = [sys.executable, "-m", "holon", "--home", str(self.home.root), "dispatch", "--as", employee_id,
-               "--schedule", schedule_id] + (["--stage", stage] if stage else [])
         with open(log, "a") as fh:
             subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True,
                              env={**os.environ, **kernel_env(self.home)})
@@ -762,6 +1046,12 @@ class Kernel:
         return [*c.get("commands", []), *((c.get("dept") or {}).get(slug, {}).get("commands", []) if slug else []),
                 *((c.get("class") or {}).get(work.get("task_class") or "", {}).get("commands", []))]
 
+    def _check_env(self, work: dict) -> dict:
+        """The environment of a command the kernel runs for a work (checks, scripts): no Chair, employee or
+        run credential."""
+        env = {k: v for k, v in os.environ.items() if k not in ("HOLON_CHAIR_KEY", "HOLON_KEY", "HOLON_RUN_TOKEN")}
+        return {**env, "HOLON_WORK_ID": work["id"], "HOLON_HOME": str(self.home.root)}
+
     def run_checks(self, work: dict) -> list[dict]:
         """Run the work's checks in its workdir. Every result is posted on the work (the verifier reads it
         in its context) and logged as an event; the caller turns a failure into rework."""
@@ -769,8 +1059,7 @@ class Kernel:
         workdir = work.get("workdir")
         if not cmds or not workdir or not Path(workdir).is_dir():
             return []
-        env = {k: v for k, v in os.environ.items() if k not in ("HOLON_CHAIR_KEY", "HOLON_KEY", "HOLON_RUN_TOKEN")}
-        env.update({"HOLON_WORK_ID": work["id"], "HOLON_HOME": str(self.home.root)})
+        env = self._check_env(work)
         results = []
         for cmd in cmds:
             try:
@@ -854,7 +1143,7 @@ class Kernel:
     def pending_for_chair(self, since_seq: int) -> list[str]:
         lines = []
         for e in self.wconn.execute(
-                "SELECT e.seq, t.id, t.stage, t.status, t.title, t.task_class, t.approver, t.blocked_reason "
+                "SELECT e.seq, e.note, t.id, t.stage, t.status, t.title, t.task_class, t.approver, t.blocked_reason "
                 "FROM events e JOIN tasks t ON t.id=e.entity_id WHERE e.entity='task' AND e.seq>? ORDER BY e.seq",
                 (since_seq,)).fetchall():
             if e["stage"] == "approve" and e["status"] == "ready" and e["approver"] == CHAIR:
@@ -865,6 +1154,8 @@ class Kernel:
                 lines.append(f"failed: {e['title']} (holon task show {e['id']})")
             elif e["stage"] is None and e["status"] == "open" and e["task_class"] == "incident":
                 lines.append(f"incident: {e['title']}")
+            elif e["stage"] is None and (e["note"] or "").startswith("lane breach"):
+                lines.append(f"{e['note'][:200]} on {e['title']} (holon task show {e['id']})")
         n = self.wconn.execute("SELECT count(*) FROM audit_samples WHERE verdict IS NULL AND sampled_at>?",
                                (self._setting("notify_ts") or "",)).fetchone()[0]
         if n:
@@ -953,14 +1244,17 @@ class Kernel:
                 out.append(r)
         return out
 
+    def _incident_open(self, title: str) -> bool:
+        return bool(self.wconn.execute("SELECT 1 FROM tasks WHERE stage IS NULL AND title=? AND status IN "
+                                       "('blocked','open','waiting','needs_input')", (title,)).fetchone())
+
     def _incident(self, title: str, intent: str) -> dict | None:
         dept = self.config["healing"]["incident_dept"]
         try:
             self.org.dept(dept)
         except LookupError:
             dept = EXECUTIVE
-        if self.wconn.execute("SELECT 1 FROM tasks WHERE stage IS NULL AND title=? AND status IN "
-                              "('blocked','open','waiting','needs_input')", (title,)).fetchone():
+        if self._incident_open(title):
             return None
         w = self.work.add_work(title, intent, dept=dept, source="kernel", requested_by="kernel", priority=1,
                                task_class="incident", acceptance="the cause is fixed and the failing path works again")
@@ -984,10 +1278,13 @@ class Kernel:
                 "SELECT r.task_id, t.stage, count(*) AS n, max(r.employee_id) AS emp FROM runs r JOIN tasks t "
                 "ON t.id=r.task_id WHERE r.status='failed' AND t.status IN ('ready','claimed') GROUP BY r.task_id "
                 "HAVING n>=?", (int(h["run_failures_for_incident"]),)).fetchall():
-            i = self._incident(f"Incident: runs keep failing on {r['task_id']}",
-                               f"{r['n']} runs of the {r['stage']} stage {r['task_id']} ended without a valid result "
-                               f"(last employee {r['emp']}). Read their driver.log files under "
-                               f"{self.home.runtime_dir / 'runs'} and fix the harness, model or brief.")
+            title = f"Incident: runs keep failing on {r['task_id']}"
+            if self._incident_open(title):
+                continue
+            i = self._incident(title, f"{r['n']} runs of the {r['stage']} stage {r['task_id']} ended without a valid "
+                               f"result (last employee {r['emp']}). Read their driver.log files under "
+                               f"{self.home.runtime_dir / 'runs'} and fix the harness, model or brief."
+                               + self._failure_cause(r["task_id"]))
             if i:
                 out.append(i)
         for sc in self.wconn.execute("SELECT * FROM schedules WHERE enabled=1 AND failure_streak>=?",
@@ -1090,6 +1387,11 @@ class Kernel:
         cost = q("SELECT sum(r.cost), sum(coalesce(r.tokens_in,0)+coalesce(r.tokens_out,0)) FROM runs r JOIN tasks t "
                  "ON t.id=r.task_id WHERE {where}")
         verified = q("SELECT count(*) FROM outputs o JOIN tasks t ON t.id=o.task_id WHERE o.verified=1 AND {where}")[0]
+        judged = q("SELECT count(*), sum(v.outcome='pass') FROM events e JOIN tasks t ON t.id=e.entity_id JOIN tasks v "
+                   "ON v.parent_id=t.id AND v.stage='verify' AND v.status='done' WHERE e.entity='task' AND "
+                   "e.note LIKE 'rubric pass%' AND {where}")
+        lanes = {r[0]: r[1] for r in self.wconn.execute(
+            f"SELECT t.lane, count(*) FROM tasks t WHERE t.stage IS NULL AND {where} GROUP BY t.lane", args)}
         cycle = {r[0]: round(r[1], 2) for r in self.wconn.execute(
             "SELECT t.stage, avg((julianday(r.ended_at)-julianday(r.started_at))*24) FROM runs r JOIN tasks t "
             f"ON t.id=r.task_id WHERE r.status='succeeded' AND {where} GROUP BY t.stage", args) if r[1] is not None}
@@ -1116,4 +1418,8 @@ class Kernel:
             "research_reuse": {"value": ratio(terrain[1] or 0, terrain[0]), "counter": "first_pass_rate"},
             "cost_per_verified_result": {"value": ratio(cost[0] or 0, verified), "tokens": cost[1] or 0,
                                          "counter": "verify_pass_rate"},
+            # of results the rubric judge passed that a verifier also checked, the share the verifier passed
+            "rubric_agreement": {"value": ratio(judged[1] or 0, judged[0]), "n": judged[0],
+                                 "counter": "verify_pass_rate"},
+            "work_by_lane": lanes,
         }

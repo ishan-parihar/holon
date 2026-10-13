@@ -25,7 +25,7 @@ PROTOCOL = "2025-06-18"
 # the commands an employee needs while working; chair-only and kernel commands are never exposed
 AGENT_COMMANDS = ("emp card", "org", "dept roles", "task show", "task tree", "plan show", "memory search",
                   "memory add", "memory context", "msg send", "msg inbox", "msg request", "skill list", "skill show",
-                  "skill invoke", "run show", "run heartbeat", "metrics", "claim")
+                  "skill invoke", "run show", "run heartbeat", "metrics", "claim", "classify", "routine list")
 
 
 def _tool_name(path: tuple[str, ...]) -> str:

@@ -75,7 +75,9 @@ SPECS: dict[str, dict[str, dict[str, F]]] = {
             "rationale": F("text", required=True), "grade": F("grade"),
             "children": F("list", required=True, min_items=2, items=F("object", fields={
                 **WORK_ITEM, "assignee": F("str"), "risk": F("str", enum=vocab.RISKS), "workdir": F("str"),
-                "after": F("list", items=F("int", lo=0))})),
+                "after": F("list", items=F("int", lo=0)),
+                "lane": F("str", enum=("fast", "full"), doc="fast: one session plans and acts; the kernel allows it "
+                                                            "only when the child's grade floor is G0")})),
         },
         "needs_input": {
             "kind": F("str", required=True, enum=("needs_input",)),
@@ -90,6 +92,8 @@ SPECS: dict[str, dict[str, dict[str, F]]] = {
         "outcome": F("str", required=True, enum=vocab.OUTCOMES["execute"]),
         "summary": F("text", required=True), "documentation": F("text", required=True, max_chars=MAX_DOC_CHARS),
         "artifacts": STR_LIST, "blockers": STR_LIST, "next_intent": TEXT,
+        "writes": F("list", items=F("str"), doc="paths you changed (the fast lane is graded again on them)"),
+        "external_effects": F("list", items=F("str"), doc="anything you sent or published outside the organization"),
         "skill_changes": F("list", items=F("object", fields={
             "skill": F("str", required=True), "file": F("str", required=True),
             "content": F("text", required=True, max_chars=MAX_DOC_CHARS), "why": F("text", required=True)}),

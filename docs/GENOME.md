@@ -118,6 +118,15 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[scope]` | `act_commands` | [] | extra commands for the execute stage only |
 | `[checks]` | `commands` | [] | commands the kernel runs in the workdir after every execute; `[checks.dept.<slug>]` and `[checks.class.<task_class>]` add their own (§9) |
 | `[checks]` | `timeout_s` | 600 | per check command |
+| `[lanes]` | `fast` | true | allow the fast lane (§10); off sends all work through the full pipeline |
+| `[lanes]` | `script_timeout_s` | 600 | how long the kernel lets a script routine run |
+| `[lanes]` | `external_p_max` | 0.5 | the decision model's probability that a job reaches outside the organization above which intake runs it full and a routine is floored at G3 |
+| `[classifier]` | `url`, `model`, `key_file` | "" (off) | the decision endpoint, the model for choice and yes/no questions, and the 0600 file its key is read from (§10) |
+| `[classifier]` | `noul_model` | "" | an optional cheaper yes/no-only model, used when every question is yes/no (the rubric judge) |
+| `[classifier]` | `timeout_s` | 15 | per decision call; a timeout is "no opinion" and takes the safe default |
+| `[classifier]` | `min_confidence` | 0.8 | below it, a lane or routing choice falls back to the safe default (full, or the executive) |
+| `[classifier]` | `pass_p` | 0.85 | the probability every rubric criterion must reach for a result to close without a verifier |
+| `[metrics]` | `rubric_agreement_min` | 0.8 | the share of rubric-passed results a sampled verifier also passes; below it the department retro is due |
 | `[classes]` | `org`, `<dept slug>` | (any) | the task classes work may carry, organization-wide and per department; agents proposing work with another class breach the contract, `holon doctor` warns about open work outside it. Track records (novelty floors, earned authority, sampling) accrue per class, so a small shared taxonomy is what lets trust grow |
 
 ## 7. Operations
@@ -169,4 +178,61 @@ tokens are removed from their environment). A failing command is recorded as a f
 verification with its output: the work goes to rework (`execute#n`) and no verifier is spent.
 When all pass, the results are posted on the work, and the verifier reads them in its context;
 sampled G0 work is only closed unverified after its checks pass.
+
+## 10. Lanes, routines, rubrics and the decision model
+
+Every piece of work runs in a lane, and the organization uses the cheapest one that does the job
+reliably. Four agent sessions for a two-line change is the waste this removes.
+
+| Lane | Who does it | Sessions | When |
+|---|---|---|---|
+| `script` | the kernel runs an approved command in the workdir (`holon run-script`, spawned by the heartbeat) | 0 | a routine whose job is deterministic |
+| `fast` | one executor session plans and acts; no plan or approve stage | 1 | routine work: the kernel's grade floor is G0 (low risk, a task class with a verified track record), or a routine approved as fast |
+| `full` | research? → shape? → plan → approve → execute → verify | 2–6 | everything else, and whatever the others are unsure about |
+
+**Who picks the lane.** One-off work: `holon task add --lane auto` (the default) asks the decision
+model; a job it judges routine and internal is asked to run fast. A planner's decomposition may
+mark a child `"lane": "fast"`. Either way the kernel decides: fast work whose grade floor is above
+G0 runs full, and the event says why (`execution.service.KernelRules.fast_refusal`). The executor of
+fast work can still escalate (`noop` with `blockers` sends it to plan).
+
+**Routines** are recurring jobs (the organization's cron jobs): `holon routine add` takes a title,
+intent, department, cron and, for a script, its `--command`. The decision model classifies the job
+and the kernel enforces the lane cheapest first:
+- a job it judges deterministic must be a script: give `--command` (have the department write the
+  script as work first), or say `--why` an agent must do it;
+- a requested lane cheaper than the model's is raised to it; a costlier one needs `--why`, which
+  is recorded in the grade reasons the approver reads;
+- with the model off or unsure, the requested lane stands (default `full`).
+A routine runs unattended, so it is a proposal graded at least G2 (G3 when the model judges it
+reaches outside the organization) for the approver that grade names; on approval its schedule
+starts (`holon routine list`). Each firing of a script or fast routine enters at execute with the
+standing plan; a full routine plans every firing afresh.
+
+**Rubric and gold standard.** A routine carries a rubric (`--rubric`, repeatable; else its
+acceptance). After a script or fast result passes its machine checks, the kernel grades what it did
+again (a result beyond its approved grade is a *lane breach*: the Chair is told and a verifier
+looks), then asks the decision model, per criterion, the probability that the result meets it, and
+whether it is as good as the **gold standard**: the last result a verifier or the Chair passed for
+the same routine (else the same task class and department), which the executor also sees in its
+context. Every criterion at or above `pass_p` closes the work without a verifier (the result stays
+unverified, so it never earns trust or becomes a gold standard); anything lower, and a sample of fast
+results (`verify_sample_rate`), keeps the verifier, who reads the judge's scores. `holon metrics`
+reports `rubric_agreement` (how often a sampled verifier agrees with a rubric pass) and
+`work_by_lane`; agreement below its bound makes the department retro due.
+
+**The decision model** (`[classifier]`, `holon/capabilities/decisions.py`) answers typed questions
+with calibrated probabilities in about a second, without spending an agent session. Its uses:
+
+| Use | Question | Safe default when off or unsure |
+|---|---|---|
+| lane at intake and for routines | choice: script, fast or full | full |
+| reach outside the organization | yes/no | the requested lane; no G3 floor |
+| rubric judge | yes/no per criterion, and against the gold standard | a verifier |
+| failure triage on incidents | choice: harness, model, brief, environment or work | the incident without a cause line |
+| routing new work (`task add --dept auto`) | choice over departments by mission | the executive (the CEO shapes it) |
+
+The invariant: the model can make the organization more careful on its own; it lets work skip a
+step only where the kernel's deterministic floor allows it too. Its key lives in a 0600 file the
+kernel reads and never reaches a run's environment.
 

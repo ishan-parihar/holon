@@ -47,6 +47,9 @@ whose inputs changed (AGENTS.md).
 | 2026-10-13 | Work locally until robustness is verified; the VPS redeploy waits for the Chair. |
 | 2026-10-13 | Notion is the dashboard: SQLite and Notion stay in sync both ways, schema typed (selects, relations), webhooks through a tunnel on the Chair's domain, with the edited-since poll as the fallback. |
 | 2026-10-13 | The workstation instance runs the Notion sync and tunnel; the heartbeat stays off until the Chair turns it on. |
+| 2026-10-13 | Trust boundary (G1): separate Unix users and a kernel broker, not per-harness filesystem confinement. |
+| 2026-10-13 | Lanes (G3): script, then a fast single session, then the full pipeline, cheapest first and enforced at intake by a classifier; each routine has a rubric, and its last verified run is its gold standard. |
+| 2026-10-13 | Decision models (classifiers) run on OpenRouter's decisions endpoint (`[classifier]`), outside free-stack; free-stack stays the only pipeline for generative models. |
 
 ## 4. Rules for anyone working on Holon
 
@@ -63,15 +66,14 @@ whose inputs changed (AGENTS.md).
 
 - Redeploy the VPS with everything since the morning of 2026-10-13.
 - Turn on the workstation heartbeat (`holon-tick.timer`).
-- The trust boundary (`docs/design/2026-10-13-paperclip-contrast.md` G1): separate Unix users and a
-  kernel broker, or confine every harness's filesystem.
-- Grade lanes for small and recurring work (same document, G3).
+- Which venture moves first, as a pilot department of routines (`docs/design/2026-10-13-lanes-and-decision-models.md` §4).
 
 ## 6. What is next
 
-The ranked list is `docs/design/2026-10-13-paperclip-contrast.md` §4. In order: the G1 interim
-check, intake keys (G4), department secrets (G8), the Notion mirror window (G2), then one venture
-as a pilot department (§5 there).
+The ranked list is `docs/design/2026-10-13-paperclip-contrast.md` §4. G3 is built (lanes, routines,
+rubrics, decision models: `2026-10-13-lanes-and-decision-models.md`). In order: the trust boundary
+(G1, separate users and a broker), intake keys (G4), department secrets (G8), the Notion mirror
+window (G2), then one venture as a pilot department of routines.
 
 ## 7. Reading order for a new agent
 
@@ -80,7 +82,7 @@ as a pilot department (§5 there).
 3. `AGENTS.md`: the code map, the laws lint enforces, the regression ledger.
 4. `docs/GENOME.md` (departments, roles, configuration) and `docs/CONTRACT.md` (the harness
    contract).
-5. `docs/design/` newest first: `2026-10-13-paperclip-contrast.md`, then
+5. `docs/design/` newest first: `2026-10-13-lanes-and-decision-models.md`, `2026-10-13-paperclip-contrast.md`, then
    `2026-10-13-system-red-team.md`; older records explain why things are the way they are.
 6. The README of the adapter you touch (`adapters/<name>/README.md`), which records what the real
    harness does.

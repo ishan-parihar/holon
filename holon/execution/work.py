@@ -76,6 +76,10 @@ class Rules:
     def on_rework(self, work: dict, stage: dict, why: str) -> None:
         """Called when a stage's result sends work back (failed verification, rejection, failed execution)."""
 
+    def fast_refusal(self, work: dict) -> str | None:
+        """Why this work may not take the fast lane (None: it may). Without the kernel's grading, never."""
+        return "the fast lane needs the kernel's grade floor"
+
 
 def _lease(seconds: int) -> str:
     return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
@@ -276,7 +280,7 @@ class Work:
 
     def _add_work(self, title: str, intent: str, *, acceptance=None, project_ref=None, parent_id=None, dept=None,
                   assignee=None, requested_by=None, priority=3, source=vocab.CHAIR, task_class=None, risk="normal",
-                  workdir=None, due=None, max_attempts=2, needs=None, expand=True) -> dict:
+                  workdir=None, due=None, max_attempts=2, needs=None, expand=True, lane="full") -> dict:
         if not title or not title.strip() or not intent or not intent.strip():
             raise ValueError("title and intent are required")
         if source not in vocab.SOURCES:
@@ -285,6 +289,10 @@ class Work:
             raise ValueError(f"risk must be one of {vocab.RISKS}")
         if priority not in vocab.PRIORITIES:
             raise ValueError(f"priority must be one of {vocab.PRIORITIES}")
+        if lane not in vocab.LANES:
+            raise ValueError(f"lane must be one of {vocab.LANES}")
+        if lane == "script" and expand:
+            raise ValueError("script work comes only from an approved routine (holon routine add)")
         parent = self.get(parent_id) if parent_id else None
         if parent and parent["stage"]:
             raise TransitionError("work can only be nested under work, not under a stage")
@@ -301,11 +309,12 @@ class Work:
         self.conn.execute(
             "INSERT INTO tasks (id, root_id, parent_id, depth, dept_id, assignee, requested_by, source, title, intent,"
             " acceptance, task_class, project_ref, workdir, priority, risk, status, max_attempts, due, created_at,"
-            " updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " updated_at, lane) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (tid, parent["root_id"] if parent else tid, parent_id, (parent["depth"] + 1) if parent else 0, dept_id,
              assignee, requested_by or self.actor, source, title.strip(), intent.strip(), acceptance, task_class,
              project_ref or (parent["project_ref"] if parent else None),
-             workdir or (parent["workdir"] if parent else None), priority, risk, status, max_attempts, due, ts, ts))
+             workdir or (parent["workdir"] if parent else None), priority, risk, status, max_attempts, due, ts, ts,
+             lane))
         for n in needs:
             self.conn.execute("INSERT INTO task_needs VALUES (?,?)", (tid, n))
         self._event("task", tid, None, status, f"work from {source}" + (f", blocked on {len(pending)}" if pending else ""))
@@ -315,7 +324,38 @@ class Work:
         return work
 
     def _expand(self, work: dict) -> dict:
+        if work["lane"] == "fast":
+            why = self.rules.fast_refusal(work)
+            if why is None:
+                return self.fast_track(work)
+            self._set_lane(work, "full", f"not fast: {why}")
         return self._add_stage(work, self.rules.first_stage(work), [])
+
+    def _set_lane(self, work: dict, lane: str, note: str) -> None:
+        self.conn.execute("UPDATE tasks SET lane=?, updated_at=? WHERE id=?", (lane, now(), work["id"]))
+        self._event("task", work["id"], f"lane:{work['lane']}", f"lane:{lane}", note)
+        work["lane"] = lane
+
+    def _standing_plan(self, work: dict, body: dict, note: str, decided_by: str, grade: int, **cols) -> dict:
+        """A plan stage and its approval recorded as already decided (a routine's standing plan, or the fast
+        lane's), so the execute stage it opens reads like any other approved work."""
+        p = self._add_stage(work, "plan", [])
+        self._output(p["id"], None, "plan", body, note)
+        self._set(p["id"], "done", note, "kernel", outcome="plan", grade=grade, **cols)
+        a = self._add_stage(work, "approve", [p["id"]], approver=decided_by, grade=grade)
+        self._set(a["id"], "done", note, "kernel", outcome="approve", decided_by=decided_by, decided_at=now())
+        return a
+
+    def fast_track(self, work: dict) -> dict:
+        """Fast lane: routine work (the kernel's grade floor is G0) gets one execute stage whose executor plans
+        and acts in the same session; the result is graded again and judged before the work closes."""
+        a = self._standing_plan(work, {"kind": "plan", "lane": "fast", "author": None, "writes": [],
+                                       "findings": "Fast lane: routine work (grade floor G0). Plan the steps "
+                                                   "yourself and act in one session.",
+                                       "steps": [work["intent"]]},
+                                "fast lane: routine work, no separate plan", "lane:fast", 0, grade_floor=0,
+                                grade_reasons=_dumps(["fast lane: the kernel's grade floor is G0"]))
+        return self._add_stage(work, "execute", [a["id"]])
 
     def _add_stage(self, work: dict, stage: str, needs: list[str], *, assignee: str | None = None,
                    approver: str | None = None, attempt: int = 1, **cols: Any) -> dict:
@@ -330,11 +370,11 @@ class Work:
         self.conn.execute(
             "INSERT INTO tasks (id, root_id, parent_id, depth, stage, dept_id, assignee, approver, requested_by, source,"
             " title, intent, acceptance, task_class, project_ref, workdir, priority, risk, status, attempt,"
-            " max_attempts, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            " max_attempts, created_at, updated_at, lane) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (sid, work["root_id"], work["id"], work["depth"] + 1, stage, work["dept_id"], assignee, approver,
              work["requested_by"], "kernel", f"{stage}{'#' + str(n) if n > 1 else ''}: {work['title']}",
              work["intent"], work["acceptance"], work["task_class"], work["project_ref"], work["workdir"],
-             work["priority"], work["risk"], "ready", attempt, work["max_attempts"], ts, ts))
+             work["priority"], work["risk"], "ready", attempt, work["max_attempts"], ts, ts, work["lane"]))
         for x in needs:
             self.conn.execute("INSERT INTO task_needs VALUES (?,?)", (sid, x))
         if cols:
@@ -359,10 +399,11 @@ class Work:
     def claim(self, who: Claimant, stages: tuple[str, ...] | list[str] | None = None, driver: str | None = None,
               task_id: str | None = None, token_hash: str | None = None,
               exclude_depts: list[str] | None = None, max_running: int | None = None,
-              exclude_tasks: list[str] | None = None) -> tuple[dict, dict] | None:
+              exclude_tasks: list[str] | None = None, kernel: bool = False) -> tuple[dict, dict] | None:
         """Atomically claim the next ready stage this employee may do. A stale execute stage (its plan's
         written paths changed since approval) is cancelled and a fresh plan stage queued instead.
-        `max_running`: refuse if the employee already has that many runs in flight (checked atomically)."""
+        `max_running`: refuse if the employee already has that many runs in flight (checked atomically).
+        A script-lane execute stage is the kernel's alone (`kernel=True`): no agent ever runs a script."""
         stages = [s for s in (stages or who.stages) if s in who.stages]
         if not stages:
             return None
@@ -373,6 +414,8 @@ class Work:
                         (who.id,)).fetchone()[0] >= max_running:
                     return None
                 q = f"SELECT t.* FROM tasks t WHERE t.status='ready' AND t.stage IN ({','.join('?' * len(stages))})"
+                q += " AND t.lane='script' AND t.stage='execute'" if kernel else \
+                    " AND NOT (t.lane='script' AND t.stage='execute')"
                 args: list = list(stages)
                 if who.id:
                     q += (" AND ((t.stage='approve' AND t.approver=?) OR (t.stage<>'approve' AND (t.assignee=? OR"
@@ -595,10 +638,11 @@ class Work:
                             requested_by=f"emp:{body['author']}" if body.get("author") else decider,
                             priority=c.get("priority", work["priority"]), source="agent",
                             task_class=c.get("task_class", work["task_class"]), risk=c.get("risk", work["risk"]),
-                            workdir=c.get("workdir"), max_attempts=work["max_attempts"], needs=needs)
+                            workdir=c.get("workdir"), max_attempts=work["max_attempts"], needs=needs,
+                            lane=c.get("lane") or "full")
                         children.append(child["id"])
                 elif body.get("apply"):
-                    self.appliers[body["apply"]["kind"]](body["apply"])
+                    self.appliers[body["apply"]["kind"]]({**body["apply"], "_plan": plan["id"]})
                     self._finish(work, "done", "applied by the kernel on approval", decider)
                 else:
                     self._add_stage(work, "execute", [approval["id"]], assignee=body.get("assignee") or work["assignee"])
@@ -616,6 +660,10 @@ class Work:
                       outcome=env["outcome"])
             if failed:
                 self._retry_or_fail(work, self.get(node["id"]), f"execution failed: {env['summary'][:200]}", actor)
+            elif work["lane"] == "fast" and env["outcome"] == "noop" and env.get("blockers"):
+                # the executor found the work is not routine: it goes through the full pipeline, from a plan
+                self._set_lane(work, "full", "escalated by its executor: " + "; ".join(env["blockers"])[:400])
+                self._add_stage(work, "plan", [node["id"]], blocked_reason="escalated from the fast lane")
             else:
                 self._add_stage(work, "verify", [node["id"]])
         return {"node": self.get(node["id"]), "work": self.get(work["id"]), "run": self.get_run(run_id),
@@ -660,15 +708,16 @@ class Work:
                 self._retry_or_fail(work, self.get(node["id"]), f"verification failed: {note}", actor)
         return {"node": self.get(node["id"]), "work": self.get(work["id"])}
 
-    def skip_verification(self, work_id: str, note: str) -> dict:
-        """Close trusted work without a verifier (sampled out). The result stays unverified (verified IS NULL),
-        so it never counts toward anyone's earned authority or trust."""
+    def skip_verification(self, work_id: str, note: str, by: str = "sampling") -> dict:
+        """Close work without a verifier: trusted work sampled out, or a result its rubric judge passed (`by`).
+        The result stays unverified (verified IS NULL), so it never counts toward anyone's earned authority
+        or trust, and never becomes a gold standard."""
         with write_txn(self.conn):
             v = self.latest(work_id, "verify", "ready")
             if v is None:
                 raise TransitionError(f"{work_id} has no verification pending")
-            self.conn.execute("UPDATE outputs SET verifier_note=?, verified_by='sampling' WHERE task_id=? "
-                              "AND kind='execute'", (note, self.needs(v["id"])[0]))
+            self.conn.execute("UPDATE outputs SET verifier_note=?, verified_by=? WHERE task_id=? "
+                              "AND kind='execute'", (note, by, self.needs(v["id"])[0]))
             self._set(v["id"], "cancelled", note, "kernel")
             self._finish(self.get(work_id), "done", note, "kernel")
         return self.get(work_id)
@@ -805,7 +854,8 @@ class Work:
 
     # ── kernel proposals (decisions the organization applies itself once approved) ──
     def propose(self, *, title: str, intent: str, steps: str, apply: dict, approver: str, grade: int,
-                task_class: str, dept: str | None = None, author: str | None = None) -> dict:
+                task_class: str, dept: str | None = None, author: str | None = None, reasons: list[str] | None = None,
+                body: dict | None = None, **work_kw: Any) -> dict:
         """A decision for an approver that needs no executor: the kernel applies `apply` on approval.
         Returns the approve stage. Idempotent by title while one is pending."""
         if apply.get("kind") not in self.appliers:
@@ -815,42 +865,66 @@ class Work:
                                   "a.stage='approve' AND a.status IN ('ready','claimed')", (title,)).fetchone()
             if r:
                 return self.get(r["id"])
-            work = self._add_work(title, intent, acceptance="applied by the kernel on approval", dept=dept,
-                                  requested_by=author or self.actor, priority=2, source="kernel",
-                                  task_class=task_class, expand=False)
+            work = self._add_work(title, intent, acceptance=work_kw.pop("acceptance", "applied by the kernel on approval"),
+                                  dept=dept, requested_by=author or self.actor, priority=2, source="kernel",
+                                  task_class=task_class, expand=False, **work_kw)
             plan = self._add_stage(work, "plan", [])
             self._output(plan["id"], None, "plan", {"kind": "plan", "findings": intent, "steps": [steps],
-                                                    "writes": [], "apply": apply, "author": None}, intent)
+                                                    "writes": [], **(body or {}), "apply": apply, "author": None}, intent)
             self._set(plan["id"], "done", "kernel proposal", "kernel", outcome="plan", grade=grade, grade_floor=grade,
-                      grade_proposed=grade, grade_reasons=_dumps([f"{task_class}: routed by the autonomy policy"]))
+                      grade_proposed=grade,
+                      grade_reasons=_dumps(reasons or [f"{task_class}: routed by the autonomy policy"]))
             approval = self._add_stage(work, "approve", [plan["id"]], approver=approver,
                                        assignee=approver[4:] if approver.startswith("emp:") else None, grade=grade)
         return approval
 
     # ── recurring work ────────────────────────────────────────────────────
     def instantiate_recurring(self, plan_id: str, label: str | None = None) -> dict:
-        """One firing of a recurring plan: a fresh work node carrying a copy of the approved plan, entering
-        its pipeline at execute. The approval it inherits is recorded."""
+        """One firing of a recurring plan (a routine). Its lane decides how it runs:
+          script, fast   a copy of the standing plan, entering at execute (the kernel runs the command, or one
+                         agent session acts); the result is judged against the routine's rubric
+          full           a fresh pipeline from plan: each firing is planned and approved on its own
+          (none)         plans approved before lanes existed: like fast, but always verified
+        The approval a firing inherits is recorded on it."""
         plan = self.get(plan_id)
         if plan["stage"] != "plan" or not plan["recurring"]:
             raise TransitionError(f"{plan_id} is not an approved recurring plan")
         src, body = self.get(plan["parent_id"]), self.output(plan_id)["body"]
+        lane = body.get("lane")
         with write_txn(self.conn):
-            work = self._add_work(f"{src['title']} — {label or now()[:16]}", src["intent"],
+            work = self._add_work(f"{src['title'].removeprefix('Routine: ')} — {label or now()[:16]}", src["intent"],
                                   acceptance=src["acceptance"], project_ref=src["project_ref"], dept=src["dept_id"],
                                   assignee=src["assignee"], requested_by=f"recurring:{plan_id}", priority=src["priority"],
                                   source="schedule", task_class=src["task_class"], risk=src["risk"],
-                                  workdir=src["workdir"], max_attempts=src["max_attempts"], expand=False)
-            p = self._add_stage(work, "plan", [])
-            self._output(p["id"], None, "plan", {**body, "writes_fingerprint": fingerprint(
-                work["workdir"], body.get("writes") or [])}, f"copy of recurring plan {plan_id}")
-            self._set(p["id"], "done", f"copy of {plan_id}", "kernel", outcome="plan", grade=plan["grade"],
-                      grade_floor=plan["grade_floor"], grade_reasons=plan["grade_reasons"])
-            a = self._add_stage(work, "approve", [p["id"]], approver=f"recurring:{plan_id}", grade=plan["grade"])
-            self._set(a["id"], "done", "inherits a recurring approval", "kernel", outcome="approve",
-                      decided_by=f"recurring:{plan_id}", decided_at=now())
-            self._add_stage(work, "execute", [a["id"]], assignee=body.get("assignee") or src["assignee"])
+                                  workdir=src["workdir"], max_attempts=src["max_attempts"], expand=lane == "full",
+                                  lane=lane if lane in vocab.LANES else "full")
+            if lane != "full":
+                body = {k: v for k, v in body.items() if k not in ("apply", "classification")}
+                a = self._standing_plan(work, {**body, "writes_fingerprint": fingerprint(
+                    work["workdir"], body.get("writes") or [])}, f"copy of recurring plan {plan_id}",
+                    f"recurring:{plan_id}", plan["grade"], grade_floor=plan["grade_floor"],
+                    grade_reasons=plan["grade_reasons"])
+                self._add_stage(work, "execute", [a["id"]], assignee=body.get("assignee") or src["assignee"])
         return self.get(work["id"])
+
+    def gold_standard(self, work: dict) -> dict | None:
+        """The gold standard a run of this work is held to: the last result a verifier (or the Chair) passed
+        for the same routine, else for the same task class in the same department. It is what "done well"
+        looked like last time, so a routine converges on its best verified trajectory instead of drifting."""
+        q = ("SELECT o.*, w.id AS work_id, w.title AS work_title FROM outputs o JOIN tasks s ON s.id=o.task_id "
+             "JOIN tasks w ON w.id=s.parent_id WHERE o.kind='execute' AND o.verified=1 AND w.id<>? AND ")
+        r = None
+        if (work.get("requested_by") or "").startswith("recurring:"):
+            r = self.conn.execute(q + "w.requested_by=? ORDER BY o.created_at DESC LIMIT 1",
+                                  (work["id"], work["requested_by"])).fetchone()
+        if r is None and work.get("task_class"):
+            r = self.conn.execute(q + "w.task_class=? AND coalesce(w.dept_id,'')=? ORDER BY o.created_at DESC LIMIT 1",
+                                  (work["id"], work["task_class"], work.get("dept_id") or "")).fetchone()
+        if r is None:
+            return None
+        o = dict(r)
+        o["body"] = json.loads(o["body"])
+        return o
 
     # ── trust ─────────────────────────────────────────────────────────────
     def executor_streak(self, employee_id: str, task_class: str | None) -> int:

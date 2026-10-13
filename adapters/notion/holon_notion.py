@@ -300,6 +300,7 @@ ENTITIES = [
         Prop("Priority", "select", lambda r: f"P{r['priority']}", PRIORITIES, column="priority"),
         Prop("Risk", "select", lambda r: r["risk"], vocab.RISKS, column="risk"),
         Prop("Source", "select", lambda r: r["source"], vocab.SOURCES, column="source"),
+        Prop("Lane", "select", lambda r: r["lane"], vocab.LANES, column="lane"),
         Prop("Task class", "select", lambda r: r["task_class"], column="task_class", dynamic=_classes),
         Prop("Chair", "checkbox", lambda r: vocab.CHAIR in (r["approver"], r["decided_by"]), column="decided_by"),
         Prop("Intent", "rich_text", lambda r: r["intent"], column="intent"),

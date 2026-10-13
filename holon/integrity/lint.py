@@ -169,7 +169,7 @@ def pack_schema(k, f: Findings) -> None:
                 elif sums[mf.name] != checksum(mf.read_text()):
                     f.add("error", "schema.migration", f"{db}/{mf.name}", "edited after it was applied")
     checks = [(k.wconn, "tasks", "stage", vocab.STAGES), (k.wconn, "tasks", "source", vocab.SOURCES),
-              (k.wconn, "tasks", "risk", vocab.RISKS), (k.wconn, "messages", "kind", vocab.MESSAGE_KINDS),
+              (k.wconn, "tasks", "risk", vocab.RISKS), (k.wconn, "tasks", "lane", vocab.LANES), (k.wconn, "messages", "kind", vocab.MESSAGE_KINDS),
               (k.wconn, "schedules", "kind", vocab.SCHEDULE_KINDS), (k.wconn, "runs", "status", vocab.RUN_STATUSES),
               (k.wconn, "employees", "status", vocab.EMPLOYEE_STATUSES),
               (k.mconn, "items", "kind", vocab.MEMORY_KINDS), (k.mconn, "items", "confidence", vocab.CONFIDENCE)]

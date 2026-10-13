@@ -45,6 +45,11 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
 | Self-healing | leases, retries, stale-plan detection, incident work when runs keep dying or failing | `holon tick` |
 | Self-evolving | retros whose actions become work that changes skills, staffing and the genome | `execution.work.Work.submit_retro`, `execution.service.Kernel.apply_skill_changes` |
 | Integrity | artifact rubric, live-state checks, and machine checks on every result | `holon lint`, `holon doctor`, `execution.service.Kernel.run_checks` |
+| Lane | how work runs, cheapest first: a script the kernel runs, one fast session for routine work, or the full pipeline | `execution.work.Work.fast_track`, `execution.service.Kernel.run_script` |
+| Routine | a recurring job (a cron job) in the cheapest lane that does it reliably, approved once | `holon routine add`, `execution.work.Work.instantiate_recurring` |
+| Rubric | what each result of a job is judged on, by a decision model before any verifier is spent | `execution.service.Kernel.judge` |
+| Gold standard | the last verified result of the same job: shown to its executor and its judge | `execution.work.Work.gold_standard` |
+| Decision model | a fast classifier with calibrated probabilities for lane choice, judging, triage and routing | `capabilities.decisions.Decider`, `holon classify` |
 
 ## The feedback loops
 

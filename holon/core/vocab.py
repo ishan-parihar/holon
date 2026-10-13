@@ -29,6 +29,9 @@ RISKS = ("low", "normal", "high", "irreversible")
 GRADES = (0, 1, 2, 3, 4)
 GRADE_NAMES = {0: "routine", 1: "minor", 2: "significant", 3: "major", 4: "critical"}
 PRIORITIES = (0, 1, 2, 3, 4)
+# how a piece of work is run, cheapest first: the kernel runs an approved command (script); one agent
+# session plans and acts on routine work (fast); the full pipeline of separate stages (full)
+LANES = ("script", "fast", "full")
 
 # stage outcomes (tasks.outcome on a finished stage)
 OUTCOMES = {

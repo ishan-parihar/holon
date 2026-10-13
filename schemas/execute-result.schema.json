@@ -37,6 +37,20 @@
     "next_intent": {
       "type": "string"
     },
+    "writes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "paths you changed (the fast lane is graded again on them)"
+    },
+    "external_effects": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "anything you sent or published outside the organization"
+    },
     "skill_changes": {
       "type": "array",
       "items": {

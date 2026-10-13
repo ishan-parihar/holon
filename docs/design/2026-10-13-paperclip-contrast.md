@@ -81,7 +81,10 @@ Chair edits. Close it with a mirror window (open work, plus terminal work and ru
 N days; older pages archived, never deleted from SQLite) and an incremental push keyed on
 `updated_at` (M).
 
-### G3. Small and recurring work costs four cold agent sessions (throughput; Chair)
+### G3. Small and recurring work costs four cold agent sessions (throughput; Chair) — built
+
+Built as lanes, routines, rubrics and decision models: `2026-10-13-lanes-and-decision-models.md`.
+
 
 Plan, approve, execute and verify are separate runs; each harness session starts with a 15–18k
 token base prompt. jcode conformance on free-stack: plan 6.2 min, approve 23.3, execute 10.4,

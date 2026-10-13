@@ -49,11 +49,16 @@ in [`schemas/`](../schemas) (`holon contract schemas` prints them). Every envelo
 |---|---|
 | research | `{"summary", "terrain": [{"content", "source", "kind"?, "confidence"?}], "open_questions"?}` |
 | shape | `{"decision": accept \| redirect \| cancel, "note", "dept"? (redirect), "title"?, "intent"?, "acceptance"?, "task_class"?, "risk"?, "priority"?, "assignee"?, "research"?}` |
-| plan | `{"kind": "plan", "findings", "steps", "writes"?, "external_effects"?, "grade"?, "assignee"?, …}` or `{"kind": "decompose", "rationale", "children": [≥2 work items, "after"?]}` or `{"kind": "needs_input", "question"}` |
+| plan | `{"kind": "plan", "findings", "steps", "writes"?, "external_effects"?, "grade"?, "assignee"?, …}` or `{"kind": "decompose", "rationale", "children": [≥2 work items, "after"?, "lane"?]}` or `{"kind": "needs_input", "question"}` |
 | approve | `{"decision": approve \| reject, "note"}` (the note is required to reject) |
-| execute | `{"outcome": success \| partial \| failure \| noop, "summary", "documentation", "artifacts"?, "blockers"?, "next_intent"?}` |
+| execute | `{"outcome": success \| partial \| failure \| noop, "summary", "documentation", "artifacts"?, "blockers"?, "next_intent"?, "writes"?, "external_effects"?}` |
 | verify | `{"verdict": pass \| fail, "note"}` |
 | retro | `{"summary", "cause", "actions"?: [work items]}` |
+
+**Fast lane.** An execute run of `fast` work (GENOME §10) has no separate plan: the executor plans and
+acts in one session, lists the `writes` it made and any `external_effects`, and returns `noop` with
+`blockers` when the work is not routine after all (the work then goes through the full pipeline).
+Nothing changes for the harness: it is an execute stage like any other.
 
 A harness that cannot write files may print the object as the last JSON in its output (driver
 `result = "stdout-json"`).

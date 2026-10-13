@@ -280,6 +280,14 @@
                   "type": "integer",
                   "minimum": 0
                 }
+              },
+              "lane": {
+                "type": "string",
+                "enum": [
+                  "fast",
+                  "full"
+                ],
+                "description": "fast: one session plans and acts; the kernel allows it only when the child's grade floor is G0"
               }
             },
             "required": [
