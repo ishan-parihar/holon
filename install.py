@@ -87,6 +87,8 @@ def tunnel(cloudflared: str, hostname: str, cf_dir: Path, env: dict) -> Path:
     config.write_text(f"""# written by holon install.py: Notion webhooks -> the holon-notion sync
 tunnel: {found['id']}
 credentials-file: {creds}
+# IPv4 to the edge, like the sync itself: a host with a dead IPv6 route otherwise stalls every reconnect
+edge-ip-version: "4"
 
 ingress:
   - hostname: {hostname}
@@ -239,7 +241,8 @@ Installed. Next:
 Notion webhooks: in the integration's Webhooks tab, subscribe
   {webhook_url}
 to page and data source events, then paste the verification token holon-notion saved (field
-webhook_token in {notion_cfg}) into Notion's Verify dialog. Keep the URL private: its path is the secret.""")
+webhook_token in {notion_cfg}) into Notion's Verify dialog. Resend is fine: the newest token
+wins. Keep the URL private: its path is the secret.""")
     return 0
 
 

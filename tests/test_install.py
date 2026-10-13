@@ -62,7 +62,7 @@ class ColdStart(unittest.TestCase):
         self.assertEqual(set(units), {"holon-tick.service", "holon-tick.timer", "holon-notion.service",
                                       "cloudflared-holon-notion.service"})
         tunnel = (self.tmp / ".cloudflared/holon-notion.yml").read_text()
-        for line in ("tunnel: tun-1", "hostname: hooks.example.com", "path: ^/notion/", "http://localhost:8787"):
+        for line in ("tunnel: tun-1", "hostname: hooks.example.com", "path: ^/notion/", "http://localhost:8787", 'edge-ip-version: "4"'):
             self.assertIn(line, tunnel)
         self.assertIn(str(self.tmp / ".cloudflared/holon-notion.yml"), units["cloudflared-holon-notion.service"])
         self.assertIn(f"HOLON_HOME={home}", units["holon-notion.service"])

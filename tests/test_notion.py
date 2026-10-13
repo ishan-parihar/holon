@@ -166,6 +166,9 @@ class NotionMirror(KernelCase):
         ours = json.dumps({"authors": [{"id": BOT, "type": "bot"}], "entity": {"id": "p2", "type": "page"}}).encode()
         sig = "sha256=" + hmac.new(b"secret_x", ours, hashlib.sha256).hexdigest()
         self.assertEqual(self.sync.webhook(ours, {"X-Notion-Signature": sig}, inbox), (200, "our own change"))
+        self.assertEqual(self.sync.webhook(b'{"verification_token": "secret_y"}', {}, inbox), (200, "token stored"),
+                         "a resent token replaces the stored one")
+        self.assertEqual(self.sync.webhook(ours, {"X-Notion-Signature": sig}, inbox)[0], 401)
 
     def test_a_lost_reply_is_retried_and_the_orphan_it_leaves_is_trashed(self):
         self.add(dept="eng")

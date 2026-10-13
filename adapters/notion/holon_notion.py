@@ -783,7 +783,9 @@ class Sync:
             body = json.loads(raw or b"{}")
         except json.JSONDecodeError:
             return 400, "bad json"
-        if "verification_token" in body and not self.cfg.get("webhook_token"):
+        if "verification_token" in body:
+            # Notion re-sends the token on "Resend" and when a subscription is recreated; the newest one
+            # wins. Only a caller who knows the secret path gets this far.
             self.cfg["webhook_token"] = body["verification_token"]
             self.save()
             print(f"Notion sent its verification token; it is saved in {self.cfg_path} (field webhook_token). "

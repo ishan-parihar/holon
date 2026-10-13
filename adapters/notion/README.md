@@ -94,7 +94,7 @@ Without `--notion-webhook-hostname` the sync polls Notion every minute instead. 
 5. In the connection's **Webhooks** tab, subscribe `https://<hostname><webhook_path>` (the path
    `serve` prints) to page and data source events. Notion
    posts a verification token; `serve` stores it in `notion.json` (`webhook_token`) and says so.
-   Paste it into Notion's *Verify* dialog.
+   Paste it into Notion's *Verify* dialog. *Resend* is fine: each token replaces the last.
 6. To keep it running: `adapters/notion/holon-notion.service` (systemd user unit).
 
 `status` shows the page counts, pending rows and the last events; `push` and `reconcile` run one

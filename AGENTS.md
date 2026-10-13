@@ -102,5 +102,7 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | Notion schema pass | a page deleted for good came back, but its stages still pointed at the old page | `test_webhook_events_drive_every_inbound_path` |
 | Notion schema pass | no single command built a new machine's SQLite and Notion databases | `test_a_new_machine_gets_every_database_and_a_rerun_changes_nothing` |
 | Notion webhooks | a public receiver would store whichever verification token reached it first | `test_the_receiver_answers_only_on_its_secret_path` |
+| Notion webhooks | a resent verification token got 401 because one was already stored, so a subscription could never be verified after a first miss | `test_webhooks_are_verified_and_bots_ignored` |
+| Notion webhooks | the tunnel dialled the edge over a dead IPv6 route after each network blip | `test_a_new_machine_gets_every_database_and_a_rerun_changes_nothing` (edge-ip-version 4) |
 | Notion webhooks | without webhooks, Chair edits waited for the 5-minute full pass | `test_the_poll_fallback_asks_only_for_pages_edited_since` |
 | Notion webhooks | the public URL was set up by hand, so a new machine had no webhooks | `test_a_new_machine_gets_every_database_and_a_rerun_changes_nothing` |
