@@ -1026,6 +1026,21 @@ def cmd_scope(args, k):
                             "re-run the adapter installer after changing [scope])")
 
 
+@command("route", "any", "which department's reach owns a path ([scope] roots; the deepest root wins)", arg("path"),
+         mutates=False)
+def cmd_route(args, k):
+    target = Path(args.path).expanduser().resolve()
+    best = None
+    for s in k.scopes():
+        for r in s["roots"]:
+            root = Path(r).resolve()
+            if target.is_relative_to(root) and (best is None or len(root.parts) > len(best[1].parts)):
+                best = (s["name"], root)
+    data = {"path": str(target), "scope": best[0] if best else None, "root": str(best[1]) if best else None}
+    _out(args, data, f"{target}: {best[0]} (via {best[1]})" if best else f"{target}: no department's reach covers it")
+    return 0 if best else NOTHING
+
+
 @command("metrics", "any", "the feedback loops' sensors, each with its counter-metric", arg("--dept"),
          arg("--days", type=int, default=30), mutates=False)
 def cmd_metrics(args, k):

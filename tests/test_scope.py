@@ -60,6 +60,15 @@ class Scope(KernelCase):
         self.configure('[scope.dept.eng]\nroots = ["/srv"]\n')
         self.assertIn("scope.drift", {f["check"] for f in doctor.run(self.k) if f["severity"] == "error"})
 
+    def test_route_names_the_department_whose_reach_owns_a_path(self):
+        import contextlib, io
+        from holon import cli
+        self.configure(f'[scope]\nroots = ["{self.tmp}"]\n[scope.dept.eng]\nroots = ["{self.tmp / "eng"}"]\n')
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["--home", str(self.home.root), "--json", "route", str(self.tmp / "eng" / "x.py")])
+        self.assertEqual(json.loads(buf.getvalue())["scope"], "eng", "the deepest root wins")
+
     def test_lint_checks_scope_sections(self):
         self.configure('[scope.dept.nope]\nroots = ["relative/path"]\nbogus = 1\n')
         msgs = [f["message"] for f in lint.run(self.k, ["schema"]) if f["rule"] == "schema.config"]

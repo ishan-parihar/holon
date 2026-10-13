@@ -51,7 +51,7 @@ Compared with `~/.hermes/organism` (arch, AXE, agent-fabric, workforce-ops):
 | per-pool ADs and RGs (decisions with supersession, regression guards) | the kernel's regression ledger; department memory decisions; checks and smoke as guards | **partial**: no per-department regression ledger |
 | `cron-jobs/*.md` as the source of each cron | routines from `holon routine add` | built: `holon routine import` (dry run by default; `--apply` proposes each active routine) |
 | notice-board retention and weekly summaries | events, messages and run directories grow forever | **gap** (not urgent: 16 runs = 372 KB; 61 daily crons ≈ 1.5 MB/day of run directories) |
-| `arch route <path>` (which pool owns a path) | `[scope]` roots per department | **gap**: `holon route <path>` |
+| `arch route <path>` (which pool owns a path) | `[scope]` roots per department | built: `holon route <path>` |
 | per-pool generated AGENTS.md (routing, services, crons) | identity cards, briefs, the Notion dashboard | covered differently |
 
 ## 4. Live demonstration
