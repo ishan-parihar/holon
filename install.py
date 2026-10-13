@@ -3,7 +3,7 @@
 
     python3 install.py                                   # SQLite instance at ~/holon, Chair key, `holon` on PATH
     python3 install.py --notion-parent-page <page id> --notion-token-file ~/.config/holon/notion.token
-    python3 install.py --systemd                         # also install the heartbeat (and Notion sync) units
+    python3 install.py --systemd [--heartbeat]           # user units: Notion sync; --heartbeat also dispatches work
 
 1. checks Python (3.11+) and SQLite (3.35+);
 2. `holon init`: creates the instance (holon.toml, work.db and memory.db at the latest migration)
@@ -11,9 +11,9 @@
 3. puts a `holon` launcher in --bin-dir;
 4. with --notion-*: creates the four Notion databases under the page (adapters/notion) and pushes
    the organization; an instance already mirrored gets `check --repair` and a push instead;
-5. with --systemd: writes the user units for the heartbeat (holon-tick) and, if Notion is set up,
-   the sync (holon-notion), then enables them. The heartbeat starts dispatching work to employees,
-   so it is opt-in;
+5. with --systemd: writes the user units (holon-tick, and holon-notion when Notion is set up) and
+   enables the Notion sync. The heartbeat dispatches work to employees, so it starts only with
+   --heartbeat;
 6. runs `holon doctor` and prints what is left to do (hiring, a harness adapter).
 """
 
@@ -62,7 +62,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--notion-chair-user", action="append", default=[], help="Notion user id(s) of the Chair")
     ap.add_argument("--notion-ipv4", action="store_true", help="this host's IPv6 route is dead")
     ap.add_argument("--notion-api-base", help=argparse.SUPPRESS)  # tests
-    ap.add_argument("--systemd", action="store_true", help="install and enable the user units")
+    ap.add_argument("--systemd", action="store_true", help="write the user units; enable the Notion sync")
+    ap.add_argument("--heartbeat", action="store_true", help="also enable holon-tick (starts dispatching work)")
     ap.add_argument("--systemd-dir", default="~/.config/systemd/user")
     ap.add_argument("--no-start", action="store_true", help="write the units without enabling them")
     a = ap.parse_args(argv)
@@ -122,11 +123,14 @@ def main(argv: list[str] | None = None) -> int:
             (dest / name).write_text(unit(name, home, extra))
             print(f"  wrote {dest / name}")
         if not a.no_start:
+            start = (["holon-tick.timer"] if a.heartbeat else []) + [n for n in names if n == "holon-notion.service"]
             run(["systemctl", "--user", "daemon-reload"], env)
-            run(["systemctl", "--user", "enable", "--now", "holon-tick.timer"]
-                + (["holon-notion.service"] if "holon-notion.service" in names else []), env)
+            if start:
+                run(["systemctl", "--user", "enable", "--now", *start], env)
+            if not a.heartbeat:
+                print("  heartbeat written, not started: systemctl --user enable --now holon-tick.timer")
     else:
-        print("5. systemd: skipped (--systemd installs the heartbeat)")
+        print("5. systemd: skipped (--systemd writes the units)")
 
     print("6. doctor")
     holon(env, "doctor", check=False)

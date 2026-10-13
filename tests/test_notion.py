@@ -215,6 +215,42 @@ class NotionMirror(KernelCase):
                                            "entity": {"id": self.ds["work"], "type": "data_source"}}))
         self.assertEqual(self.sync.check(), [])
 
+    def test_the_poll_fallback_asks_only_for_pages_edited_since(self):
+        w = self.add(dept="eng")
+        approval = self.plan(w)
+        self.sync.push()
+        for p in self.fake.pages.values():
+            p["last_edited_time"] = "2026-01-01T00:00:00.000Z"
+        self.sync.cfg["polled_at"] = "2026-06-01T00:00:00.000Z"
+        self.fake.human_edit(self.sync._page_of("work", approval["id"]), {"Chair decision": {"select": {"name": "reject"}},
+                                                                         "Chair note": {"rich_text": [{"text": {"content": "smaller"}}]}})
+        self.assertEqual(self.sync.poll(), {"edited": 1, "handled": 1}, "only the page edited since the last poll")
+        self.assertEqual(self.k.work.get(approval["id"])["outcome"], "reject")
+
+    def test_the_receiver_answers_only_on_its_secret_path(self):
+        import urllib.error
+        import urllib.request
+        inbox = queue.Queue()
+        server = self.sync.receiver(0, inbox)
+        base, path = f"http://127.0.0.1:{server.server_address[1]}", self.sync.webhook_path()
+        self.assertTrue(path.startswith("/notion/") and len(path) > 20)
+        self.assertEqual(self.sync.webhook_path(), path, "stable across restarts")
+
+        def post(p, body):
+            try:
+                return urllib.request.urlopen(urllib.request.Request(base + p, data=body, method="POST")).status
+            except urllib.error.HTTPError as e:
+                e.close()
+                return e.code
+        try:
+            self.assertEqual(post("/", b'{"verification_token": "planted"}'), 404)
+            self.assertNotIn("webhook_token", self.sync.cfg, "a stranger cannot plant the token")
+            self.assertEqual(post(path, b'{"verification_token": "secret_x"}'), 200)
+            self.assertEqual(self.sync.cfg["webhook_token"], "secret_x")
+        finally:
+            server.shutdown()
+            server.server_close()
+
     def test_an_older_schema_is_upgraded_in_place(self):
         w = self.add(dept="eng", task_class="greeting")
         self.plan(w)

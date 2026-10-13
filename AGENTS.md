@@ -101,3 +101,5 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | Notion schema pass | a live workspace on the older schema had to be rebuilt by hand | `test_an_older_schema_is_upgraded_in_place` |
 | Notion schema pass | a page deleted for good came back, but its stages still pointed at the old page | `test_webhook_events_drive_every_inbound_path` |
 | Notion schema pass | no single command built a new machine's SQLite and Notion databases | `test_a_new_machine_gets_every_database_and_a_rerun_changes_nothing` |
+| Notion webhooks | a public receiver would store whichever verification token reached it first | `test_the_receiver_answers_only_on_its_secret_path` |
+| Notion webhooks | without webhooks, Chair edits waited for the 5-minute full pass | `test_the_poll_fallback_asks_only_for_pages_edited_since` |

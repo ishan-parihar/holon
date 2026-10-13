@@ -153,7 +153,13 @@ class FakeNotion:
             if m:
                 ds = m.group(1)
                 if m.group(2):
-                    return 200, {"results": [json.loads(json.dumps(p)) for p in self.in_ds(ds)], "has_more": False}
+                    pages = self.in_ds(ds)
+                    f = body.get("filter") or {}
+                    if f.get("timestamp") == "last_edited_time":
+                        pages = [p for p in pages if p["last_edited_time"] >= f["last_edited_time"]["on_or_after"]]
+                    elif f:
+                        raise ValueError(f"the fake does not implement filter {f}")
+                    return 200, {"results": [json.loads(json.dumps(p)) for p in pages], "has_more": False}
                 if method == "PATCH":
                     self._set_props(ds, body["properties"])
                 return 200, self.ds[ds]

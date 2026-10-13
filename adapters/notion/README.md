@@ -38,10 +38,15 @@ restored. That is what keeps the two from drifting: Notion never holds a fact Ho
 - **Push** (every 20 s in `serve`): each row's mapped values and relation targets are hashed; only
   changed rows are written, pages first and relations second.
 - **Webhooks**: Notion calls `serve` within about a minute of a change; events are verified with the
-  subscription's token (`X-Notion-Signature`, HMAC-SHA256) and our own writes are ignored.
-- **Reconcile** (every 5 min): Notion delivers webhooks at most once and aggregates them, so a
-  periodic pass handles edits made since the last pass, restores trashed pages and re-creates
-  deleted ones.
+  subscription's token (`X-Notion-Signature`, HMAC-SHA256) and our own writes are ignored. The
+  receiver answers only on a secret path (`webhook_path` in `notion.json`, printed by `serve`), so
+  nobody who has not been told the URL can reach it or plant a verification token; bodies over
+  1 MB are refused.
+- **Poll** (every minute; the fallback when webhooks are off, late or lost): asks each data source
+  only for pages edited since the last poll (`last_edited_time`), and acts on those a person edited.
+  Outbound needs no dates: every push compares each row's hash with what was last written.
+- **Reconcile** (every 15 min): the full pass. Handles edits since the last pass, restores trashed
+  pages, re-creates deleted ones and trashes orphaned twins.
 - **Schema**: `check` diffs every data source against `holon_notion.py`; `check --repair` upgrades
   it in place (adds, recreates a property whose type changed, removes retired ones, then re-pushes
   the values). A schema webhook (someone edited a database's properties) triggers the repair.
@@ -67,14 +72,17 @@ On a new machine, `python3 install.py --notion-parent-page <page id> --notion-to
        --parent-page <page id> --token-file ~/.config/holon/notion.token [--chair-user <your user id>]
    ```
 
-4. Run the sync and give it a public HTTPS URL (Notion must reach it), e.g. `tailscale funnel 8787`
-   or `cloudflared tunnel --url http://127.0.0.1:8787`:
+4. Run the sync and give it a public HTTPS URL (Notion must reach it). A dedicated Cloudflare
+   tunnel keeps a stable hostname (`cloudflared tunnel create holon-notion`, `cloudflared tunnel
+   route dns holon-notion <hostname>`, ingress `<hostname>` → `http://localhost:8787`); don't add the
+   hostname to a tunnel that has several connectors with different configs, or some requests 404:
 
    ```sh
    python3 adapters/notion/holon_notion.py --holon-home ~/holon serve --port 8787
    ```
 
-5. In the connection's **Webhooks** tab, subscribe that URL to page and data source events. Notion
+5. In the connection's **Webhooks** tab, subscribe `https://<hostname><webhook_path>` (the path
+   `serve` prints) to page and data source events. Notion
    posts a verification token; `serve` stores it in `notion.json` (`webhook_token`) and says so.
    Paste it into Notion's *Verify* dialog.
 6. To keep it running: `adapters/notion/holon-notion.service` (systemd user unit).

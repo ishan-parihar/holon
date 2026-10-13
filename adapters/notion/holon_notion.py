@@ -39,6 +39,7 @@ import hmac
 import json
 import os
 import queue
+import secrets
 import socket
 import sqlite3
 import sys
@@ -225,6 +226,7 @@ class Entity:
     retired: tuple = ()            # properties earlier versions created; `check --repair` removes them
 
 
+MAX_EVENT_BYTES = 1 << 20  # Notion events carry ids, not content
 SCHEMA_EVENT = "schema"  # queued for data_source/database schema webhooks
 GRADES = tuple(f"G{g}" for g in range(5))
 PRIORITIES = tuple(f"P{p}" for p in vocab.PRIORITIES)
@@ -715,8 +717,27 @@ class Sync:
                 self.log("heal", f"{len(problems)} drifted: " + "; ".join(problems[:20]))
             return problems
 
+    def poll(self) -> dict:
+        """The webhook fallback, cheap enough to run every minute: ask Notion only for pages edited since
+        the last poll (by last-edited time) and act on the ones a person edited."""
+        with self.lock:
+            since = self.cfg.get("polled_at") or self.cfg.get("reconciled_at") or "1970-01-01T00:00:00.000Z"
+            started = time.strftime("%Y-%m-%dT%H:%M:00.000Z", time.gmtime(time.time() - 120))  # minute precision
+            out = {"edited": 0, "handled": 0}
+            for e in ENTITIES:
+                edited = self.notion.query(self.cfg["data_sources"][e.key], {
+                    "timestamp": "last_edited_time", "last_edited_time": {"on_or_after": since}})
+                out["edited"] += len(edited)
+                for p in edited:
+                    if (p.get("last_edited_by") or {}).get("id") != self.cfg.get("bot_id"):
+                        self.handle_page(p)
+                        out["handled"] += 1
+            self.cfg["polled_at"] = started
+            self.save()
+            return out
+
     def reconcile(self) -> dict:
-        """Catch what webhooks missed: human edits since the last pass, trashed and unknown pages."""
+        """The full pass: human edits since the last one, trashed, missing and orphaned pages."""
         with self.lock:
             since = self.cfg.get("reconciled_at") or "1970-01-01T00:00:00.000Z"
             started = time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(time.time() - 60))  # clock skew margin
@@ -745,7 +766,7 @@ class Sync:
                             self.forget_page(r[0])
                         self.db.execute("UPDATE pages SET hash=NULL WHERE page_id=?", (r[0],))
                         out["restored"] += 1
-            self.cfg["reconciled_at"] = started
+            self.cfg["reconciled_at"] = self.cfg["polled_at"] = started
             self.save()
             return out
 
@@ -798,15 +819,26 @@ class Sync:
                 return "deleted for good; recreated on the next push"
             return self.handle_page(page)
 
-    def serve(self, port: int, push_every: float = 20, reconcile_every: float = 300,
-              verify_every: float = 3600) -> None:
-        inbox: queue.Queue[str] = queue.Queue()
-        sync = self
+    def webhook_path(self) -> str:
+        """The secret path webhooks are served on: nobody who has not been told it can post a
+        verification token first, or reach the receiver at all."""
+        if not self.cfg.get("webhook_path"):
+            self.cfg["webhook_path"] = "/notion/" + secrets.token_urlsafe(18)
+            self.save()
+        return self.cfg["webhook_path"]
+
+    def receiver(self, port: int, inbox: "queue.Queue[str]") -> ThreadingHTTPServer:
+        """The webhook endpoint on 127.0.0.1:port, answering only on the secret path."""
+        sync, path = self, self.webhook_path()
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):  # noqa: N802
-                raw = self.rfile.read(int(self.headers.get("Content-Length") or 0))
-                code, msg = sync.webhook(raw, dict(self.headers), inbox)
+                size = int(self.headers.get("Content-Length") or 0)
+                if self.path != path or size > MAX_EVENT_BYTES:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                code, msg = sync.webhook(self.rfile.read(size), dict(self.headers), inbox)
                 self.send_response(code)
                 self.end_headers()
                 self.wfile.write(msg.encode())
@@ -816,8 +848,15 @@ class Sync:
 
         server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        print(f"holon-notion: webhooks on http://127.0.0.1:{port}/ (expose it over HTTPS, e.g. a tunnel)", flush=True)
-        last_push = last_rec = 0.0
+        return server
+
+    def serve(self, port: int, push_every: float = 20, poll_every: float = 60, reconcile_every: float = 900,
+              verify_every: float = 3600) -> None:
+        inbox: queue.Queue[str] = queue.Queue()
+        self.receiver(port, inbox)
+        print(f"holon-notion: webhooks on http://127.0.0.1:{port}{self.webhook_path()} (expose it over HTTPS, "
+              f"e.g. a tunnel); polling every {poll_every:g}s as the fallback", flush=True)
+        last_push = last_rec = last_poll = 0.0
         last_verify = time.monotonic()
         while True:
             try:
@@ -830,7 +869,14 @@ class Sync:
                 now = time.monotonic()
                 if now - last_rec >= reconcile_every:
                     print(f"reconcile: {self.reconcile()}", flush=True)
-                    last_rec, last_push = now, 0
+                    last_rec = last_poll = now
+                    last_push = 0
+                elif now - last_poll >= poll_every:
+                    r = self.poll()
+                    if r["handled"]:
+                        print(f"poll: {r}", flush=True)
+                    last_poll = now
+                    last_push = 0 if r["handled"] else last_push
                 if now - last_verify >= verify_every:
                     drift = self.heal()
                     print(f"verify: {len(drift)} drifted; re-pushing" if drift else "verify: in sync", flush=True)
@@ -864,7 +910,8 @@ def main(argv: list[str] | None = None) -> int:
     v = sub.add_parser("serve")
     v.add_argument("--port", type=int, default=8787)
     v.add_argument("--push-every", type=float, default=20)
-    v.add_argument("--reconcile-every", type=float, default=300)
+    v.add_argument("--poll-every", type=float, default=60, help="the webhook fallback: pages edited since")
+    v.add_argument("--reconcile-every", type=float, default=900)
     v.add_argument("--verify-every", type=float, default=3600)
     a = ap.parse_args(argv)
     if os.environ.get("HOLON_NOTION_IPV4"):  # hosts whose IPv6 route is dead: urllib has no happy eyeballs
@@ -911,7 +958,7 @@ def main(argv: list[str] | None = None) -> int:
         for r in sync.db.execute("SELECT * FROM log ORDER BY ts DESC LIMIT 10"):
             print(f"{r['ts']} {r['kind']}: {r['detail']}")
     elif a.cmd == "serve":
-        sync.serve(a.port, a.push_every, a.reconcile_every, a.verify_every)
+        sync.serve(a.port, a.push_every, a.poll_every, a.reconcile_every, a.verify_every)
     return 0
 
 
