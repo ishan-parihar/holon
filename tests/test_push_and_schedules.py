@@ -144,7 +144,8 @@ class PushMode(KernelCase):
         import time
         from unittest import mock
         from holon.execution import drivers
-        self.install_fake_driver("fake", mode="linger")
+        self.install_fake_driver("fake", mode="linger",
+                                 extra="usage_line = 'token_usage input=(?P<tokens_in>\\d+) output=(?P<tokens_out>\\d+)'")
         self.add(dept="eng")
         real = drivers.run
         with mock.patch.object(drivers, "run", lambda *a, **kw: real(*a, **{**kw, "alive_every_s": 0.5})):
@@ -152,6 +153,8 @@ class PushMode(KernelCase):
             out = self.k.dispatch(self.hod, "plan")
         self.assertTrue(out["submitted_by_agent"])
         self.assertLess(time.monotonic() - t0, 30, "the dispatcher does not wait out the harness's closing turn")
+        run = self.k.wconn.execute("SELECT tokens_in, tokens_out FROM runs").fetchone()
+        self.assertEqual(tuple(run), (2000, 100), "a stopped harness's per-call usage lines are summed")
 
     def test_concurrency_cap(self):
         self.add(dept="eng")

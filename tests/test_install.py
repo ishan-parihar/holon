@@ -81,3 +81,16 @@ class ColdStart(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JcodeRerun(unittest.TestCase):
+    def test_a_rerun_keeps_one_copy_of_the_features_block(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("jcode_install", ROOT / "adapters" / "jcode" / "install.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        provider = '[providers.holon]\ntype = "openai-compatible"\n'
+        # what `jcode provider add --overwrite` leaves: the first block lost its BEGIN line
+        dropped = mod.BLOCK.split("\n", 1)[1]
+        text = mod.strip_block(dropped + "\n" + provider + "\n" + mod.BLOCK)
+        self.assertEqual(text.strip(), provider.strip())

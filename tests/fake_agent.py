@@ -74,6 +74,8 @@ elif mode == "stdout":
     print("some chatter before the answer")
     print(json.dumps(env))
 elif "linger" in modes:
+    print("[trace] token_usage input=900 output=40", file=sys.stderr, flush=True)
+    print("[trace] token_usage input=1100 output=60", file=sys.stderr, flush=True)
     Path(brief["result_path"]).write_text(json.dumps(env))
     subprocess.run([sys.executable, "-m", "holon", "--home", os.environ["HOLON_HOME"], "submit", brief["run_id"]],
                    check=True, capture_output=True)

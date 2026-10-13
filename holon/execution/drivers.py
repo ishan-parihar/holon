@@ -8,6 +8,9 @@
     read_only = "--plan-only"   # substituted as {read_only} for observe-posture stages, else ""
     act_args  = "--yes"         # substituted as {act_args} for the execute stage (act posture), else ""
     stages    = ["plan", "execute"]    # optional restriction (default: every stage)
+    usage_line = 'in=(?P<tokens_in>[0-9]+) out=(?P<tokens_out>[0-9]+)'   # optional: a line the harness
+                                 # writes per model call; their sum is the run's usage, even when the
+                                 # harness is stopped before it prints a summary
     read_only_enforced = false   # true if the harness itself denies writes on observe stages (an
                                  # observe alias/profile); the kernel's workdir guard still runs unless
                                  # the instance sets [planner] trust_harness_read_only = true
@@ -28,6 +31,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -59,6 +63,8 @@ class Driver:
     act_args: str = ""
     read_only_enforced: bool = False   # the harness itself denies writes on observe stages
     scope_fingerprint: str = ""        # set by an installer that built sandboxes from [scope]; doctor compares
+    usage_line: str = ""               # regex with tokens_in/tokens_out groups, matched on stdout and stderr;
+                                       # when it matches, it is the run's usage (else the JSON summary's)
     stages: list[str] = field(default_factory=lambda: list(vocab.STAGES))
     env: dict[str, str] = field(default_factory=dict)
     source: str = ""
@@ -67,7 +73,7 @@ class Driver:
     def from_toml(cls, text: str, source: str) -> "Driver":
         data = tomllib.loads(text)
         unknown = set(data) - {"name", "command", "cwd", "timeout_s", "result", "read_only", "act_args",
-                               "read_only_enforced", "stages", "duties", "env", "scope_fingerprint"}
+                               "read_only_enforced", "stages", "duties", "env", "scope_fingerprint", "usage_line"}
         if "duties" in data:  # pre-graph drivers named four duties; observe-capable ones serve every observe stage
             stages = {LEGACY_STAGE.get(d, d) for d in data.pop("duties")}
             data["stages"] = sorted(stages | ({"research", "shape", "retro"} if "plan" in stages else set()))
@@ -80,6 +86,12 @@ class Driver:
             raise DriverError(f"{source}: 'name' and 'command' are required")
         if data.get("result", "file") not in ("file", "stdout-json"):
             raise DriverError(f"{source}: result must be 'file' or 'stdout-json'")
+        try:
+            groups = set(re.compile(data.get("usage_line", "")).groupindex)
+        except re.error as e:
+            raise DriverError(f"{source}: usage_line: {e}") from None
+        if data.get("usage_line") and not {"tokens_in", "tokens_out"} <= groups:
+            raise DriverError(f"{source}: usage_line needs (?P<tokens_in>…) and (?P<tokens_out>…) groups")
         return cls(**data, source=source)
 
 
@@ -201,8 +213,11 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive
         if reply is not None:
             # harnesses that wrap the model reply in {"result": "..."} or {"text": "..."}: look inside it
             envelope = extract_last_json(reply) or envelope
+    usage, calls = usage_of(outer), usage_from_lines(driver.usage_line, stdout + "\n" + stderr)
+    if calls:  # every call, counted the harness's way (some count cached input inside input, some apart)
+        usage = {**calls, "cost": (usage or {}).get("cost")}
     return {"exit_code": exit_code, "envelope": envelope, "log_path": str(log_path), "stdout_tail": stdout[-4000:],
-            "stderr_tail": stderr[-2000:], "usage": usage_of(outer)}
+            "stderr_tail": stderr[-2000:], "usage": usage}
 
 
 def usage_of(outer: dict | None) -> dict | None:
@@ -217,6 +232,16 @@ def usage_of(outer: dict | None) -> dict | None:
     tout = u.get("output_tokens") if isinstance(u.get("output_tokens"), int) else None
     cost = next((outer[k] for k in ("total_cost_usd", "cost") if isinstance(outer.get(k), (int, float))), None)
     return {"tokens_in": tin, "tokens_out": tout, "cost": cost}
+
+
+def usage_from_lines(pattern: str, text: str) -> dict | None:
+    """Tokens summed over a harness's per-call usage lines: complete even when the harness was stopped
+    (its agent had already submitted) before it could print its own summary."""
+    hits = list(re.finditer(pattern, text)) if pattern else []
+    if not hits:
+        return None
+    return {"tokens_in": sum(int(m["tokens_in"]) for m in hits),
+            "tokens_out": sum(int(m["tokens_out"]) for m in hits), "cost": None}
 
 
 def extract_last_json(text: str) -> dict | None:

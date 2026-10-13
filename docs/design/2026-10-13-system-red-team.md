@@ -194,6 +194,9 @@ The Notion mirror ran against the real workspace on 2026-10-13: setup, push and 
 retries, orphan-twin cleanup and an IPv4 switch
 (`test_a_lost_reply_is_retried_and_the_orphan_it_leaves_is_trashed`).
 
-Still open: Notion webhooks (need a public URL; until then `serve` polls with reconcile); the VPS redeploy of all of the above (after the Chair's local verification);
-nothing yet acts on metrics automatically beyond retros; a run that submits through `holon_submit`
-and is then stopped records no token usage.
+Notion webhooks are served through a dedicated Cloudflare tunnel that `install.py` sets up, with the
+edited-since poll as the fallback. A run stopped after `holon_submit` now keeps its token usage: drivers
+may declare a per-call `usage_line` (jcode's `--trace`), which the kernel sums.
+
+Still open: the VPS redeploy of all of the above (after the Chair's local verification); nothing yet
+acts on metrics automatically beyond retros.

@@ -94,6 +94,8 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | VPS deployment | an auto-committer sharing the tree tripped the read-only guard, so it was switched off | `test_a_shared_tree_others_commit_to_or_write_ignored_paths_in_is_not_a_breach` |
 | Red-team R1 | the Chair key reached a harness's environment | `test_the_chair_key_never_reaches_a_harness` |
 | Red-team R1 | a harness name leaked into the kernel | `test_no_harness_named_in_kernel` |
+| jcode usage | a run stopped after `holon_submit` recorded no tokens, and the `--json` summary counted cached input twice | `test_a_harness_still_running_after_its_result_is_in_is_stopped` (driver `usage_line`) |
+| jcode install | a rerun failed (`provider add` without `--overwrite`) and then duplicated the `[features]` block | `test_a_rerun_keeps_one_copy_of_the_features_block` |
 | jcode conformance | a planner spent its whole 3600 s timeout reading Holon's source to derive the grade floor | `test_planners_are_told_the_grade_floor_and_the_approver` |
 | Notion live setup | connection resets aborted push; a retried create whose reply was lost left an untracked twin page | `test_a_lost_reply_is_retried_and_the_orphan_it_leaves_is_trashed` |
 | Notion schema pass | enumerations mirrored as text slugs; ids as text; one-way relations; dead columns | `test_enumerations_are_selects_and_references_are_dual_relations` |

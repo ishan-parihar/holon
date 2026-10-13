@@ -13,7 +13,7 @@ shape in `docs/CONTRACT.md` §7.
 | Skills | `holon skill export` → `$JCODE_HOME/skills` (registered: verified skill changes refresh it) |
 | Posture | observe stages run with `--disabled-tools write,edit,multiedit,patch,apply_patch,replace,bg,selfdev,swarm`; the shell stays, so the kernel's read-only guard stays on |
 | Turned off | jcode's own memory (the organization's is Holon's), swarm (sub-agents outside the work graph), ambient mode (unapproved proactive work), self-updates, telemetry |
-| Usage | jcode's `--json` summary carries token usage; the kernel records it on the run |
+| Usage | `--trace` prints a `token_usage` line per model call; the kernel sums them (`usage_line`) and records them on the run |
 | Conformance | `holon adapter test jcode` |
 
 ## Install
@@ -37,7 +37,9 @@ timer whose `PATH` differs still runs the same binary. Re-run the installer to c
 - jcode's base prompt is large (about 15k input tokens before the brief); budget for it.
 - Conformance 5/5 on 2026-10-13 (free-stack): plan 6.2 min, approve 23.3, execute 10.4, verify
   11.3. Plan and execute submitted through `holon_submit` and the dispatcher stopped the harness
-  once their results were in; that is why those two runs carry no token usage (it is only in the
-  final `--json` summary).
+  once their results were in; that is why those two runs carry no token usage. The driver now runs
+  jcode with `--trace` and sums its per-call `token_usage` lines (`usage_line`), which survive the
+  stop. jcode's `input` already includes cached tokens, so the `--json` summary is no longer used for
+  tokens.
 - An earlier attempt timed out: the planner read Holon's source for an hour to derive the grade
   floor. Plan contexts now state the floor and the approver.

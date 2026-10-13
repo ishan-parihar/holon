@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,11 @@ check_updates = false # a harness upgrade is the Chair's change, not a side effe
 enabled = false       # no unapproved proactive work
 {END}
 """
+
+
+def strip_block(text: str) -> str:
+    """The config without any copy of BLOCK: `jcode provider add` rewrites the file and can drop the BEGIN line."""
+    return re.sub(rf"(?:{re.escape(BEGIN)}\n)?\[features\]\n.*?{re.escape(END)}\n*", "", text, flags=re.S)
 
 
 def main() -> int:
@@ -70,18 +76,17 @@ def main() -> int:
 
     jhome.mkdir(parents=True, exist_ok=True)
     env = {**os.environ, "JCODE_HOME": str(jhome), "JCODE_NO_TELEMETRY": "1"}
-    cmd = [jcode, "provider", "add", "holon", "--base-url", a.base_url, "--model", a.model]
+    cfg = jhome / "config.toml"
+    if cfg.exists():  # jcode refuses a file with the block twice (older installers left one)
+        cfg.write_text(strip_block(cfg.read_text()))
+    cmd = [jcode, "provider", "add", "holon", "--overwrite", "--base-url", a.base_url, "--model", a.model]  # a rerun updates it
     key = Path(a.api_key_file).expanduser().read_text().strip() if a.api_key_file else None
     cmd += ["--api-key-stdin"] if key else ["--no-api-key"]
     p = subprocess.run(cmd, input=key, capture_output=True, text=True, env=env)
-    print("provider: " + ("added" if p.returncode == 0 else "FAILED: " + (p.stderr or p.stdout)[-300:]))
+    print("provider: " + ("set" if p.returncode == 0 else "FAILED: " + (p.stderr or p.stdout)[-300:]))
     if p.returncode != 0:
         return 1
-    cfg = jhome / "config.toml"
-    text = cfg.read_text() if cfg.exists() else ""
-    if BEGIN in text:
-        text = text[:text.index(BEGIN)].rstrip() + "\n" + text[text.index(END) + len(END):].lstrip("\n")
-    cfg.write_text(text.rstrip() + "\n\n" + BLOCK)
+    cfg.write_text(strip_block(cfg.read_text()).rstrip() + "\n\n" + BLOCK)
     tomllib.loads(cfg.read_text())
     (jhome / "mcp.json").write_text(json.dumps(mcp, indent=2))
     p = subprocess.run([sys.executable, "-m", "holon", "--home", str(home), "skill", "export", "--to",

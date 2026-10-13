@@ -4,13 +4,16 @@
 # Observe stages run without jcode's editing tools; the shell stays, so the kernel's read-only guard
 # stays on (read_only_enforced = false).
 name = "jcode"
-command = "jcode run --json --quiet --no-update --no-selfdev -C {workdir} --provider-profile holon {read_only}{act_args} {briefing}"
+command = "jcode run --json --trace --quiet --no-update --no-selfdev -C {workdir} --provider-profile holon {read_only}{act_args} {briefing}"
 cwd = "{workdir}"
 timeout_s = 3600
 result = "stdout-json"     # a holon_submit call, else result.json, else the JSON object in jcode's reply
 read_only = "--disabled-tools write,edit,multiedit,patch,apply_patch,replace,bg,selfdev,swarm"
 act_args = "--disabled-tools selfdev,swarm"
 read_only_enforced = false
+# --trace writes one line per model call to stderr; the kernel sums them. A run stopped after
+# holon_submit never prints the --json summary, and that summary's input already includes cached tokens
+usage_line = 'token_usage input=(?P<tokens_in>[0-9]+) output=(?P<tokens_out>[0-9]+)'
 
 [env]
 JCODE_NO_TELEMETRY = "1"

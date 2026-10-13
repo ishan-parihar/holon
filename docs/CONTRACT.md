@@ -75,6 +75,7 @@ result    = "file"          # or "stdout-json"
 read_only = "--plan-only"   # inserted at {read_only} for observe stages
 stages    = ["plan", "execute"]   # optional; default every stage
 read_only_enforced = true   # the harness denies writes in observe stages itself
+usage_line = 'in=(?P<tokens_in>[0-9]+) out=(?P<tokens_out>[0-9]+)'   # optional: one per model call
 [env]
 SOME_VAR = "value"
 ```
@@ -85,7 +86,9 @@ Placeholders (shell-quoted): `{brief_dir} {brief_md} {context_md} {identity_md} 
 and `{scope}`: the department's scope name (its slug if `holon.toml` has `[scope.dept.<slug>]`, else
 `org`; GENOME §8). A harness that sandboxes builds one sandbox per scope, and its installer stamps
 `scope_fingerprint` (from `holon scope`) into the driver so `holon doctor` can report drift.
-Double literal braces: `{{ }}`. A driver that still lists `duties` is read as the matching stages.
+Double literal braces: `{{ }}`. **Usage.** If `usage_line` matches lines on stdout or stderr, their
+sum is the run's token usage (it survives the kernel stopping a harness whose agent already
+submitted); otherwise the `usage` object of a `stdout-json` summary is used. A driver that still lists `duties` is read as the matching stages.
 
 **Read-only.** For observe stages the kernel fingerprints the working directory before and
 after the run and fails the run if it changed. A harness that enforces read-only itself declares
