@@ -107,3 +107,9 @@ waits out each address in turn, so a host with a dead IPv6 route would otherwise
 Verified live on 2026-10-13 against the LifeOS workspace (page "Holon (local test)"): setup, schema
 check, push of 2 departments, 3 employees, 7 work nodes and 5 runs, then 54 relation values compared
 with SQLite (0 mismatches) and a second push writing nothing.
+
+Webhooks verified live the same day through the `holon-notion` tunnel: a Chair edit to a
+department's Mission was caught by the poll after 15 s and reverted 2 s later; Notion's signed
+`page.properties_updated` event arrived 60 s after the edit (Notion batches property events for about
+a minute). So a Chair edit lands within about a minute by whichever path sees it first. A webhook
+the receiver refuses is logged (`webhook refused …`), so a token mismatch cannot lose events silently.

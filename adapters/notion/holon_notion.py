@@ -841,6 +841,8 @@ class Sync:
                     self.end_headers()
                     return
                 code, msg = sync.webhook(self.rfile.read(size), dict(self.headers), inbox)
+                if code >= 400:  # e.g. Notion signing with a token we do not hold: say so, events are being lost
+                    print(f"webhook refused ({code} {msg}); the poll still catches up", flush=True)
                 self.send_response(code)
                 self.end_headers()
                 self.wfile.write(msg.encode())
