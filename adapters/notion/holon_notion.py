@@ -892,6 +892,13 @@ class Sync:
                 time.sleep(10)
 
 
+def prefer_ipv4() -> None:
+    """Try IPv4 addresses first. urllib has no happy eyeballs: it waits out every address in order,
+    and on a host whose IPv6 route is dead each call would hang for minutes before reaching IPv4."""
+    gai = socket.getaddrinfo
+    socket.getaddrinfo = lambda *a, **kw: sorted(gai(*a, **kw), key=lambda r: r[0] != socket.AF_INET)
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--holon-home", default=os.environ.get("HOLON_HOME", str(Path("~/holon").expanduser())))
@@ -906,6 +913,7 @@ def main(argv: list[str] | None = None) -> int:
     c = sub.add_parser("check")
     c.add_argument("--repair", action="store_true")
     sub.add_parser("verify", help="compare every live page, value and relation with SQLite (read-only)")
+    sub.add_parser("webhook-path", help="print the secret path webhooks are served on (created once)")
     sub.add_parser("status")
     v = sub.add_parser("serve")
     v.add_argument("--port", type=int, default=8787)
@@ -914,9 +922,7 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--reconcile-every", type=float, default=900)
     v.add_argument("--verify-every", type=float, default=3600)
     a = ap.parse_args(argv)
-    if os.environ.get("HOLON_NOTION_IPV4"):  # hosts whose IPv6 route is dead: urllib has no happy eyeballs
-        gai = socket.getaddrinfo
-        socket.getaddrinfo = lambda host, port, family=0, *rest, **kw: gai(host, port, socket.AF_INET, *rest, **kw)
+    prefer_ipv4()
     home = Home(Path(a.holon_home).expanduser())
     if a.cmd == "setup":
         cfg_dir = home.root / "adapters" / "notion"
@@ -946,6 +952,8 @@ def main(argv: list[str] | None = None) -> int:
         problems = sync.check(a.repair)
         print("\n".join(problems) or "schema matches")
         return 1 if problems and not a.repair else 0
+    elif a.cmd == "webhook-path":
+        print(sync.webhook_path())
     elif a.cmd == "verify":
         problems = sync.verify()
         print("\n".join(problems) or "every page, value and relation matches SQLite")

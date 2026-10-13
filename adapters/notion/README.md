@@ -57,8 +57,18 @@ restored. That is what keeps the two from drifting: Notion never holds a fact Ho
 
 ## Set up
 
-On a new machine, `python3 install.py --notion-parent-page <page id> --notion-token-file <file>`
-(repository root) does steps 3 and 6 below along with the SQLite instance. By hand:
+On a new machine, from the repository root:
+
+```sh
+python3 install.py --notion-parent-page <page id> --notion-token-file ~/.config/holon/notion.token \
+    --notion-webhook-hostname holon-notion.<your domain> --systemd
+```
+
+does steps 3, 4 and 6 below along with the SQLite instance: the four databases, a dedicated
+Cloudflare tunnel (`holon-notion`, needs `cloudflared tunnel login` once) routing only
+`/notion/…` to the receiver, and the `holon-notion` and `cloudflared-holon-notion` user units. It
+checks the webhook URL answers and prints it for step 5, the one step only you can do in Notion.
+Without `--notion-webhook-hostname` the sync polls Notion every minute instead. By hand:
 
 1. In Notion, create an internal connection (Settings → Connections → Develop or manage
    integrations) with *Read content*, *Update content*, *Insert content* and *Read user
@@ -91,8 +101,8 @@ On a new machine, `python3 install.py --notion-parent-page <page id> --notion-to
 pass by hand.
 
 Network: dropped connections are retried; a page create whose reply was lost is created again and
-the next `reconcile` trashes the untracked twin. On a host whose IPv6 route is dead (Python's urllib
-tries every IPv6 address before IPv4), set `HOLON_NOTION_IPV4=1`.
+the next `reconcile` trashes the untracked twin. IPv4 addresses are tried first: Python's urllib
+waits out each address in turn, so a host with a dead IPv6 route would otherwise hang on every call.
 
 Verified live on 2026-10-13 against the LifeOS workspace (page "Holon (local test)"): setup, schema
 check, push of 2 departments, 3 employees, 7 work nodes and 5 runs, then 54 relation values compared

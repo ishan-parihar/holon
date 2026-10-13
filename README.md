@@ -27,8 +27,8 @@ failures and repeated rejections queue a retro whose actions become new work
 ## Quick start
 
 ```sh
-python3 install.py [--notion-parent-page <id> --notion-token-file <f>] [--systemd]
-                                                 # instance + Chair key + `holon` on PATH (+ Notion, timers)
+python3 install.py [--notion-parent-page <id> --notion-token-file <f> [--notion-webhook-hostname <h>]] \
+                  [--systemd [--heartbeat]]      # instance + Chair key + `holon` on PATH (+ Notion, units)
 export HOLON_HOME=~/holon                        # install.py ran the init step for you
 bin/holon hr hire --dept executive --slot ceo --name Ada --title CEO \
      --driver zeroclaw --jd @jd/ceo.md --reason "founding CEO" --status active
