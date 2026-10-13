@@ -189,7 +189,11 @@ plan contexts now state the floor and the approver
 (`test_planners_are_told_the_grade_floor_and_the_approver`). jcode conformance then passed 5/5
 (plan 6.2 min, approve 23.3, execute 10.4, verify 11.3).
 
-Still open: the Notion mirror against a real workspace (needs an integration token and a public
-URL for webhooks); the VPS redeploy of all of the above (after the Chair's local verification);
+The Notion mirror ran against the real workspace on 2026-10-13: setup, push and reconcile all worked,
+54 relation values matched SQLite, and a second push wrote nothing. Connection resets on the way led to
+retries, orphan-twin cleanup and an IPv4 switch
+(`test_a_lost_reply_is_retried_and_the_orphan_it_leaves_is_trashed`).
+
+Still open: Notion webhooks (need a public URL; until then `serve` polls with reconcile); the VPS redeploy of all of the above (after the Chair's local verification);
 nothing yet acts on metrics automatically beyond retros; a run that submits through `holon_submit`
 and is then stopped records no token usage.
