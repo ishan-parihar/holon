@@ -48,6 +48,13 @@ class CronTests(unittest.TestCase):
 
 
 class Contract(unittest.TestCase):
+    def test_a_bad_label_on_a_learning_is_dropped_not_fatal(self):
+        env = contract.validate("retro", {"summary": "s", "cause": "c",
+                                          "learnings": [{"content": "x", "kind": "insight", "confidence": "sure"}]})
+        self.assertEqual(env["learnings"], [{"content": "x"}])
+        with self.assertRaises(contract.EnvelopeError):
+            contract.validate("verify", {"verdict": "maybe", "note": "n"})
+
     def test_every_stage_has_a_spec(self):
         self.assertEqual(set(contract.SPECS), set(vocab.STAGES))
 

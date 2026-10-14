@@ -198,11 +198,25 @@ def validate(stage: str, env: Any) -> dict:
     key = variant(stage, env)
     if key not in variants:
         raise EnvelopeError([f"'kind' must be one of {[k for k in variants]}"])
+    env = _repair_annotations(env)
     problems: list[str] = []
     _fields("", env, {**variants[key], **COMMON}, problems)
     if problems:
         raise EnvelopeError(problems)
     return env
+
+
+def _repair_annotations(env: dict) -> dict:
+    """A learning or decision whose `kind` or `confidence` is not in the vocabulary loses that label (memory's
+    defaults apply) instead of voiding the result: annotations steer memory, not the work, and an hour of
+    agent work must not be discarded over a label. Everything that decides an outcome stays strict."""
+    allowed = {"kind": vocab.MEMORY_KINDS, "confidence": vocab.CONFIDENCE}
+    out = dict(env)
+    for key in ("learnings", "decisions"):
+        if isinstance(out.get(key), list):
+            out[key] = [{k: v for k, v in e.items() if k not in allowed or v in allowed[k]} if isinstance(e, dict) else e
+                        for e in out[key]]
+    return out
 
 
 def parse_grade(v: Any) -> int | None:
