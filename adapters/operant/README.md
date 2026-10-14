@@ -13,6 +13,25 @@ directory is the only place that knows operant exists. It implements the adapter
 | Posture map | `observe.toml`: write/mutation/notification tools disabled (the kernel's workdir fingerprint is the read-only check). `act.toml`: `command_allowlist = ["*"]` so an approved plan never stalls on a prompt an unattended harness cannot answer |
 | Conformance | `holon adapter test operant` |
 
+## Cast import (H9, phase G)
+
+Operant's nine seeded seats map onto Holon departments, roles and kernel mechanisms
+(ORG-LAYER-DISPOSITION.md §5 in operant's docs), and their cron jobs re-propose as routines
+through the classifier:
+
+```sh
+python3 adapters/operant/import-cast.py               # dry run: the mapping, seat by seat
+python3 adapters/operant/import-cast.py --apply       # hire the seat employees, propose the crons
+```
+
+premiere and chief-of-staff become executive routines with `--deliver`; governor's governance
+digest lands in executive; identity-warden's audit lands in `it`; compass and chief-of-staff
+are hired as executive employees (the seat's charter is the job description). crew-chief,
+hrmaster, dispatcher and dp-the-program are already kernel mechanisms — the importer lists
+them and proposes nothing. The command lives here, not in the kernel CLI, because the kernel
+names no harness (law 2). Operant's databases are opened read-only; schedules drop their
+leading seconds field.
+
 ## Isolation
 
 Everything operant writes — config, sessions, memory, approval allowlist, `.env` — lives under

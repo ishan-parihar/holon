@@ -2,6 +2,7 @@
 conformance suite tells a compliant harness from a broken one."""
 
 import io
+import sqlite3
 import subprocess
 import sys
 import tomllib
@@ -203,3 +204,62 @@ class Operant(KernelCase):
             self.assertEqual(cfg["client"]["api_key"], "<redacted>", "a dry run shows the key is wired without printing it")
         finally:
             Path(key).unlink(missing_ok=True)
+
+
+class ImportCast(KernelCase):
+    """H9 (phase G): operant's nine seeded seats map onto departments, roles and kernel
+    mechanisms (ORG-LAYER-DISPOSITION §5), and the cast crons re-propose as routines through
+    the classifier. Dry run by default; the importer lives in the adapter because the kernel
+    names no harness (law 2)."""
+
+    SEATS = [("premiere", "Premiere", "org-lead", "executive"),
+             ("chief-of-staff", "Chief of Staff", "chief-of-staff", "executive"),
+             ("crew-chief", "Crew Chief", "crew-chief", "crew")]
+
+    def setUp(self):
+        super().setUp()
+        org = sqlite3.connect(self.tmp / "org.db")
+        org.execute("CREATE TABLE employees (employee_id TEXT, name TEXT, role TEXT, department TEXT,"
+                    " skills TEXT, system_prompt TEXT)")
+        for sid, name, role, dept in self.SEATS:
+            org.execute("INSERT INTO employees VALUES (?,?,?,?,?,?)", (sid, name, role, dept, "[]", f"charter of {sid}"))
+        cron = sqlite3.connect(self.tmp / "cron.db")
+        cron.execute("CREATE TABLE cron_jobs (id TEXT, name TEXT, prompt TEXT, schedule TEXT, deliver TEXT)")
+        for jid, sid, what in [("cron_cast_premiere", "premiere", "daily directive + aspirations review"),
+                               ("cron_cast_chief-of-staff", "chief-of-staff", "directive follow-through review"),
+                               ("cron_cast_crew-chief", "crew-chief", "crew telemetry")]:
+            cron.execute("INSERT INTO cron_jobs VALUES (?,?,?,?,?)", (jid, what, f"do {sid}", "0 0 9 * * *", "local"))
+        cron.execute("INSERT INTO cron_jobs VALUES ('cron_other', 'capacity-retry-probe', 'retry', '0 0 * * * *', 'local')")
+        org.commit(), cron.commit(), org.close(), cron.close()
+        self.cmd = lambda apply: [sys.executable, str(ADAPTERS / "operant" / "import-cast.py"),
+                                  "--holon-home", str(self.home.root), "--org-db", str(self.tmp / "org.db"),
+                                  "--cron-db", str(self.tmp / "cron.db"), "--driver", "fake"] \
+                                 + (["--apply"] if apply else [])
+
+    def _count(self, sql):
+        return self.k.wconn.execute(sql).fetchone()[0]
+
+    def test_dry_run_maps_the_cast_and_applies_nothing(self):
+        p = subprocess.run(self.cmd(False), capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("routine   premiere", p.stdout)
+        self.assertIn("hire      chief-of-staff", p.stdout)
+        self.assertIn("mechanism crew-chief", p.stdout)
+        self.assertIn("not a cast duty", p.stdout)
+        self.assertIn("dry run", p.stdout)
+        self.assertEqual(self._count("SELECT count(*) FROM employees WHERE name='Chief of Staff'"), 0)
+        self.assertEqual(self._count("SELECT count(*) FROM tasks WHERE title LIKE 'Routine: %'"), 0)
+
+    def test_apply_hires_the_seat_employees_and_proposes_the_cast_crons(self):
+        p = subprocess.run(self.cmd(True), capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(self._count("SELECT count(*) FROM employees e JOIN departments d"
+                                     " ON d.id=e.dept_id WHERE e.name='Chief of Staff' AND d.slug='executive'"), 1,
+                         "the seat is an executive employee")
+        for title in ("Routine: daily directive + aspirations review", "Routine: directive follow-through review"):
+            self.assertEqual(self._count(f"SELECT count(*) FROM tasks WHERE title='{title}'"), 1)
+        self.assertEqual(self._count("SELECT count(*) FROM tasks WHERE title='Routine: crew telemetry'"), 0,
+                         "a kernel mechanism covers crew telemetry: no proposal")
+        emp = self.k.wconn.execute("SELECT id FROM employees WHERE name='Chief of Staff'").fetchone()[0]
+        self.assertIn("charter of chief-of-staff",
+                      self.k.org.employee(emp)["job_description"], "the seat's charter is the job description")
