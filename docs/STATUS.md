@@ -72,6 +72,11 @@ whose inputs changed (AGENTS.md).
   `docs/design/2026-10-13-trust-boundary.md` §3). Until then `holon doctor` warns `isolation.off`.
 - Decision-model quota: OpenRouter's free tier allows 50 decisions a day (1000 after a one-time
   10-credit top-up); the Cline API cannot serve these models.
+- Agent model throughput: on free-stack a refinement planner's model call took 878 s (16.8k tokens out) and a
+  plan run hit the 60-minute driver timeout twice. Loops that rewrite playbooks need a faster model for
+  plan and execute stages (`docs/design/2026-10-14-playbooks-objectives-smoke.md` §4).
+- The workstation's RSI demo (Tools department, routine `Notes digest`) set `[autonomy.dept.tools]
+  verify_sample_rate = 1.0` and `[playbooks] refine_after = 2` in `~/holon/holon.toml`; revert after it.
 - Which venture moves first, as a pilot department of routines (`docs/design/2026-10-13-lanes-and-decision-models.md` §4).
 
 ## 6. What is next

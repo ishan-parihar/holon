@@ -98,6 +98,18 @@ caught a refinement that would have weakened the rubric while claiming to streng
    taken back when the result is handed in and held until verified.
 
 Refinement work no longer spends a research session: its intent is the kernel's compiled evidence.
+6. An hour-long retro was voided because one learning carried a `kind` outside the vocabulary; bad
+   annotation labels are now dropped, not fatal.
+
+### 4.3 Where it stands
+
+After the failed verification the kernel queued execute#2; at claim, its staleness check saw the playbook
+files had changed since the plan was approved and queued a fresh plan instead of executing a stale one.
+The retro on the failure (Tess) produced two actions: forward the kernel-improvement proposals to the
+Chair, and write a Tools playbook `refining-a-playbook` from this failure's lessons: the department
+evolving how it evolves. The replan is the bottleneck: on free-stack one planner call took 878 s and a
+plan run hit the 60-minute driver timeout. The remaining steps (held change → verified → v2 → run 3
+judged against v2) are covered by `tests/test_playbooks.py` and wait on model throughput live.
 
 
 ## 5. Limits
