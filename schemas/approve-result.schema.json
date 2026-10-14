@@ -156,6 +156,32 @@
         ]
       },
       "description": "calls your harness refused under policy.json (H3): tool + reason + rule. The kernel treats them as blockers (rework or escalation), never breaches"
+    },
+    "usage": {
+      "type": "object",
+      "properties": {
+        "tokens_in": {
+          "type": "object",
+          "properties": {}
+        },
+        "tokens_out": {
+          "type": "object",
+          "properties": {}
+        },
+        "cost": {
+          "type": "object",
+          "properties": {}
+        },
+        "tool_calls": {
+          "type": "object",
+          "properties": {}
+        },
+        "duration_s": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "description": "what the run consumed (H4): the kernel records it on the run — budgets and cost per verified result read it; a usage the driver measured wins over the envelope's claim"
     }
   },
   "required": [

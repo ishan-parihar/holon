@@ -48,7 +48,8 @@ kernel wrote.
 
 One JSON object per run, defined once in `holon/core/contract.py` and published as JSON Schemas
 in [`schemas/`](../schemas) (`holon contract schemas` prints them). Every envelope may also carry
-`learnings` and `decisions` (become memory) and `proposals` (go to the department's steward).
+`learnings` and `decisions` (become memory), `proposals` (go to the department's steward),
+`refusals` (§9) and `usage` (§10).
 
 | Stage | Shape |
 |---|---|
@@ -215,3 +216,24 @@ event trail records each refusal, and refusals on a "successful" execute surface
 blockers for the verifier. Budgets: `[budget] tokens_per_run` / `cost_per_run`, overridden
 per department (`[budget.dept.<slug>]`) then per employee (`[budget.employee.<id>]`);
 0/absent = no cap. The harness stops the run at a cap and says so in `refusals`.
+
+## §10 trajectory.json and usage (H4)
+
+Beside `result.json` a harness MAY write `trajectory.json` — the run's ordered steps, one
+object per step with `thought` (a summary), `tool`, `args` (a digest) and `outcome`:
+
+```json
+{"steps": [{"thought": "read the config", "tool": "file_read", "args": "app.toml",
+            "outcome": "port 8000"}]}
+```
+
+The kernel compacts it (12 steps, 160 characters a field) and stores it with the run's
+output. Once a verifier passes the result, that trajectory is the gold standard the next
+run of the same job is held to: its brief and the rubric judge both see it (§3 of the
+boundary). Absent or malformed, it is dropped — never fatal; the trajectory steers the
+next run, the result decides this one.
+
+The envelope may also carry `usage`: `{"tokens_in", "tokens_out", "cost", "tool_calls",
+"duration_s"}`, all optional numbers. The kernel records them on the run (budgets and cost
+per verified result read them); a usage the driver measured in its own output wins over
+the envelope's claim.

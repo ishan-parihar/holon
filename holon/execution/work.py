@@ -502,11 +502,15 @@ class Work:
         with write_txn(self.conn):
             self.conn.execute("UPDATE runs SET brief_path=?, log_path=? WHERE id=?", (brief_path, log_path, run_id))
 
-    def set_run_usage(self, run_id: str, tokens_in: int | None, tokens_out: int | None, cost: float | None) -> None:
-        """What the harness reported a run consumed (budgets and cost per verified result read it)."""
+    def set_run_usage(self, run_id: str, tokens_in: int | None, tokens_out: int | None, cost: float | None,
+                      tool_calls: int | None = None, duration_s: float | None = None) -> None:
+        """What the harness reported a run consumed (budgets and cost per verified result read it).
+        Coalesced: the first value wins, so a usage the driver measured beats the envelope's claim."""
         with write_txn(self.conn):
             self.conn.execute("UPDATE runs SET tokens_in=coalesce(?, tokens_in), tokens_out=coalesce(?, tokens_out),"
-                              " cost=coalesce(?, cost) WHERE id=?", (tokens_in, tokens_out, cost, run_id))
+                              " cost=coalesce(?, cost), tool_calls=coalesce(?, tool_calls),"
+                              " duration_s=coalesce(?, duration_s) WHERE id=?",
+                              (tokens_in, tokens_out, cost, tool_calls, duration_s, run_id))
 
     def _begin_submit(self, run_id: str, stage: str, exit_code: int | None, status: str = "succeeded",
                       **metrics: Any) -> tuple[dict, dict, dict, str | None]:
@@ -930,6 +934,32 @@ class Work:
                 self._add_stage(work, "execute", [a["id"]], assignee=body.get("assignee") or src["assignee"])
         return self.get(work["id"])
 
+    @staticmethod
+    def compact_trajectory(raw: Any, max_steps: int = 12, field_chars: int = 160) -> dict | None:
+        """trajectory.json as the gold standard carries it (H4): ordered steps (thought summary, tool,
+        arguments digest, outcome), trimmed and capped, plus how many steps were cut. Anything
+        malformed is dropped, never fatal: the trajectory steers the next run, the result decides this one."""
+        if not isinstance(raw, dict) or not isinstance(raw.get("steps"), list) or not raw["steps"]:
+            return None
+        steps = []
+        for s in raw["steps"][:max_steps]:
+            if not isinstance(s, dict):
+                continue
+            keep = {k: s[k].strip()[:field_chars] for k in ("thought", "tool", "args", "outcome")
+                    if isinstance(s.get(k), str) and s[k].strip()}
+            if keep:
+                steps.append(keep)
+        return {"steps": steps, "more": len(raw["steps"]) - max_steps} if steps else None
+
+    @staticmethod
+    def trajectory_text(traj: dict) -> str:
+        """The compacted trajectory as briefs and the judge read it: one line per step."""
+        lines = [f"{i}. " + " → ".join(s[k] for k in ("thought", "tool", "args", "outcome") if s.get(k))
+                 for i, s in enumerate(traj.get("steps", []), 1)]
+        if traj.get("more"):
+            lines.append(f"… and {traj['more']} more steps")
+        return "\n".join(lines)
+
     def gold_standard(self, work: dict) -> dict | None:
         """The gold standard a run of this work is held to: the last result a verifier (or the Chair) passed
         for the same routine, else for the same task class in the same department. It is what "done well"
@@ -947,6 +977,8 @@ class Work:
             return None
         o = dict(r)
         o["body"] = json.loads(o["body"])
+        if isinstance(o["body"], dict) and o["body"].get("_trajectory"):
+            o["trajectory_text"] = self.trajectory_text(o["body"]["_trajectory"])
         return o
 
     # ── trust ─────────────────────────────────────────────────────────────

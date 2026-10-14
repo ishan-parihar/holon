@@ -240,6 +240,8 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
         if gold:
             b.add(f"Gold standard: the last verified result of this job ({gold['work_id']})",
                   f"{gold['summary'] or ''}\n\n{(gold['documentation'] or '')[:4000]}")
+            if gold.get("trajectory_text"):
+                b.add("Gold standard trajectory (how it got there, compacted)", gold["trajectory_text"])
     if stage == "retro":
         b.add("History of this work", _history(work, task_id))
         if task.get("task_class") == "retro" and task_dept:

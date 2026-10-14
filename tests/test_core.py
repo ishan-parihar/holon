@@ -77,6 +77,17 @@ class Contract(unittest.TestCase):
             contract.validate("execute", {"outcome": "meh", "summary": "", "learnings": [{"kind": "bogus"}]})
         self.assertGreaterEqual(len(cm.exception.problems), 3)
 
+    def test_usage_is_a_common_field_of_numbers(self):
+        base = {"outcome": "success", "summary": "s", "documentation": "d"}
+        env = contract.validate("execute", {**base, "usage": {"tokens_in": 100, "tokens_out": 50,
+                                                              "cost": 0.25, "tool_calls": 7,
+                                                              "duration_s": 12.5}})
+        self.assertEqual(env["usage"]["cost"], 0.25)
+        contract.validate("execute", {**base, "usage": {}})
+        for bad in ({"tokens_in": "many"}, {"tool_calls": True}, {"duration_s": -1}, "cheap"):
+            with self.assertRaises(EnvelopeError):
+                contract.validate("execute", {**base, "usage": bad})
+
     def test_conditional_requirements(self):
         contract.validate("approve", {"decision": "approve"})
         contract.validate("approve", {"decision": "reject", "note": "why"})

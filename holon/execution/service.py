@@ -498,6 +498,16 @@ class Kernel:
                 "`references/grading.md`; the effective grade is the higher of the two. `assignee` names the "
                 "employee who executes; leave it out and the department's executors claim it.\n")
 
+    def _read_trajectory(self, run_id: str) -> dict | None:
+        """trajectory.json (H4): the run's ordered steps — thought summary, tool, arguments digest,
+        outcome — compacted for the gold standard. Absent or malformed: dropped, never fatal;
+        the trajectory steers the next run, the result decides this one."""
+        try:
+            text = isolation.read_agent_file(self.home.run_dir(run_id) / "trajectory.json")
+            return self.work.compact_trajectory(json.loads(text)) if text else None
+        except (json.JSONDecodeError, isolation.IsolationError, ValueError):
+            return None
+
     # ── ingestion: the one place agent output enters the organization ─────
     def submit(self, run_id: str, envelope: dict | None = None, exit_code: int | None = 0,
                driver_output: dict | None = None, defer: bool = False) -> dict:
@@ -546,7 +556,14 @@ class Kernel:
         elif stage == "approve":
             out = self.decide(node["id"], env["decision"], env.get("note"), review_run=run_id)
         elif stage == "execute":
+            traj = self._read_trajectory(run_id)
+            if traj:
+                env["_trajectory"] = traj
             out = self.work.submit_execute(run_id, env, exit_code)
+            u = env.get("usage")
+            if isinstance(u, dict):
+                self.work.set_run_usage(run_id, u.get("tokens_in"), u.get("tokens_out"), u.get("cost"),
+                                         u.get("tool_calls"), u.get("duration_s"))
             self._hold_direct_skill_writes(work["id"], self.work.output(node["id"]), env)  # whatever the outcome
             v = self.work.latest(work["id"], "verify", "ready")
             if v and defer:
@@ -1148,6 +1165,8 @@ class Kernel:
                  f"{env['documentation'][:12000]}")
         if gold:
             state += f"\n\n--- Gold standard ({gold['work_id']}) ---\n{gold['summary']}\n{(gold['documentation'] or '')[:6000]}"
+            if gold.get("trajectory_text"):
+                state += f"\n\nHow the gold standard got there (compacted trajectory):\n{gold['trajectory_text']}"
         a = self._ask("rubric", state, qs, patient=True)
         if a is None:
             return None

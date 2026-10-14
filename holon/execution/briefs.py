@@ -8,6 +8,7 @@ layers, so a department's tailored playbook is what its employees receive.
     runs/<run_id>/identity.md   who the employee is (for harnesses that put it in the system prompt)
     runs/<run_id>/context.md    compiled context bundle
     runs/<run_id>/result.json   WRITTEN BY THE AGENT: the result envelope
+    runs/<run_id>/trajectory.json  optional (H4): the run's ordered steps, kept with the output
     runs/<run_id>/policy.json   the run's reach + budget, compiled at claim (H3+H5)
     runs/<run_id>/driver.log    driver stdout/stderr (push mode only)
 """

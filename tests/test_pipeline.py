@@ -352,3 +352,55 @@ class RunPolicy(KernelCase):
         self.assertTrue(any(n and "policy refusal: terminal" in n for n in events), events)
         self.assertEqual(self.status(w), "open",
                      "the refusal was recorded; the work proceeds to verification, never a breach")
+
+
+class RunUsage(KernelCase):
+    """H4 (phase D): a result may carry `usage` (recorded on the run; a usage the driver
+    measured wins), and a harness may write trajectory.json beside result.json. The last
+    verified trajectory becomes the gold standard the next run's brief and the judge are
+    held to, compacted. Absent or malformed, it is dropped, never fatal."""
+
+    def _executed(self, trajectory=None, **over):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        if trajectory is not None:
+            (self.home.run_dir(c.run["id"]) / "trajectory.json").write_text(
+                trajectory if isinstance(trajectory, str) else json.dumps(trajectory))
+        return t, c, self.k.submit(c.run["id"], self.exec_env(**over))
+
+    def test_usage_in_the_result_is_recorded_on_the_run(self):
+        t, c, out = self._executed(usage={"tokens_in": 100, "tokens_out": 50, "cost": 0.25,
+                                          "tool_calls": 7, "duration_s": 12.5})
+        self.assertFalse(out.get("breach"))
+        run = self.k.work.get_run(c.run["id"])
+        self.assertEqual((run["tokens_in"], run["tokens_out"], run["cost"]), (100, 50, 0.25))
+        self.assertEqual((run["tool_calls"], run["duration_s"]), (7, 12.5))
+
+    def test_the_verified_trajectory_becomes_the_gold_standard(self):
+        t, c, out = self._executed(trajectory={"steps": [
+            {"thought": "read it", "tool": "file_read", "args": "hello.txt", "outcome": "empty"},
+            {"tool": "file_write", "args": "hello.txt", "outcome": "written"}]})
+        v = self.k.claim("verify", self.dev2)
+        self.k.submit(v.run["id"], {"verdict": "pass", "note": "criteria met"})
+        again = self.add("again", dept="eng", task_class="demo")
+        gold = self.k.work.gold_standard(again)
+        self.assertIn("file_write", gold["trajectory_text"], "the trajectory the judge is held to")
+        self.plan_and_approve(again, assignee=self.dev1, writes=[])
+        c2 = self.k.claim("execute", self.dev1)
+        ctx = (c2.brief_dir / "context.md").read_text()
+        self.assertIn("Gold standard trajectory", ctx)
+        self.assertIn("file_write", ctx)
+
+    def test_a_long_trajectory_is_compacted(self):
+        t, c, out = self._executed(trajectory={"steps": [
+            {"tool": f"step{i}", "outcome": "ok"} for i in range(30)]})
+        body = self.k.work.last_execute_output(t["id"])["body"]
+        self.assertEqual(len(body["_trajectory"]["steps"]), 12)
+        self.assertEqual(body["_trajectory"]["more"], 18)
+
+    def test_a_bad_trajectory_is_dropped_not_fatal(self):
+        for bad in ('{"steps": "not a list"}', 'nope', '{"steps": [42, "x"]}'):
+            t, c, out = self._executed(trajectory=bad)
+            self.assertFalse(out.get("breach"), bad)
+            self.assertNotIn("_trajectory", self.k.work.last_execute_output(t["id"])["body"])

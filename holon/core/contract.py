@@ -4,8 +4,9 @@
 as JSON Schema for harness authors (`holon contract schemas` writes schemas/; `holon lint` fails if
 the published files drift from this module). No schema library: stdlib only.
 
-Every envelope may also carry the common fields: `learnings` and `decisions` (become memory) and
-`proposals` (improvements, routed to the department's steward).
+Every envelope may also carry the common fields: `learnings` and `decisions` (become memory),
+`proposals` (improvements, routed to the department's steward), `refusals` (policy refusals)
+and `usage` (what the run consumed).
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ MAX_DOC_CHARS = 200_000
 
 @dataclass(frozen=True)
 class F:
-    type: str                      # text | str | int | bool | grade | list | object | text_or_list
+    type: str                      # text | str | int | num | bool | grade | list | object | text_or_list
     required: bool = False
     enum: tuple = ()
     items: "F | None" = None
@@ -48,6 +49,11 @@ COMMON = {
         "policy": F("text", doc="the policy.json rule that refused it (roots, writes, commands, budget)"),
     }), doc="calls your harness refused under policy.json (H3): tool + reason + rule. The kernel treats "
             "them as blockers (rework or escalation), never breaches"),
+    "usage": F("object", fields={
+        "tokens_in": F("num", lo=0), "tokens_out": F("num", lo=0), "cost": F("num", lo=0),
+        "tool_calls": F("num", lo=0), "duration_s": F("num", lo=0),
+    }, doc="what the run consumed (H4): the kernel records it on the run — budgets and cost per "
+           "verified result read it; a usage the driver measured wins over the envelope's claim"),
 }
 WORK_ITEM = {"title": F("text", required=True), "intent": F("text", required=True), "acceptance": TEXT,
              "dept": F("str"), "task_class": F("str"), "priority": F("int", lo=0, hi=4),
@@ -158,9 +164,22 @@ def _check(path: str, v: Any, f: F, problems: list[str]) -> None:
         if not isinstance(v, int) or isinstance(v, bool) or (f.lo is not None and v < f.lo) or \
                 (f.hi is not None and v > f.hi):
             problems.append(f"'{path}' must be an integer" + (f" in {f.lo}..{f.hi}" if f.hi is not None else ""))
+    elif t == "num":
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            problems.append(f"'{path}' must be a number")
+        elif f.lo is not None and v < f.lo:
+            problems.append(f"'{path}' must be >= {f.lo}")
+        elif f.hi is not None and v > f.hi:
+            problems.append(f"'{path}' must be <= {f.hi}")
     elif t == "bool":
         if not isinstance(v, bool):
             problems.append(f"'{path}' must be true or false")
+    elif t == "num":
+        s = {"type": "number"}
+        if f.lo is not None:
+            s["minimum"] = f.lo
+        if f.hi is not None:
+            s["maximum"] = f.hi
     elif t == "grade":
         if parse_grade(v) is None:
             problems.append(f"'{path}' must be 0-4 or 'G0'..'G4'")

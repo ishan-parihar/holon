@@ -368,7 +368,9 @@ UNMIRRORED = {
     "runs": {
         "attempt": "the Stage's Runs", "lease_until": "kernel liveness", "heartbeat_at": "kernel liveness",
         "brief_path": "a local path (holon run show)", "log_path": "a local path (holon run show)",
-        "token_hash": "a credential: never leaves the kernel"},
+        "token_hash": "a credential: never leaves the kernel",
+        "tool_calls": "usage detail; metrics aggregates cost per verified result",
+        "duration_s": "usage detail; metrics shows cycle time by stage"},
 }
 TABLES = {"departments": "departments", "employees": "employees", "work": "tasks", "runs": "runs"}
 
