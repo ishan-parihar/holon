@@ -20,7 +20,7 @@ ADAPTERS = Path(__file__).resolve().parents[1] / "adapters"
 class Shipped(KernelCase):
     def test_every_adapter_driver_loads_and_reaches_the_brief(self):
         found = sorted(ADAPTERS.glob("*/driver.toml"))
-        self.assertEqual({p.parent.name for p in found}, {"zeroclaw", "hermes", "claude-code", "jcode"})
+        self.assertEqual({p.parent.name for p in found}, {"zeroclaw", "hermes", "claude-code", "jcode", "operant"})
         for p in found:
             d = Driver.from_toml(p.read_text(), str(p))
             self.assertEqual(d.stages, list(vocab.STAGES), p)
@@ -149,3 +149,57 @@ class Conformance(KernelCase):
             rc = cli.main(["--home", str(self.home.root), "adapter", "test", "fake", "--clauses", "driver,plan"])
         self.assertEqual(rc, 0, buf.getvalue())
         self.assertIn("2/2 passed", buf.getvalue())
+
+
+class Operant(KernelCase):
+    def test_operant_installer_isolates_and_writes_both_postures(self):
+        p = subprocess.run([sys.executable, str(ADAPTERS / "operant" / "install.py"), "--holon-home",
+                            str(self.home.root), "--base-url", "http://127.0.0.1:9/v1", "--model", "free-stack",
+                            "--api-key-file", "/dev/null", "--operant", "/bin/true", "--dry-run"],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        obs = tomllib.loads(p.stdout[p.stdout.index("--- observe.toml ---") + len("--- observe.toml ---"):p.stdout.index("--- act.toml ---")])
+        act = tomllib.loads(p.stdout[p.stdout.index("--- act.toml ---") + len("--- act.toml ---"):])
+        # observe: every mutating tool is gone; act: only the AFT writers are
+        self.assertIn("file_write", obs["tools"]["disabled_tools"])
+        self.assertIn("terminal", obs["tools"]["disabled_tools"])
+        self.assertIn("send_message", obs["tools"]["disabled_tools"])
+        self.assertNotIn("file_write", act["tools"]["disabled_tools"])
+        # an approved plan never stalls on a prompt an unattended harness cannot answer.
+        # command_allowlist is a top-level key (it seeds the agent's approval allowlist)
+        self.assertEqual(act.get("command_allowlist"), ["*"])
+        self.assertNotIn("command_allowlist", obs)
+        # the organization's records are Holon's, and memory stays inside the isolated home
+        for cfg in (obs, act):
+            self.assertEqual(cfg["genome"]["unrestricted_default"], "lockdown")
+            self.assertFalse(cfg["context_injection"]["enabled"])
+            self.assertFalse(cfg["socialization"]["enabled"])
+            self.assertEqual(cfg["memory"]["provider"], "builtin")
+            servers = cfg["mcp"]["servers"]
+            if isinstance(servers, dict):
+                servers = [servers]  # a single [[mcp.servers]] entry parses as a dict of its keys
+            server = servers[0]
+            self.assertEqual(server["name"], "holon")
+            self.assertEqual(server["transport"], "stdio")
+        # the driver pins the install home (the jcode pattern): a scratch-instance
+        # conformance copy still reaches the real posture configs, which never contain
+        # instance state anyway
+        d = Driver.from_toml((ADAPTERS / "operant" / "driver.toml").read_text(), "operant")
+        self.assertIn("/{posture}.toml", d.command)
+
+    def test_operant_dry_run_never_prints_a_key(self):
+        import tempfile
+        with tempfile.NamedTemporaryFile("w", suffix=".key", delete=False) as fh:
+            fh.write("sk-secret-value\n")
+            key = fh.name
+        try:
+            p = subprocess.run([sys.executable, str(ADAPTERS / "operant" / "install.py"), "--holon-home",
+                                str(self.home.root), "--base-url", "http://127.0.0.1:9/v1", "--model", "free-stack",
+                                "--api-key-file", key, "--operant", "/bin/true", "--dry-run"],
+                               capture_output=True, text=True)
+            self.assertEqual(p.returncode, 0, p.stderr)
+            self.assertNotIn("sk-secret-value", p.stdout, "a dry run must not print keys")
+            cfg = tomllib.loads(p.stdout[p.stdout.index("--- observe.toml ---") + len("--- observe.toml ---"):p.stdout.index("--- act.toml ---")])
+            self.assertEqual(cfg["client"]["api_key"], "<redacted>", "a dry run shows the key is wired without printing it")
+        finally:
+            Path(key).unlink(missing_ok=True)

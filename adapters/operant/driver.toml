@@ -1,0 +1,27 @@
+# Holon driver for Operant. Installed to $HOLON_HOME/config/drivers/operant.toml by
+# install.py, which pins the operant binary, HERMES_HOME (an isolated operant home per
+# instance: config, sessions, memory, approval allowlist) and the two posture configs.
+#
+# One command per posture: observe stages run with every write tool disabled (the
+# kernel's working-directory fingerprint is the read-only check), execute additionally
+# allowlists every tool so an approved plan never stalls on a permission prompt an
+# unattended harness cannot answer (hermes --yolo parity). Both mount the Holon MCP
+# server, so the agent hands its result in with holon_submit, authenticated by the
+# run token the kernel passes in the environment.
+#
+# The posture configs live in the install home (adapters/operant/home) and the driver
+# pins that absolute path — the same pattern as the jcode adapter — so `holon adapter
+# test` copying the driver into a scratch instance still reaches them. Re-run
+# install.py after moving an instance.
+name = "operant"
+command = "{operant} run -c \"{ohome}/{posture}.toml\" --max-iterations 40 --no-stream -q {briefing}"
+cwd = "{workdir}"
+timeout_s = 3600
+result = "stdout-json"     # a holon_submit call, else the JSON object the reply ends with
+read_only = ""
+read_only_enforced = false
+# --no-stream: the non-TUI path prints the final reply as the last output, so the
+# envelope JSON the brief asks for is the last JSON object on stdout.
+
+[env]
+HERMES_HOME = "{holon_home}"

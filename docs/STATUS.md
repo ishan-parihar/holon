@@ -4,7 +4,7 @@ Read this after INTENT. It says where Holon sits in the Chair's wider system, wh
 which decisions the Chair has already made (do not re-open them), and what comes next. Update it
 in the same commit as any change it describes. Hosts, ids and keys stay out of it (AGENTS.md).
 
-Last updated: 2026-10-14.
+Last updated: 2026-10-14 (operant adapter shipped).
 
 ## 1. Where Holon sits
 
@@ -17,8 +17,9 @@ Last updated: 2026-10-14.
   as departments only after the Chair validates Holon (§3). Until then they are separate systems that
   use the same words (`docs/design/2026-10-13-system-red-team.md` §5).
 - **Harnesses** are the employees' bodies. ZeroClaw is the production body; Hermes and jcode are
-  validated alternatives; Claude Code is deferred. All run models through **free-stack**, a local
-  OpenAI-compatible gateway; it is the only model pipeline.
+  validated alternatives; **Operant is a validated alternative since 2026-10-14** (`adapters/operant`, the
+  boundary plan's phase A — pending the Chair's approval of the plan itself); Claude Code is deferred.
+  All run models through **free-stack**, a local OpenAI-compatible gateway; it is the only model pipeline.
 - **Operant** (`agentic-harness/operant`, Rust) is the Chair's own harness, and carries a native port
   of the legacy organism (an org layer with nine cast seats). The proposal is that Holon becomes its
   organization as a sidecar kernel, and Operant becomes Holon's primary body and the Chair's Telegram
@@ -35,7 +36,7 @@ Last updated: 2026-10-14.
 | Instance | Role | State |
 |---|---|---|
 | VPS | production; canonical for the organism's data | ZeroClaw adapter; first supervised wave since 2026-10-12; heartbeat on; runs the build from the morning of 2026-10-13. Later fixes are **not deployed**: the redeploy is deferred by the Chair. |
-| Chair's workstation | development and validation | `~/holon`; jcode adapter (conformance 5/5); Notion mirror with webhooks through a dedicated tunnel, both as user services; heartbeat installed but **off** |
+| Chair's workstation | development and validation | `~/holon`; jcode adapter (conformance 5/5) and operant adapter (`adapters/operant`, conformance 5/5 — the boundary plan's phase A); Notion mirror with webhooks through a dedicated tunnel, both as user services; heartbeat installed but **off** |
 
 Deploying to an instance: pull, run the tests there, `holon doctor`, re-run any adapter installer
 whose inputs changed (AGENTS.md).

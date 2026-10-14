@@ -1,0 +1,191 @@
+#!/usr/bin/env python3
+"""Install the Holon adapter into Operant (idempotent; everything lives in its own HERMES_HOME).
+
+    python3 adapters/operant/install.py --holon-home ~/holon --base-url http://127.0.0.1:20129/v1 \\
+        --model free-stack --api-key-file ~/.config/holon/model.key [--operant /path/to/operant] [--dry-run]
+
+1. creates HERMES_HOME=$HOLON_HOME/adapters/operant/home, so Holon's employees never share the
+   user's own operant config, sessions, memory or approval allowlist (operant honors HERMES_HOME)
+2. writes the two posture configs the driver switches between (the {posture} placeholder):
+     observe.toml  every stage but execute: write, mutation and notification tools disabled, so
+                   an observer can read, search and think but change nothing; the kernel's
+                   working-directory fingerprint is the read-only check (read_only_enforced=false)
+     act.toml      the execute stage: the same core config plus command_allowlist = ["*"], so an
+                   approved plan never stalls on a permission prompt an unattended harness cannot
+                   answer (hermes --yolo parity; the hardline command floor still applies)
+   Both disable operant's own org/cron surfaces ([genome], [context_injection], [socialization],
+   [cron], [kanban]) and point [memory] at the builtin provider within the isolated home — in a
+   Holon run the organization's memory is Holon's (boundary doc S1/S3).
+3. mounts the Holon MCP server (stdio, one process per run, so each run's token stays its own)
+   in both postures — observe stages hand their result in with holon_submit, since they cannot
+   write result.json. The run token reaches it through the environment operant's child inherits.
+4. exports Holon's skills to $HERMES_HOME/skills (registered: verified skill changes refresh them)
+5. installs the driver, pinned to this operant binary and HERMES_HOME
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parents[1]
+
+# operant tool names (crates/operant-core/src/tools/builtin.rs) that mutate the machine, the
+# organization's records, or reach a human. An observer gets none of them.
+WRITE_TOOLS = [
+    "file_write", "patch", "terminal", "process", "code_execution", "checkpoint", "working_diff",
+    "skill_manage", "learning_mutation", "learning_refine", "config_manage", "cron", "kanban",
+    "image_generate", "notification", "send_message", "react_to_message", "discord",
+    "discord_admin", "feishu_doc", "feishu_drive", "home_assistant", "spotify_playback",
+    "spotify_devices", "spotify_queue", "spotify_search", "spotify_playlists", "spotify_albums",
+    "spotify_library", "tts", "neutts_synthesize", "approval_request",
+]
+# AFT bridge tools (IDE-grade, auto-downloaded): keep the read/analyze ones, deny the writers.
+AFT_WRITE = ["aft_edit", "aft_write", "aft_patch", "aft_append"]
+
+
+def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
+                memory_dir: Path, observe: bool, api_key: str | None) -> str:
+    tools = sorted(WRITE_TOOLS + AFT_WRITE) if observe else AFT_WRITE
+    lines = [
+        "# Written by Holon's operant adapter installer. One posture config per {posture} run.",
+        f"# Posture: {'observe — no write/mutation/notification tools' if observe else 'act — the plan was approved'}.",
+        "# Regenerate by re-running install.py.",
+        "",
+    ]
+    if not observe:
+        lines += [
+            "# execute posture: the plan was approved; an unattended run cannot answer a",
+            "# permission prompt, so every tool is allowlisted (a TOP-LEVEL key: it seeds the",
+            "# agent's approval allowlist and matches tool names or globs). The smart-approval",
+            "# hardline floor (destructive command patterns) still applies.",
+            'command_allowlist = ["*"]',
+            "",
+        ]
+    lines += [
+        "[client]",
+        f'base_url = "{base_url}"',
+        "timeout_secs = 120",
+        "max_context_length = 128000",
+    ]
+    if api_key:
+        lines.append(f'api_key = "{api_key}"')
+    lines += [
+        "",
+        "[agent]",
+        f'model = "{model}"',
+        "max_iterations = 40",
+        "stream = false",
+        "context_window = 128000",
+        "show_reasoning = false",
+        "",
+        "[tui]",
+        "rich_output = false",
+        "",
+        "# The organization's records are Holon's (boundary doc S1/S3): operant's own org layer,",
+        "# DM context injection and socialization are off for every Holon run; the cron/kanban",
+        "# TOOLS are disabled through tools.disabled_tools (they are tools, not config sections).",
+        '[genome]',
+        'unrestricted_default = "lockdown"',
+        'unattended_posture = "lockdown"',
+        "[context_injection]",
+        "enabled = false",
+        "[socialization]",
+        "enabled = false",
+        "",
+        "# Isolated, file-backed memory inside this home; the organization's memory is Holon's.",
+        "[memory]",
+        'provider = "builtin"',
+        "enabled = true",
+        "",
+        "[skills]",
+        f'root_dir = "{skills_dir}"',
+        f'memory_dir = "{memory_dir}"',
+        "autoload = true",
+        "",
+        "[mcp]",
+        "autoload = true",
+        "deferred_loading = true",
+        "",
+        "[[mcp.servers]]",
+        'name = "holon"',
+        'transport = "stdio"',
+        f'command = "{holon_cmd}"',
+        'args = ["mcp"]',
+        "enabled = true",
+        "",
+        "[tools]",
+        f"disabled_tools = {json.dumps(tools)}",
+    ]
+    if not observe:
+        pass  # command_allowlist is emitted in the file header, before any [section]
+    return "\n".join(lines) + "\n"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--holon-home", default=os.environ.get("HOLON_HOME", str(Path("~/holon").expanduser())))
+    ap.add_argument("--operant", help="the operant binary (default: the first on PATH); its path is pinned")
+    ap.add_argument("--base-url", required=True, help="OpenAI-compatible endpoint for Holon's employees")
+    ap.add_argument("--model", required=True)
+    ap.add_argument("--api-key-file", help="file holding the endpoint's key (omit for an unauthenticated endpoint)")
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args()
+
+    home = Path(a.holon_home).expanduser().resolve()
+    ohome = home / "adapters" / "operant" / "home"
+    found = a.operant or shutil.which("operant")
+    if not found and not a.dry_run:
+        print("no operant on PATH; pass --operant", file=sys.stderr)
+        return 2
+    operant = os.path.abspath(os.path.expanduser(found)) if found else "operant"
+    key = Path(a.api_key_file).expanduser().read_text().strip() if a.api_key_file else None
+
+    driver = (HERE / "driver.toml").read_text().replace("{operant}", operant).replace("{ohome}", str(ohome))
+    tomllib.loads(driver)
+    skills_dir = ohome / "skills"
+    holon_cmd = REPO / "bin" / "holon"
+    obs = config_text(a.base_url, a.model, str(holon_cmd), skills_dir, ohome / "memory", True, key)
+    act = config_text(a.base_url, a.model, str(holon_cmd), skills_dir, ohome / "memory", False, key)
+    tomllib.loads(obs)
+    tomllib.loads(act)
+
+    print(f"operant: {operant}\nHERMES_HOME: {ohome}\nprovider: {a.base_url} ({a.model})")
+    if a.dry_run:
+        shown = driver + "--- observe.toml ---\n" + obs + "--- act.toml ---\n" + act
+        if key:
+            shown = shown.replace(f'api_key = "{key}"', 'api_key = "<redacted>"')  # a dry run never prints keys
+        print("dry run: no changes written\n" + shown)
+        return 0
+
+    ohome.mkdir(parents=True, exist_ok=True)
+    for name, text in (("observe.toml", obs), ("act.toml", act)):
+        f = ohome / name
+        f.write_text(text)
+        if key:
+            f.chmod(0o600)  # the key rides the config, so the config is private
+    p = subprocess.run([sys.executable, "-m", "holon", "--home", str(home), "skill", "export", "--to",
+                        str(skills_dir)], capture_output=True, text=True, cwd=str(REPO))
+    print("skills: " + ("exported" if p.returncode == 0 else "export FAILED: " + (p.stdout + p.stderr)[-300:]))
+    if p.returncode != 0:
+        return 1
+    drivers = home / "config" / "drivers"
+    drivers.mkdir(parents=True, exist_ok=True)
+    (drivers / "operant.toml").write_text(driver)
+    print(f"driver: {drivers / 'operant.toml'}")
+    p = subprocess.run([operant, "--version"], capture_output=True, text=True,
+                        env={**os.environ, "HERMES_HOME": str(ohome)})
+    print(f"verify: {(p.stdout or p.stderr).strip()}")
+    print("next: `holon adapter test operant` runs the conformance suite against this harness")
+    return 0 if p.returncode == 0 else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
