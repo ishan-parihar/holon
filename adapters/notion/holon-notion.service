@@ -1,12 +1,14 @@
 # Holon ⇄ Notion sync: webhook receiver, push every 20 s, reconcile every 5 min.
-# Install: cp to ~/.config/systemd/user/, adjust paths, `systemctl --user enable --now holon-notion`.
+# Install: run install.py --systemd (it writes this unit with absolute paths), or cp to
+# ~/.config/systemd/user/, replace <holon-checkout> with your Holon checkout, `systemctl --user
+# enable --now holon-notion`.
 [Unit]
 Description=Holon to Notion mirror
 After=network-online.target
 
 [Service]
 Environment=HOLON_HOME=%h/holon
-ExecStart=/usr/bin/env python3 %h/src/holon/adapters/notion/holon_notion.py serve --port 8787
+ExecStart=/usr/bin/env python3 <holon-checkout>/adapters/notion/holon_notion.py serve --port 8787
 Restart=on-failure
 RestartSec=30
 

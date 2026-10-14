@@ -29,7 +29,7 @@ class Shipped(KernelCase):
 
     def test_hermes_driver_reaches_custom_endpoints_and_detects_stalls(self):
         p = subprocess.run([sys.executable, str(ADAPTERS / "hermes" / "install.py"), "--holon-home", str(self.home.root),
-                            "--model", "free-stack", "--base-url", "http://127.0.0.1:9/v1", "--dry-run"],
+                            "--model", "test-model", "--base-url", "http://127.0.0.1:9/v1", "--dry-run"],
                            capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         env = tomllib.loads(p.stdout[p.stdout.index('name = "hermes"'):])["env"]
@@ -55,7 +55,7 @@ class Shipped(KernelCase):
                                         '[agents.assistant]\nmodel_provider = "openai.main"\n')
         p = subprocess.run([sys.executable, str(ADAPTERS / "zeroclaw" / "install.py"), "--holon-home",
                             str(self.home.root), "--config-dir", str(zc), "--allow", str(self.workdir),
-                            "--model", "free-stack", "--dry-run"], capture_output=True, text=True)
+                            "--model", "test-model", "--dry-run"], capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertNotIn("sk-secret", p.stdout, "a dry run must not print keys")
         block = p.stdout[p.stdout.index("# ── Holon"):].replace('"<redacted>"', '"x"')
@@ -77,7 +77,7 @@ class Shipped(KernelCase):
         self.assertEqual(cfg["agents"]["holon-eng-act"]["risk_profile"], "holon-eng-worker")
         self.assertIn('scope_fingerprint = ""', (ADAPTERS / "zeroclaw" / "driver.toml").read_text(),
                       "install.py stamps the fingerprint by replacing this exact line")
-        self.assertEqual(cfg["providers"]["models"]["openai"]["holon"]["model"], "free-stack")
+        self.assertEqual(cfg["providers"]["models"]["openai"]["holon"]["model"], "test-model")
         server = next(m for m in cfg["mcp"]["servers"] if m["name"] == "holon")
         self.assertEqual((server["transport"], server["args"]), ("stdio", ["mcp"]))
         self.assertTrue(server["command"].endswith("bin/holon"))
@@ -154,7 +154,7 @@ class Conformance(KernelCase):
 class Operant(KernelCase):
     def test_operant_installer_isolates_and_writes_both_postures(self):
         p = subprocess.run([sys.executable, str(ADAPTERS / "operant" / "install.py"), "--holon-home",
-                            str(self.home.root), "--base-url", "http://127.0.0.1:9/v1", "--model", "free-stack",
+                            str(self.home.root), "--base-url", "http://127.0.0.1:9/v1", "--model", "test-model",
                             "--api-key-file", "/dev/null", "--operant", "/bin/true", "--dry-run"],
                            capture_output=True, text=True)
         self.assertEqual(p.returncode, 0, p.stderr)
@@ -194,7 +194,7 @@ class Operant(KernelCase):
             key = fh.name
         try:
             p = subprocess.run([sys.executable, str(ADAPTERS / "operant" / "install.py"), "--holon-home",
-                                str(self.home.root), "--base-url", "http://127.0.0.1:9/v1", "--model", "free-stack",
+                                str(self.home.root), "--base-url", "http://127.0.0.1:9/v1", "--model", "test-model",
                                 "--api-key-file", key, "--operant", "/bin/true", "--dry-run"],
                                capture_output=True, text=True)
             self.assertEqual(p.returncode, 0, p.stderr)

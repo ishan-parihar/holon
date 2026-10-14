@@ -167,7 +167,7 @@ class Delivery(LaneCase):
 class LegacyImport(LaneCase):
     def test_a_legacy_cron_protocol_becomes_a_routine_proposal(self):
         from holon.cli import legacy_cron
-        pool = self.tmp / "venture"
+        pool = self.tmp / "acme"
         (pool / "cron-jobs").mkdir(parents=True)
         (pool / "scripts").mkdir()
         (pool / "scripts" / "digest.py").write_text("print('ok')\n")

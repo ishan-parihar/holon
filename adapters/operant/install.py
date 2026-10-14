@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Install the Holon adapter into Operant (idempotent; everything lives in its own HERMES_HOME).
 
-    python3 adapters/operant/install.py --holon-home ~/holon --base-url http://127.0.0.1:20129/v1 \\
-        --model free-stack --api-key-file ~/.config/holon/model.key [--operant /path/to/operant] [--dry-run]
+    python3 adapters/operant/install.py --holon-home ~/holon --base-url <gateway-url>/v1 \\
+        --model <model> --api-key-file ~/.config/holon/model.key [--operant /path/to/operant] [--dry-run]
 
 1. creates HERMES_HOME=$HOLON_HOME/adapters/operant/home, so Holon's employees never share the
    user's own operant config, sessions, memory or approval allowlist (operant honors HERMES_HOME)

@@ -155,11 +155,11 @@ class Isolated(KernelCase):
 class Setup(KernelCase):
     def test_the_agent_may_only_traverse_toward_what_it_needs(self):
         top = self.tmp / "home"
-        (top / "projects" / "venture").mkdir(parents=True)
+        (top / "projects" / "acme").mkdir(parents=True)
         (top / "projects" / "notes.txt").write_text("private")
         (top / ".config").mkdir()
         self.home.config_file.write_text(self.pipeline + f'\n[isolation]\nagent_user = "agent"\n'
-                                         f'grants = ["{top / "projects" / "venture"}"]\n')
+                                         f'grants = ["{top / "projects" / "acme"}"]\n')
         self.k.close()
         self.k = Kernel(self.home)
         import pwd
@@ -175,7 +175,7 @@ class Setup(KernelCase):
         self.assertTrue(any(c.startswith("setfacl -m u:agent:---") and str(top / "projects" / "notes.txt") in c
                             for c in cmds), "a sibling on the way is denied")
         self.assertTrue(any(c.startswith("setfacl -m u:agent:---") and str(top / ".config") in c for c in cmds))
-        self.assertIn(f"setfacl -R -m u:agent:rwX {top / 'projects' / 'venture'}", cmds)
+        self.assertIn(f"setfacl -R -m u:agent:rwX {top / 'projects' / 'acme'}", cmds)
         self.assertIn("useradd --system", plan["root_script"])
         self.assertIn(f"--allow-uid {os.getuid()}", plan["root_script"])
 

@@ -66,7 +66,8 @@ Restart `holon-notion` after pulling.
 - **One instance, one parent page.** Two instances mirroring into the same page would fight over
   every row. A second instance (the VPS and a workstation) gets its own page, token and webhook.
 - **Cost grows with history.** Every work node, stage and run is a page, and the full passes scan
-  all of them; at venture scale this needs a mirror window (`docs/design/2026-10-13-paperclip-contrast.md`, G2).
+  all of them; at scale this needs a mirror window (open work, plus terminal work and runs from
+  the last N days; older pages archived, never deleted from SQLite).
 
 ## Set up
 

@@ -296,7 +296,7 @@ def _commands(k) -> list[tuple[str, str]]:
 
 def _refs(k, f: Findings) -> None:
     """Commands that name an executable or a path that does not exist fail when they run, often at 3am on a
-    schedule; the legacy organism's linter caught these, so this one does too."""
+    schedule; a linter has to catch these before they ever run."""
     import shutil
     for where, cmd in _commands(k):
         exes, paths = command_refs(cmd)

@@ -1,9 +1,8 @@
 # Holon adapter for Operant
 
-Makes Operant (Rust) a body that Holon employees run in — and, per the boundary doc
-(`docs/design/2026-10-14-holon-operant-boundary.md`), its intended **primary body**. Holon stays
-harness-agnostic: this directory is the only place that knows operant exists. It implements the
-adapter shape in `docs/CONTRACT.md` §7.
+Makes Operant (Rust) a body that Holon employees run in. Holon stays harness-agnostic: this
+directory is the only place that knows operant exists. It implements the adapter shape in
+`docs/CONTRACT.md` §7.
 
 | Part | Here |
 |---|---|
@@ -24,7 +23,7 @@ line. The posture configs also pin `[memory] provider = "builtin"` inside the is
 switch operant's own org surfaces (`[genome]`, `[context_injection]`, `[socialization]`, `[cron]`,
 `[kanban]`) to lockdown/off: in a Holon run the organization's records are Holon's (boundary S1/S3).
 
-Phase C of the boundary plan replaces both posture configs' `command_allowlist` bypass with real
+A planned phase replaces both posture configs' `command_allowlist` bypass with real
 `policy.json` enforcement per tool call (declared in Holon, enforced in operant).
 
 ## Result hand-in
@@ -37,8 +36,8 @@ mounted MCP server instead — either path satisfies the contract.
 ## Install
 
 ```sh
-python3 adapters/operant/install.py --holon-home ~/holon --base-url http://127.0.0.1:20129/v1 \
-    --model free-stack --api-key-file ~/.config/holon/model.key
+python3 adapters/operant/install.py --holon-home ~/holon --base-url <gateway-url>/v1 \
+    --model <model> --api-key-file ~/.config/holon/model.key
 holon adapter test operant          # conformance: a few real runs in a scratch organization
 holon hr hire … --driver operant     # employees now run on Operant
 ```

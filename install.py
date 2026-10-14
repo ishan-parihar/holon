@@ -6,7 +6,9 @@
         [--notion-webhook-hostname holon-notion.example.com]  # webhooks through a Cloudflare tunnel
     python3 install.py --systemd [--heartbeat]           # user units: Notion sync; --heartbeat also dispatches work
 
-1. checks Python (3.11+) and SQLite (3.35+);
+1. checks the dependencies: Python (3.11+) and SQLite (3.35+). Everything else is optional and
+   checked only when used: a harness (each adapter installer checks its own), `cloudflared`
+   (only for Notion webhooks), a systemd user session (only for the units);
 2. `holon init`: creates the instance (holon.toml, work.db and memory.db at the latest migration)
    and the Chair key (~/.config/holon/keys/<instance>.chair, 0600); an existing instance is migrated;
 3. puts a `holon` launcher in --bin-dir;
@@ -18,8 +20,8 @@
 6. with --systemd: writes the user units (holon-tick; holon-notion and its tunnel when set up) and
    enables the Notion sync and tunnel, then checks the webhook URL answers. The heartbeat dispatches
    work to employees, so it starts only with --heartbeat;
-7. runs `holon doctor` and prints what is left to do (hiring, a harness adapter, the webhook
-   subscription in Notion).
+7. runs `holon doctor`, then prints the onboarding runbook: the adapter, hires and approvals that
+   turn a bare instance into a working organization (README.md §Usage walks the same steps).
 """
 
 from __future__ import annotations
@@ -60,7 +62,7 @@ def holon(env: dict, *args: str, check: bool = True) -> subprocess.CompletedProc
 def unit(name: str, home: Path, extra_env: dict) -> str:
     text = (ROOT / ("adapters/notion" if name == "holon-notion.service" else "adapters/systemd") / name).read_text()
     text = text.replace("Environment=HOLON_HOME=%h/holon", f"Environment=HOLON_HOME={home}")
-    text = text.replace("%h/src/holon", str(ROOT)).replace("/usr/bin/env holon ", f"{ROOT}/bin/holon ")
+    text = text.replace("<holon-checkout>", str(ROOT)).replace("/usr/bin/env holon ", f"{ROOT}/bin/holon ")
     env_lines = "".join(f"Environment={k}={v}\n" for k, v in extra_env.items())
     return text.replace("[Service]\n", "[Service]\n" + env_lines, 1)
 
@@ -234,12 +236,30 @@ WantedBy=default.target
     print("7. doctor")
     holon(env, "doctor", check=False)
     print(f"""
-Installed. Next:
-  export HOLON_HOME={home}
-  holon dept create <slug> --name … --mission … --profile light      # docs/GENOME.md
-  python3 {ROOT}/adapters/<zeroclaw|jcode|hermes>/install.py --holon-home {home} …   # a harness
-  holon hr hire --dept <slug> --slot lead --driver <harness> …        # employees
-  holon status""")
+Onboarding runbook — instance ready at {home} (export HOLON_HOME={home}).
+
+1. A body: install one harness adapter (all four are public; docs/CONTRACT.md §7 for any other)
+     python3 {ROOT}/adapters/zeroclaw/install.py --holon-home {home} --allow <a work directory>
+     python3 {ROOT}/adapters/jcode/install.py --holon-home {home} \\
+         --base-url <model gateway>/v1 --model <model> --api-key-file <key file>
+     python3 {ROOT}/adapters/hermes/install.py --holon-home {home} …    # same flags as jcode
+     python3 {ROOT}/adapters/operant/install.py --holon-home {home} …   # same flags as jcode
+     holon adapter test <name>          # conformance: a few real runs in a scratch organization
+   Any OpenAI-compatible endpoint works as the model gateway; keys go in files, never arguments.
+2. The organization (docs/GENOME.md has the full command reference):
+     holon hr hire --dept executive --slot ceo --name <name> --title CEO --driver <harness> \\
+         --jd @<file> --reason "founding CEO" --status active
+     holon dept create <slug> --name "<Name>" --mission "<mission>" --profile light
+     holon hr hire --dept <slug> --slot lead --name <name> --title "Head of <Name>" \\
+         --driver <harness> --jd @<file> --reason "founding head"
+3. First work:
+     holon task add "<what must be true>" --intent "<why>" --dept <slug>
+4. Run it: holon tick    (with --systemd: systemctl --user enable --now holon-tick.timer)
+5. Steer it: holon status shows your queue; approve with holon plan approve <id> --note "…",
+   or reject with what to change. holon metrics --dept <slug> is the feedback; holon lint &&
+   holon doctor are the health checks. Every command: holon help
+6. Optional hardening: holon isolation plan — agents as their own OS user through a broker
+   (the doctor warns until it is done).""")
     if webhook_url:
         print(f"""
 Notion webhooks: in the integration's Webhooks tab, subscribe

@@ -43,7 +43,7 @@ aliases with risk and runtime profiles, and channel sends. ZeroClaw cron jobs ru
 
 ```sh
 python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/src/repo --dry-run
-python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/src/repo --model free-stack \
+python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/src/repo --model <model> \
     --notify-channel telegram --notify-recipient <your chat id>
 holon adapter test zeroclaw          # conformance: a few real runs in a scratch organization
 holon hr hire … --driver zeroclaw     # employees now run on ZeroClaw

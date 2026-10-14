@@ -2,7 +2,7 @@
 """Install the Holon adapter into Hermes Agent (idempotent).
 
     python3 adapters/hermes/install.py --holon-home ~/holon [--hermes-home ~/.hermes] [--dry-run]
-        [--model free-stack --base-url http://127.0.0.1:20129/v1 --api-key-file ~/.config/holon/model.key]
+        [--model <model> --base-url <gateway-url>/v1 --api-key-file ~/.config/holon/model.key]
 
 1. exports Holon's skills library into Hermes' skills directory, as the `holon` category
    (`<hermes home>/skills/holon/<skill>/`), so `-s holon-employee` preloads the protocol and every

@@ -4,9 +4,8 @@ This is the kernel source, not an instance: no state lives here, and instances l
 `$HOLON_HOME`. If you were handed a Holon brief, read its `BRIEF.md` instead. This file is for
 agents changing the kernel itself: where things are, and the laws every change must keep.
 
-**Start here:** `docs/INTENT.md` (what Holon is), then `docs/STATUS.md` (where it is deployed, the
-Chair's standing decisions, what is next), then this file. `docs/STATUS.md` §7 gives the full
-reading order.
+**Start here:** `docs/INTENT.md` (what Holon is), then this file. The reading order for a new
+agent is at the end.
 
 ## Map
 
@@ -34,7 +33,7 @@ reading order.
 | `adapters/systemd/` | the heartbeat timer (`holon tick` every 2 minutes) |
 | `adapters/notion/` | the Chair's dashboard: a live Notion mirror (not a harness); tested against `tests/fake_notion.py` |
 | `install.py` | cold start or upgrade of a machine: instance (SQLite + Chair key), launcher, Notion databases, user units; `tests/test_install.py` |
-| `docs/` | INTENT, STATUS (deployments, standing decisions, roadmap), GENOME, CONTRACT; `docs/design/` holds dated design records |
+| `docs/` | INTENT, GENOME, CONTRACT: the kernel's reference and law docs |
 
 ## Laws (enforced by `holon lint`, `holon doctor` and the tests)
 
@@ -62,9 +61,10 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 - **The heartbeat runs `holon doctor`** every `[healing] doctor_every_min`; a failing check opens
   an incident and reaches the Chair. Tests turn it off (`tests/helpers.py`) and test it explicitly.
 
-- **Read the dated design records** in `docs/design/` before changing a mechanism they cover; the
-  latest audit (`2026-10-13-paperclip-contrast.md`) ranks what is open, and
-  `2026-10-13-system-red-team.md` records what was built and why.
+- **Read the dated design records before changing a mechanism they cover.** They live in the
+  operator's private overlay (`docs/design/` there; see the section below) — publish a record
+  here only when it is scrubbed of operator context. Its universal lessons belong where they
+  are enforced: the ledger below, the adapter READMEs, GENOME and CONTRACT.
 - **A defect found by a real run gets a guard test and a ledger row in the same commit.** The
   ledger below is checked by `holon lint` (`ref.guard`): every row names a test, and every test
   it names must exist, so a guard cannot be deleted silently.
@@ -76,6 +76,30 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
   until you do.
 - **Instance specifics stay out of the repo.** Hosts, paths, chat ids and keys live in the
   instance's `holon.toml` or the installer flags, never in code, skills or docs.
+
+## The universal repo and the personal overlay
+
+This repository is the **universal Holon**: usable by anyone, free of every operator's context.
+Each operator — the Chair included — keeps a **private overlay repository**: a fork whose `main`
+tracks this repo, plus a `personal` branch that adds their own `docs/STATUS.md` (deployments,
+standing decisions, what is next) and dated `docs/design/` records. The overlay's `PERSONAL.md`
+holds the sync and publish runbooks.
+
+What that means for every change here:
+
+- **Nothing personal lands in this repo**: no hosts, paths, chat ids, endpoints, model-gateway
+  names, deployment notes, or the operator's other systems. Ops logs and design records with
+  operator context live in the overlay; instance specifics in `$HOLON_HOME` (the law above).
+- **Design records may be published here only scrubbed** — mechanism, decision and evidence
+  without the operator's context.
+- **A pull request is checked for the above before merge**; instance specifics are asked to move
+  to the contributor's own overlay.
+- **Upstreaming flows one way**: universal work is committed here first and the overlay pulls it
+  (`git merge` of this repo's `main`); nothing flows from an overlay into this repo except
+  deliberate, scrubbed cherry-picks.
+- **Instances move between machines with `holon backup` / `holon restore`**, never with git.
+- **Publishing this repo requires the history-squash runbook** (in the overlay's PERSONAL.md):
+  history that predates the split carries operator context and must never be pushed as-is.
 
 ## Regression ledger
 
@@ -129,5 +153,16 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 | Playbooks, live RSI demo | an agent's own `holon submit` ran the checks and the rubric judge after recording the result, so the dispatcher, stopping the finished harness, killed it mid-judgment: a verifier session was spent instead | `test_a_deferred_result_is_held_from_verifiers_until_the_kernel_checks_it` |
 | Playbooks, live RSI demo | a routine run's brief showed the playbook's rubric and the plan's v1 copy (stale after refinement), and told a routine run it was G0 work | `test_a_verifier_failure_opens_refinement_whose_verified_change_is_the_next_version` |
 | Decision models, live script routine | the free tier's 50 decisions a day ran out (HTTP 429); the judge fell back to a verifier, but nothing said why | `test_a_decision_model_that_is_down_is_never_silent` |
-| Decision models, live run over 61 venture crons | "reaches outside the organization" counted digests to the Chair, flagging 58 of 61 jobs (9 after the fix) | `test_reports_to_the_chair_do_not_count_as_reaching_outside` |
+| Decision models, live run over 61 recurring jobs | "reaches outside the organization" counted digests to the Chair, flagging 58 of 61 jobs (9 after the fix) | `test_reports_to_the_chair_do_not_count_as_reaching_outside` |
 | Notion webhooks | the public URL was set up by hand, so a new machine had no webhooks | `test_a_new_machine_gets_every_database_and_a_rerun_changes_nothing` |
+
+## Reading order for a new agent
+
+1. `docs/INTENT.md`: what Holon is and the laws.
+2. This file: the code map, the laws lint enforces, the regression ledger.
+3. `docs/GENOME.md` (departments, roles, configuration) and `docs/CONTRACT.md` (the harness
+   contract).
+4. The README of the adapter you touch (`adapters/<name>/README.md`), which records what the
+   real harness does.
+5. In the operator's overlay (not public): `docs/STATUS.md` and the dated `docs/design/` records —
+   the deployment, the standing decisions and the design history.

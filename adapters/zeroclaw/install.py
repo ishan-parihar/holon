@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Install the Holon adapter into ZeroClaw (idempotent, reversible).
 
-    python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/src/repo [--model free-stack] [--dry-run]
+    python3 adapters/zeroclaw/install.py --holon-home ~/holon --allow ~/src/repo [--model <model>] [--dry-run]
 
 1. exports Holon's skills library to $HOLON_HOME/adapters/zeroclaw/skills (`holon skill export`),
    which ZeroClaw loads as the `holon` skill bundle; re-run after tailoring skills
@@ -105,7 +105,7 @@ def main() -> int:
     ap.add_argument("--config-dir", help="a separate ZeroClaw config directory for Holon (default: ~/.zeroclaw)")
     ap.add_argument("--model-provider", help="default: the provider of [agents.assistant] (or the first agent)")
     ap.add_argument("--model", help="give Holon its own provider entry, cloned from --model-provider, pinned to this "
-                                    "model (e.g. an aroute combo such as free-stack)")
+                                    "model")
     ap.add_argument("--fallback-model", action="append", default=[], help="fallback models for --model (repeat)")
     ap.add_argument("--allow", action="append", default=[], help="a directory employees work in (repeat)")
     ap.add_argument("--notify-channel", help="ZeroClaw channel that tells the Chair what needs them (e.g. telegram)")

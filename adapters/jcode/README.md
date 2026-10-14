@@ -20,7 +20,7 @@ shape in `docs/CONTRACT.md` §7.
 
 ```sh
 python3 adapters/jcode/install.py --holon-home ~/holon \
-    --base-url http://127.0.0.1:20129/v1 --model free-stack --api-key-file ~/.config/holon/model.key
+    --base-url <gateway-url>/v1 --model <model> --api-key-file ~/.config/holon/model.key
 holon adapter test jcode
 holon hr hire … --driver jcode
 ```
@@ -35,7 +35,7 @@ timer whose `PATH` differs still runs the same binary. Re-run the installer to c
 - An MCP server started with `shared: false` sees the run's environment (probe: a variable set for
   the run reached the server), which is what authenticates `holon_submit` and the other tools.
 - jcode's base prompt is large (about 15k input tokens before the brief); budget for it.
-- Conformance 5/5 on 2026-10-13 (free-stack): plan 6.2 min, approve 23.3, execute 10.4, verify
+- Conformance 5/5 (2026-10-13): plan 6.2 min, approve 23.3, execute 10.4, verify
   11.3. Plan and execute submitted through `holon_submit` and the dispatcher stopped the harness
   once their results were in; that is why those two runs carry no token usage. The driver now runs
   jcode with `--trace` and sums its per-call `token_usage` lines (`usage_line`), which survive the

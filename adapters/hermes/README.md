@@ -23,8 +23,8 @@ employees on low-risk departments, or under a separate OS user without access to
 ```sh
 python3 adapters/hermes/install.py --holon-home ~/holon --dry-run
 python3 adapters/hermes/install.py --holon-home ~/holon \
-    --model free-stack --base-url http://127.0.0.1:20129/v1 --api-key-file ~/.config/holon/model.key
-holon adapter test hermes            # 5/5 on Hermes v0.19.0 + aroute free-stack, about 2.5 minutes
+    --model <model> --base-url <gateway-url>/v1 --api-key-file ~/.config/holon/model.key
+holon adapter test hermes            # 5/5 on Hermes v0.19.0, about 2.5 minutes
 holon hr hire … --driver hermes
 ```
 

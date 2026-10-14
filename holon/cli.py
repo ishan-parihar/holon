@@ -586,7 +586,7 @@ def cmd_routine_add(args, k):
 
 
 def legacy_cron(path: Path) -> dict:
-    """A legacy organism cron protocol (`cron-jobs/<job>.md`: YAML-ish frontmatter and a markdown body)
+    """A legacy cron-job protocol (`cron-jobs/<job>.md`: YAML-ish frontmatter and a markdown body)
     as routine fields. The frontmatter subset those files use: `key: value`, quoted values, indented
     continuation lines, and `- item` lists."""
     text = path.read_text()
@@ -615,7 +615,7 @@ def legacy_cron(path: Path) -> dict:
             "source": str(path)}
 
 
-@command("routine import", "chair", "propose routines from legacy organism cron protocols (cron-jobs/*.md); a dry "
+@command("routine import", "chair", "propose routines from legacy cron-job protocols (cron-jobs/*.md); a dry "
          "run unless --apply", arg("files", nargs="+"), arg("--dept", required=True),
          arg("--apply", action="store_true", help="create the routine proposals (each goes to its approver)"))
 def cmd_routine_import(args, k):

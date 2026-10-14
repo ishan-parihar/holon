@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Install the Holon adapter into jcode (idempotent; everything lives in its own JCODE_HOME).
 
-    python3 adapters/jcode/install.py --holon-home ~/holon --base-url http://127.0.0.1:20129/v1 \\
-        --model free-stack --api-key-file ~/.config/holon/model.key [--dry-run]
+    python3 adapters/jcode/install.py --holon-home ~/holon --base-url <gateway-url>/v1 \\
+        --model <model> --api-key-file ~/.config/holon/model.key [--dry-run]
 
 1. creates JCODE_HOME=$HOLON_HOME/adapters/jcode/home, so Holon's employees never share the user's own
    jcode config, sessions or memory
