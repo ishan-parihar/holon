@@ -4,7 +4,7 @@ Read this after INTENT. It says where Holon sits in the Chair's wider system, wh
 which decisions the Chair has already made (do not re-open them), and what comes next. Update it
 in the same commit as any change it describes. Hosts, ids and keys stay out of it (AGENTS.md).
 
-Last updated: 2026-10-13.
+Last updated: 2026-10-14.
 
 ## 1. Where Holon sits
 
@@ -19,6 +19,10 @@ Last updated: 2026-10-13.
 - **Harnesses** are the employees' bodies. ZeroClaw is the production body; Hermes and jcode are
   validated alternatives; Claude Code is deferred. All run models through **free-stack**, a local
   OpenAI-compatible gateway; it is the only model pipeline.
+- **Operant** (`agentic-harness/operant`, Rust) is the Chair's own harness, and carries a native port
+  of the legacy organism (an org layer with nine cast seats). The proposal is that Holon becomes its
+  organization as a sidecar kernel, and Operant becomes Holon's primary body and the Chair's Telegram
+  channel: `docs/design/2026-10-14-operant-integration.md` (awaiting the Chair).
 - **The Chair's dashboard** is Notion: `adapters/notion` mirrors departments, employees, work and
   runs, and takes the Chair's decisions, notes, answers and new work back.
 - **Goals** live in the Compass strategy system (`trajectory.db`, read-only to Holon); work links to a
@@ -75,8 +79,8 @@ whose inputs changed (AGENTS.md).
 - Agent model throughput: on free-stack a refinement planner's model call took 878 s (16.8k tokens out) and a
   plan run hit the 60-minute driver timeout twice. Loops that rewrite playbooks need a faster model for
   plan and execute stages (`docs/design/2026-10-14-playbooks-objectives-smoke.md` §4).
-- The workstation's RSI demo (Tools department, routine `Notes digest`) set `[autonomy.dept.tools]
-  verify_sample_rate = 1.0` and `[playbooks] refine_after = 2` in `~/holon/holon.toml`; revert after it.
+- Holon on Operant: sidecar kernel with native seams, the phase order, and Operant's global
+  `unattended_posture` (now `yolo`) (`docs/design/2026-10-14-operant-integration.md` §9).
 - Which venture moves first, as a pilot department of routines (`docs/design/2026-10-13-lanes-and-decision-models.md` §4).
 
 ## 6. What is next
@@ -94,7 +98,7 @@ window (G2), then one venture as a pilot department of routines.
 3. `AGENTS.md`: the code map, the laws lint enforces, the regression ledger.
 4. `docs/GENOME.md` (departments, roles, configuration) and `docs/CONTRACT.md` (the harness
    contract).
-5. `docs/design/` newest first: `2026-10-14-playbooks-objectives-smoke.md`, `2026-10-13-trust-boundary.md`, `2026-10-13-lanes-and-decision-models.md`, `2026-10-13-paperclip-contrast.md`, then
+5. `docs/design/` newest first: `2026-10-14-operant-integration.md`, `2026-10-14-playbooks-objectives-smoke.md`, `2026-10-13-trust-boundary.md`, `2026-10-13-lanes-and-decision-models.md`, `2026-10-13-paperclip-contrast.md`, then
    `2026-10-13-system-red-team.md`; older records explain why things are the way they are.
 6. The README of the adapter you touch (`adapters/<name>/README.md`), which records what the real
    harness does.

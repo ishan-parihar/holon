@@ -111,6 +111,12 @@ evolving how it evolves. The replan is the bottleneck: on free-stack one planner
 plan run hit the 60-minute driver timeout. The remaining steps (held change → verified → v2 → run 3
 judged against v2) are covered by `tests/test_playbooks.py` and wait on model throughput live.
 
+End state (2026-10-14): the replan never landed. The demo driver retried for three hours and every plan
+attempt ended without a result. The playbook stays at v1, the refinement waits in its plan stage, and
+the demo's settings (`verify_sample_rate = 1.0` for Tools, `refine_after = 2`) are reverted. The loop's
+mechanics are demonstrated and its throughput is not; that is Phase 0 of
+`2026-10-14-operant-integration.md`.
+
 
 ## 5. Limits
 
