@@ -29,7 +29,7 @@ from pathlib import Path
 from holon.core import contract, vocab
 from holon.core.db import checksum, migration_files
 
-PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic")
+PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api")
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
@@ -524,6 +524,39 @@ def harness_names() -> set[str]:
         name = d.parent.name.lower()
         names |= {name, name.split("-")[0]}
     return names
+
+
+def pack_api(k, f: Findings) -> None:
+    """The read API (boundary doc 4.1, H2): every api_* view exists on a migrated database
+    and api_version matches the views this Holon ships. A view changes only with a version
+    bump; read-API consumers refuse a version they do not know."""
+    expected = {
+        "api_employees": ("id", "name", "title", "department", "manager_id", "manager", "status", "driver", "roles"),
+        "api_departments": ("id", "slug", "name", "mission", "head_id", "head", "status", "profile"),
+        "api_board": ("id", "title", "stage", "status", "lane", "priority", "risk", "department",
+                      "assignee", "approver", "grade", "run_id", "lease_until", "employee_id", "started_at"),
+        "api_approvals": ("id", "title", "department", "grade", "approver", "risk", "plan", "created_at"),
+        "api_messages": ("id", "ts", "sender", "to_ref", "kind", "task_id", "body"),
+        "api_triggers": ("id", "trigger_kind", "pattern", "department", "employee", "enabled",
+                         "failure_streak", "next_run_at"),
+    }
+    row = k.wconn.execute("SELECT value FROM api_meta WHERE key='api_version'").fetchone()
+    if row is None:
+        f.add("error", "api.version", "work.db", "no api_version row; the read-API migration did not run")
+        return
+    if row[0] != "1":
+        f.add("error", "api.version", "work.db", f"api_version {row[0]!r} is not one this Holon knows (1)")
+    present = {r[0] for r in k.wconn.execute("SELECT name FROM sqlite_master WHERE type='view'")}
+    for name, cols in expected.items():
+        if name not in present:
+            f.add("error", "api.views", "work.db", f"{name} missing; the read-API migration did not run")
+            continue
+        have = tuple(r[1] for r in k.wconn.execute(f"PRAGMA table_info({name})"))
+        if have != cols:
+            f.add("error", "api.views", "work.db",
+                  f"{name} columns {have} do not match api_version 1 {cols}; a view changes only with a version bump")
+    for extra in sorted(n for n in present if n.startswith("api_") and n not in expected):
+        f.add("warning", "api.views", "work.db", f"{extra} is not part of api_version 1; rename or bump")
 
 
 def run(k, packs: list[str] | None = None) -> list[dict]:

@@ -169,3 +169,22 @@ harness that mounts it gives employees native tools instead of shell commands: `
 write), and the employee commands of the registry (`holon_memory_search`, `holon_msg_send`,
 `holon_run_heartbeat`, …). The server inherits the harness's environment, so `HOLON_RUN_TOKEN` or
 `HOLON_KEY` authenticates every call exactly as on the CLI; chair-only commands are never exposed.
+
+## §8 The read API (v1)
+
+Migration `work/0008_read_api_views.sql` publishes SQL views over `work.db` that outside
+surfaces may `SELECT` from, opened **read-only** (`mode=ro`, law 3). Holon is the only writer.
+
+- `api_meta`: the `api_version` row. A view's columns change only with a version bump; a
+  consumer refuses a version it does not know (`holon lint` pack `api` proves both sides).
+- `api_employees` — id, name, title, department, manager_id, manager, status, driver, roles
+- `api_departments` — id, slug, name, mission, head_id, head, status, profile
+- `api_board` — ready and running stages: id, title, stage, status, lane, priority, risk,
+  department, assignee, approver, grade, run_id, lease_until, employee_id, started_at
+- `api_approvals` — pending approvals: id, title, department, grade, approver, risk, plan
+  (the plan output JSON), created_at
+- `api_messages` — unacked messages: id, ts, sender, to_ref, kind, task_id, body
+- `api_triggers` — routine triggers: id, trigger_kind ('cron' today; events land with H7),
+  pattern, department, employee, enabled, failure_streak, next_run_at
+
+The memory capability stays reachable through its own FTS (`items_fts`), same law.

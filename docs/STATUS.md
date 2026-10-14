@@ -4,7 +4,7 @@ Read this after INTENT. It says where Holon sits in the Chair's wider system, wh
 which decisions the Chair has already made (do not re-open them), and what comes next. Update it
 in the same commit as any change it describes. Hosts, ids and keys stay out of it (AGENTS.md).
 
-Last updated: 2026-10-14 (operant adapter shipped).
+Last updated: 2026-10-14 (operant adapter shipped; read API v1 published).
 
 ## 1. Where Holon sits
 
