@@ -98,6 +98,36 @@ class Playbooks(LaneCase):
         self.assertEqual(body["writes"], [f"skill:{NAME}/rubric.md"])
         self.assertIn("changes how the department works", self.k.work.plan_for_approval(a["id"])["grade_reasons"])
 
+    def test_an_executor_that_edits_a_playbook_directly_has_the_edit_held_until_verified(self):
+        plan = self.routine_on()
+        self.run_once(plan, judge_p=0.4, verify="fail")
+        ref = self.k.work.get([t for t in self.k.triggers() if t.get("refinement")][0]["refinement"])
+        self.k.approve(self.plan(ref, writes=[f"skill:{NAME}/rubric.md"])["id"])
+        rubric = self.k.skills.instance / "@eng" / NAME / "rubric.md"
+        before = rubric.read_text()
+        c = self.k.claim("execute", self.dev1, task_id=ref["id"])
+        rubric.write_text(before + "- a criterion nobody verified\n")  # the bypass: no skill_changes
+        (self.k.skills.instance / "@eng" / NAME / "SKILL.md").write_text("vandalised")  # not in the plan
+        self.k.submit(c.run["id"], self.exec_env())
+        self.assertEqual(rubric.read_text(), before, "taken back until verified")
+        self.assertNotEqual((self.k.skills.instance / "@eng" / NAME / "SKILL.md").read_text(), "vandalised")
+        self.assertTrue(any("lane breach" in (e["note"] or "") for e in self.k.work.events(ref["id"])))
+        v = self.k.claim("verify", self.hod, task_id=ref["id"])
+        self.k.submit(v.run["id"], {"verdict": "pass", "note": "the new criterion is right"})
+        self.assertIn("a criterion nobody verified", rubric.read_text(), "applied once verified")
+        self.assertEqual(playbooks.read(self.k.skills, "eng", NAME)["version"], 2)
+
+    def test_a_failed_execution_does_not_leave_a_direct_skill_edit_behind(self):
+        self.routine_on()
+        rubric = self.k.skills.instance / "@eng" / NAME / "rubric.md"
+        before = rubric.read_text()
+        w = self.add(dept="eng", task_class="x")
+        self.plan_and_approve(w)
+        c = self.k.claim("execute", self.dev1, task_id=w["id"])
+        rubric.write_text("- hijacked\n")
+        self.k.submit(c.run["id"], self.exec_env(outcome="failure"))
+        self.assertEqual(rubric.read_text(), before)
+
     def test_enough_runs_on_one_version_make_refinement_due_without_failures(self):
         self.configure("[playbooks]\nrefine_after = 2\n")
         plan = self.routine_on()

@@ -55,7 +55,9 @@ file through three layers, first match wins: `$HOLON_HOME/skills/@<dept>/<skill>
 `$HOLON_HOME/skills/<skill>/`, then the standard library, so tailoring one file for one department
 leaves the rest untouched and reaches that department's next brief.
 
-Skills evolve through work, on any harness (agents never write the skills directory): a plan names
+Skills evolve through work, on any harness (agents never write the skills directory; one that does
+without isolation has the edit taken back when its result is handed in, and held as a proposed
+`skill_changes` entry if its plan named the file, applied only when verified): a plan names
 `skill:<skill>/<file>` in its writes (floor G2), the executor returns the new file in the execute
 result's `skill_changes`, and when the work is verified the kernel writes it into the department's
 layer, keeps it only if `skill check` stays clean, and re-exports every directory registered by

@@ -439,6 +439,8 @@ class Kernel:
             with write_txn(self.wconn):
                 self.wconn.execute("UPDATE tasks SET playbook=?, playbook_version=? WHERE id=?",
                                    (pb["name"], pb["version"], work["id"]))
+        if node["stage"] == "execute" and self._dept_slug(node["dept_id"]):
+            self._snapshot_skills(run["id"], self._dept_slug(node["dept_id"]))
         extra = []
         if pb:
             extra.append((f"Playbook: {pb['name']} v{pb['version']} (how this job is done and judged)",
@@ -534,6 +536,7 @@ class Kernel:
             out = self.decide(node["id"], env["decision"], env.get("note"), review_run=run_id)
         elif stage == "execute":
             out = self.work.submit_execute(run_id, env, exit_code)
+            self._hold_direct_skill_writes(work["id"], self.work.output(node["id"]), env)  # whatever the outcome
             v = self.work.latest(work["id"], "verify", "ready")
             if v and defer:
                 with write_txn(self.wconn):
@@ -608,6 +611,55 @@ class Kernel:
                                "blocked_reason=? AND updated_at<?", (HELD, CHECKING, b))
         return [r[0] for r in self.wconn.execute("SELECT parent_id FROM tasks WHERE stage='verify' AND status='ready' "
                                                  "AND blocked_reason=? AND updated_at<?", (HELD, a))]
+
+    # ── skills are written by the kernel, after verification; a direct write is taken back and held ──
+    def _skill_files(self, slug: str) -> dict[str, str]:
+        layer = self.skills.instance / f"@{slug}" if self.skills.instance else None
+        if not layer or not layer.is_dir():
+            return {}
+        return {str(p.relative_to(layer)): p.read_text(errors="replace") for p in sorted(layer.rglob("*.md"))}
+
+    def _snapshot_skills(self, run_id: str, slug: str) -> None:
+        with write_txn(self.wconn):
+            self.wconn.execute("INSERT OR REPLACE INTO settings VALUES (?,?)",
+                               (f"skills:{run_id}", json.dumps({"dept": slug, "files": self._skill_files(slug)})))
+
+    def _hold_direct_skill_writes(self, work_id: str, output: dict, env: dict) -> dict:
+        """An executor that edited its department's skill files directly (it could, without isolation) has
+        changed how the department works before anyone verified it. The kernel restores the files as they
+        were when the run started; an edit its approved plan named becomes a proposed `skill_changes` entry,
+        applied only if verification passes; any other edit is a breach, recorded for the Chair."""
+        raw = self._setting(f"skills:{output['run_id']}") if output.get("run_id") else None
+        if not raw:
+            return env
+        snap = json.loads(raw)
+        slug, before, now_ = snap["dept"], snap["files"], self._skill_files(snap["dept"])
+        changed = sorted(f for f in set(before) | set(now_) if before.get(f) != now_.get(f))
+        if not changed:
+            return env
+        plan = self.work.approved_plan(work_id)
+        named = set(((plan or {}).get("output") or {"body": {}})["body"].get("writes") or [])
+        layer = self.skills.instance / f"@{slug}"
+        held, breached = list(env.get("skill_changes") or []), []
+        for f in changed:
+            p = layer / f
+            if f in before:
+                p.write_text(before[f])
+            elif p.exists():
+                p.unlink()
+            skill, _, file = f.partition("/")
+            if f"skill:{f}" in named and f in now_ and not any(c["skill"] == skill and c["file"] == file for c in held):
+                held.append({"skill": skill, "file": file, "content": now_[f],
+                             "why": "written directly by the executor; held by the kernel until verified"})
+            elif f"skill:{f}" not in named:
+                breached.append(f)
+        body = {**output["body"], "skill_changes": held}
+        with write_txn(self.wconn):
+            self.wconn.execute("UPDATE outputs SET body=? WHERE id=?", (json.dumps(body, ensure_ascii=False), output["id"]))
+            self.work._event("task", work_id, None, None, (f"skill writes held for verification: {changed}"
+                             + (f"; lane breach: skill files the plan did not name were restored: {breached}"
+                                if breached else ""))[:900], actor="kernel")
+        return {**env, "skill_changes": held}
 
     def _canonical_writes(self, env: dict, work: dict) -> dict:
         """A plan that names a file in its department's skill layer by path means a skill change: it becomes
