@@ -1,6 +1,8 @@
 # Holon on Operant: audit and integration plan (2026-10-14)
 
-Status: **proposed**, awaiting the Chair. Nothing in either repository changes behavior until a
+Status: **proposed**, awaiting the Chair. **§3 and §5 are refined by
+`2026-10-14-holon-operant-boundary.md`** (the Rust/Python rule, the ownership table, the
+interfaces) and by Operant's `docs/agentic-os/` (module disposition, phases A–I). The rest stands. Nothing in either repository changes behavior until a
 phase below is approved. Operant's repository carries a pointer to this record
 (`operant/docs/HOLON-INTEGRATION.md`).
 
