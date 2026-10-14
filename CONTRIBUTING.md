@@ -26,7 +26,7 @@ Tested on Python 3.11 and 3.13. `holon lint` enforces most of the laws below mec
 ## No personal or instance data
 
 This repository is the **universal Holon**: usable by anyone, free of every operator's context.
-Law 10 in AGENTS.md already keeps instance specifics out of the code; contributions are held to
+AGENTS.md already keeps instance specifics out of the code; contributions are held to
 the same standard:
 
 - no hosts, paths, chat ids, endpoints or keys;

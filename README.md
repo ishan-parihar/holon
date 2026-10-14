@@ -83,6 +83,9 @@ work ─► research? ─► shape? ─► plan ─► approve ─► execute �
                                          earned authority covers it: head → CEO → Chair)
 ```
 
+A plan may split work into child work in any department; rework appends `execute#2` / `plan#2`;
+failures and repeated rejections queue a retro whose actions become new work.
+
 ## Harnesses (the employees' bodies)
 
 | Adapter | Harness | Notes |
