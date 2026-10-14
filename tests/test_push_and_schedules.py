@@ -1,5 +1,6 @@
 """Push mode through a driver (fake harness), concurrency, schedules, recurring plans, hiring."""
 
+import json
 import multiprocessing as mp
 import unittest
 
@@ -264,3 +265,44 @@ class Hiring(KernelCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SupervisorProtocol(KernelCase):
+    """H6 (phase E): dispatch --prepare hands an external supervisor everything it needs to run
+    the body itself; run finish salvages the result and runs what follows. One protocol for any
+    supervisor; the claim, lease and concurrency rules are exactly push mode's (CONTRACT §11)."""
+
+    def _prepared(self):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        p = self.k.prepare_dispatch(self.dev1, "execute")
+        self.assertEqual(p["stage"], "execute")
+        return t, p
+
+    def test_prepare_writes_the_run_without_spawning(self):
+        t, p = self._prepared()
+        run_dir = self.home.run_dir(p["run"])
+        self.assertTrue((run_dir / "brief.json").exists())
+        self.assertEqual(json.loads((run_dir / "policy.json").read_text())["posture"], "act")
+        self.assertIn("HOLON_RUN_TOKEN", p["env"])
+        self.assertIn("HOLON_RESULT_PATH", p["env"])
+        self.assertTrue(p["command"])
+        self.assertIn(("execute", "claimed"), self.pipeline_of(t))
+
+    def test_finish_salvages_the_result_and_runs_what_follows(self):
+        t, p = self._prepared()
+        (self.home.run_dir(p["run"]) / "result.json").write_text(json.dumps(
+            {"outcome": "success", "summary": "s", "documentation": "d",
+             "usage": {"tokens_in": 10, "tokens_out": 5}}))
+        out = self.k.finish_run(p["run"], 0)
+        self.assertFalse(out.get("breach"))
+        self.assertEqual(self.pipeline_of(t)[-1], ("verify", "ready"))
+        self.assertEqual(self.k.work.get_run(p["run"])["tokens_in"], 10, "the envelope's usage")
+        with self.assertRaises(TransitionError):  # nothing to finish twice: the result is in
+            self.k.finish_run(p["run"], 0)
+
+    def test_finish_without_a_result_is_a_breach(self):
+        t, p = self._prepared()
+        out = self.k.finish_run(p["run"], 1)
+        self.assertTrue(out["breach"])
+        self.assertEqual(self.k.work.last_execute_output(t["id"])["body"]["outcome"], "partial")

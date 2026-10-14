@@ -520,6 +520,14 @@ def cmd_run_heartbeat(args, k):
     _out(args, {"run": r["id"], "lease_until": r["lease_until"]}, f"lease extended to {r['lease_until']}")
 
 
+@command("run finish", "kernel", "a supervisor hands a finished body in: salvage result.json, submit it, "
+         "run the checks and the judge (CONTRACT §11)", arg("run_id"),
+         arg("--exit", type=int, default=0, help="the body's exit code"))
+def cmd_run_finish(args, k):
+    out = k.finish_run(args.run_id, args.exit)
+    _out(args, out, f"run {args.run_id} finished; work -> {(out.get('work') or {}).get('status')}")
+
+
 @command("verify", "chair", "verify a result yourself", arg("task_id"), arg("verdict", choices=["pass", "fail"]),
          arg("--note", required=True))
 def cmd_verify(args, k):
@@ -528,10 +536,20 @@ def cmd_verify(args, k):
 
 
 @command("dispatch", "kernel", "claim a stage for an employee and run its harness driver", AS,
-         arg("--stage", choices=list(vocab.STAGES)), arg("--task"), arg("--schedule", help=argparse.SUPPRESS))
+         arg("--stage", choices=list(vocab.STAGES)), arg("--task"), arg("--schedule", help=argparse.SUPPRESS),
+         arg("--prepare", action="store_true", help="claim and write the brief, policy.json and the run "
+             "token, and print them as JSON without running the body (an external supervisor runs it; "
+             "CONTRACT §11)"))
 def cmd_dispatch(args, k):
     if not args.as_:
         raise ValueError("--as <emp_id> is required")
+    if args.prepare:
+        out = k.prepare_dispatch(args.as_, args.stage, args.task)
+        if out is None:
+            _out(args, {"prepared": None}, f"nothing to do for {args.as_}")
+            return NOTHING
+        _out(args, {"prepared": out}, f"{out['stage']} prepared: run {out['run']} (finish with `holon run finish`)")
+        return
     try:
         out = k.dispatch(args.as_, args.stage, args.task)
     except Exception:

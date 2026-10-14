@@ -1306,6 +1306,35 @@ class Kernel:
             return self._contract_breach(self.work.get_run(claimed.run["id"]), [breach], out, out["exit_code"])
         return self.submit(claimed.run["id"], out["envelope"], out["exit_code"], driver_output=out)
 
+    def prepare_dispatch(self, employee_id: str, stage: str | None = None, task_id: str | None = None) -> dict | None:
+        """H6: claim a stage and hand an external supervisor everything it needs to run the body
+        itself — the driver's rendered command, the run's environment, the brief, policy.json and the
+        run token — without spawning anything. The supervisor hands the finished body back with
+        `finish_run` (CONTRACT §11). The claim, lease and concurrency rules are exactly dispatch's."""
+        emp = self.org.employee(employee_id)
+        claimed = self.claim(stage, employee_id, emp["driver"], task_id, max_running=emp["max_concurrency"])
+        if claimed is None:
+            return None
+        drv = drivers.get(self.home, emp["driver"])
+        brief = briefs.load(self.home, claimed.run["id"])
+        cmd, cwd = drivers.render(drv, brief)
+        env = {**drivers.run_env(self.home, brief, claimed.token,
+                                 self.isolation.get("broker") if self.isolation else None), **drv.env}
+        return {"run": claimed.run["id"], "stage": brief["stage"], "task": brief["task_id"],
+                "employee": employee_id, "driver": drv.name, "command": cmd, "cwd": cwd,
+                "env": env, "timeout_s": drv.timeout_s, "brief_md": brief["brief_md"],
+                "result_path": brief["result_path"], "policy_json": str(claimed.brief_dir / "policy.json"),
+                "lease_until": claimed.run["lease_until"]}
+
+    def finish_run(self, run_id: str, exit_code: int = 0) -> dict:
+        """H6: a supervisor hands a finished body in. This process is the kernel's short Python
+        process: it salvages result.json (a missing or invalid result is a contract breach, exactly
+        as in push mode), submits it, and runs what follows — machine checks, then the judge."""
+        run = self.work.get_run(run_id)
+        if run["status"] != "running":
+            raise TransitionError(f"run {run_id} is '{run['status']}' (nothing to finish)")
+        return self.submit(run_id, None, exit_code)
+
     def dispatch(self, employee_id: str, stage: str | None = None, task_id: str | None = None) -> dict | None:
         emp = self.org.employee(employee_id)
         # checked inside the claim's transaction: two wakes due in one tick must not both start

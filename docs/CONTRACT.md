@@ -237,3 +237,21 @@ The envelope may also carry `usage`: `{"tokens_in", "tokens_out", "cost", "tool_
 "duration_s"}`, all optional numbers. The kernel records them on the run (budgets and cost
 per verified result read them); a usage the driver measured in its own output wins over
 the envelope's claim.
+
+## §11 The supervisor protocol (H6)
+
+Push mode spawns the driver from `holon dispatch`. A **supervisor** — a resident runtime that
+owns processes (a daemon, a sandbox supervisor) — runs the body itself, through the same claim
+and the same rules (lease, concurrency, budget, policy). Three commands, one run:
+
+| Step | Command | What it does |
+|---|---|---|
+| prepare | `holon dispatch --as E [--stage S --task T] --prepare --json` | claims, writes the brief, `policy.json` and the run token, and prints them as JSON — the rendered driver `command`, `cwd`, `env` (including `HOLON_RUN_TOKEN`), `timeout_s`, `result_path`, `lease_until` — without spawning anything |
+| heartbeat | `holon run heartbeat RUN` (with the run token) | extends the lease while the body runs; a supervisor that stops renewing lets the run be reclaimed |
+| hand in | `holon run finish RUN --exit N` | salvages `result.json` (missing or invalid is a contract breach, exactly as in push mode), submits it, and runs what follows — machine checks, then the judge — in this short kernel process |
+
+The supervisor may run the body in-process (its own harness), spawn the returned `command`
+under its own sandboxing, or spawn any driver's argv. The run's outcome depends only on the
+result handed in and the policy it was given: `result.json` written by the body,
+`trajectory.json` optional beside it (§10). A prepared run that is never finished reverts by
+lease expiry, like any abandoned run.
