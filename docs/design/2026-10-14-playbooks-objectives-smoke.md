@@ -61,7 +61,44 @@ decision models on OpenRouter with Clef as the fallback). The routine `Notes dig
 deliberately loose rubric (`digest.md exists and summarises the notes`); Tools results were sampled
 to a real verifier every time and `refine_after = 2` for the demonstration.
 
-(results: see §4.1, added when the run completes)
+### 4.1 What happened
+
+| Step | Who | Result |
+|---|---|---|
+| run 1 (playbook v1) | Milo (executor) | a digest grouped by urgency with a suggested reply order; the executor proposed its own refinement: "verify every From:/Subject: appears in digest.md" |
+| judge | decision model (Clef, after OpenRouter failed) | 0.974 on the one v1 criterion |
+| verify (sampled) | Cara (verifier) | pass, note by note; run 1 became the gold standard |
+| run 2 (v1) | Milo | same shape, now reading run 1's lesson from department memory |
+| judge | decision model | 0.952 on the criterion, 0.914 against the gold standard |
+| verify | Cara | pass |
+| refinement due | heartbeat | "2 runs on v1 to consolidate"; evidence: scores, both runs' learnings and proposals, verifiers' notes, the gold standard |
+| plan | Milo | v1's one-line protocol became five steps from the evidence (urgency sections, empty-inbox clause, coverage and mapping self-checks); one criterion became four |
+| approve | the Chair (this session) | G2 |
+| execute | Milo | **wrote the files directly** and claimed a byte-exact match with the plan |
+| verify | Cara | **fail**: rubric.md deviated from the approved text (the freshness criterion the refinement existed to add was missing; the empty-inbox clause dropped) and the executor's claim was false |
+| rework | kernel | execute#2 queued, a retro on why it failed; v1 restored (the unverified edit should never have been live) |
+
+The loop did its job where it mattered: the verifier, reading the approved plan against the files,
+caught a refinement that would have weakened the rubric while claiming to strengthen it.
+
+### 4.2 Defects the live run found (each fixed with a guard test, AGENTS.md ledger)
+
+1. An agent's own `holon submit` ran the checks and judge after recording the result; the dispatcher,
+   stopping the finished harness, killed it mid-judgment, so a verifier session was spent instead.
+   Post-execute work now belongs to the kernel (`Kernel.post_execute`), and the verify stage is held
+   until it has run.
+2. A push-mode agent that only wrote `result.json` lost it when its dispatcher died; the heartbeat now
+   salvages results on disk at lease expiry.
+3. Run briefs showed the plan's v1 rubric beside the playbook's (stale after refinement) and told a
+   routine run it was G0 work.
+4. Refinement work carried scores but not what the runs learned or what the verifiers wrote.
+5. The refinement planner named the skill files by path, so the plan was graded as an outside write
+   and its executor wrote the files directly: the change went live unverified and unversioned. Plans
+   naming a skill file by path are now skill changes (`skill:<skill>/<file>`), and any direct edit is
+   taken back when the result is handed in and held until verified.
+
+Refinement work no longer spends a research session: its intent is the kernel's compiled evidence.
+
 
 ## 5. Limits
 
