@@ -115,6 +115,7 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[budget]` | `max_running_per_dept` | 0 (no cap) | runs a department may have in flight; `[budget.dept.<slug>]` overrides |
 | `[notify]` | `command` | "" (off) | run on each heartbeat that finds something new for the Chair; `{message}` is the text (an adapter fills this in, e.g. a chat CLI) |
 | `[events]` | `cooldown_s` | 300 | an event routine (`routine add --on event:<pattern>`) fires at most once per this many seconds; the runtime that saw a matching event calls `holon routine fire` |
+| `[chair]` | `channels` | [] | `<platform>:<user id>` refs whose channel messages are the Chair's (H8); a runtime that fronts a channel may run Chair commands only for one of these — the broker still forbids agents every Chair command |
 | `[budget]` | `max_runs_per_dept_per_day` | 0 (no cap) | runs a department may start in 24 hours; its stages wait on the board beyond it |
 | `[budget]` | `tokens_per_run` | 0 (no cap) | per-run token cap compiled into `policy.json` (H5); `[budget.dept.<slug>]` then `[budget.employee.<id>]` override, last wins; a harness enforces it and reports stopping in `refusals` |
 | `[budget]` | `cost_per_run` | 0.0 (no cap) | per-run cost cap in the invoice currency, same overrides and enforcement as `tokens_per_run` |

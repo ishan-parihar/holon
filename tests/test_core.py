@@ -273,3 +273,18 @@ class Agnosticism(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChairChannels(KernelCase):
+    """H8 (phase F): the Chair's channel identities — a runtime that fronts a channel (a gateway)
+    may run Chair commands only for one of these; the broker still forbids agents every Chair
+    command, so the list is read by runtimes, never by agent-reachable code paths."""
+
+    config = '[chair]\nchannels = ["telegram:123456", "notion:user-7"]\n'
+
+    def test_channel_identities_come_from_config(self):
+        self.assertEqual(self.k.chair_channels(), {"telegram:123456", "notion:user-7"})
+        self.home.config_file.write_text(self.pipeline + "\n")
+        self.k.close()
+        from holon.execution.service import Kernel
+        self.assertEqual(Kernel(self.home).chair_channels(), set(), "no channels configured")

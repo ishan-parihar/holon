@@ -78,6 +78,11 @@ python3 install.py --notion-parent-page <page id> --notion-token-file ~/.config/
     --notion-webhook-hostname holon-notion.<your domain> --systemd
 ```
 
+A gateway may host the webhook route itself instead (H8): feed each event to
+`holon_notion.py apply --signature <X-Notion-Signature header>` with the event JSON on stdin —
+same verification, handled in line. A box that does this does not need `holon-notion.service`;
+the poll stays the fallback.
+
 does steps 3, 4 and 6 below along with the SQLite instance: the four databases, a dedicated
 Cloudflare tunnel (`holon-notion`, needs `cloudflared tunnel login` once) routing only
 `/notion/…` to the receiver, and the `holon-notion` and `cloudflared-holon-notion` user units. It

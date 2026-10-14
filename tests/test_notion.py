@@ -297,3 +297,31 @@ class NotionMirror(KernelCase):
         self.assertTrue(any("Grade" in p for p in self.sync.check()))
         self.sync.check(repair=True)
         self.assertEqual(self.sync.check(), [])
+
+
+class ApplyEvent(NotionMirror):
+    """H8 (phase F): a gateway hosting the webhook route feeds each event to `apply` instead of the
+    receiver — same verification and classification, handled in line (no service, no queue)."""
+
+    def _raw(self, event, token="secret_x"):
+        raw = json.dumps({"authors": [{"id": CHAIR, "type": "person"}], **event}).encode()
+        return raw, "sha256=" + hmac.new(token.encode(), raw, hashlib.sha256).hexdigest()
+
+    def test_apply_verifies_and_handles_one_event_in_line(self):
+        self.sync.webhook(b'{"verification_token": "secret_x"}', {}, queue.Queue())
+        w = self.add(dept="eng")
+        approval = self.plan(w)
+        self.sync.push()
+        pid = self.sync._page_of("work", approval["id"])
+        self.fake.human_edit(pid, {"Chair decision": {"select": {"name": "approve"}}})
+        raw, sig = self._raw({"type": "page.properties_updated", "entity": {"id": pid, "type": "page"}})
+        self.assertEqual(self.sync.apply_event(raw, "sha256=forged")[0], 401)
+        self.assertEqual(self.sync.apply_event(raw, sig), (200, "chair approve"))
+
+    def test_apply_stores_a_resent_token_and_ignores_bot_events(self):
+        self.assertEqual(self.sync.apply_event(b'{"verification_token": "secret_z"}', None), (200, "token stored"))
+        self.assertEqual(self.sync.cfg["webhook_token"], "secret_z")
+        raw = json.dumps({"authors": [{"id": BOT, "type": "bot"}],
+                          "entity": {"id": "p2", "type": "page"}}).encode()
+        sig = "sha256=" + hmac.new(b"secret_z", raw, hashlib.sha256).hexdigest()
+        self.assertEqual(self.sync.apply_event(raw, sig), (200, "our own change"))

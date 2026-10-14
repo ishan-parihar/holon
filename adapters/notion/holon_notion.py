@@ -786,32 +786,48 @@ class Sync:
         want = "sha256=" + hmac.new(token.encode(), raw, hashlib.sha256).hexdigest()
         return hmac.compare_digest(want, signature)
 
-    def webhook(self, raw: bytes, headers: dict, inbox: "queue.Queue[str]") -> tuple[int, str]:
+    def _classify(self, raw: bytes, signature: str | None) -> tuple[int, str, list[str]]:
+        """The shared receiver logic: verify, and say what the event means. Returns the receiver's
+        status, a message, and the items to handle (page ids, or the schema event)."""
         try:
             body = json.loads(raw or b"{}")
         except json.JSONDecodeError:
-            return 400, "bad json"
+            return 400, "bad json", []
         if "verification_token" in body:
-            # Notion re-sends the token on "Resend" and when a subscription is recreated; the newest one
-            # wins. Only a caller who knows the secret path gets this far.
+            # Notion re-sends the token on "Resend" and when a subscription is recreated; the newest
+            # one wins. Only a caller who knows the secret path gets this far.
             self.cfg["webhook_token"] = body["verification_token"]
             self.save()
             print(f"Notion sent its verification token; it is saved in {self.cfg_path} (field webhook_token). "
                   "Paste it into the connection's Webhooks tab to verify the subscription.", flush=True)
-            return 200, "token stored"
-        if not self.verify_signature(raw, headers.get("X-Notion-Signature") or headers.get("x-notion-signature")):
-            return 401, "bad signature"
+            return 200, "token stored", []
+        if not self.verify_signature(raw, signature):
+            return 401, "bad signature", []
         authors = body.get("authors") or []
         if authors and all(a.get("type") == "bot" for a in authors):
-            return 200, "our own change"
+            return 200, "our own change", []
         entity = body.get("entity") or {}
         if entity.get("type") == "page":
-            inbox.put(entity["id"])
-        elif entity.get("type") in ("data_source", "database") and "schema" in body.get("type", ""):
-            inbox.put(SCHEMA_EVENT)
-        else:
-            return 200, "not ours to act on"
-        return 200, "queued"
+            return 200, "queued", [entity["id"]]
+        if entity.get("type") in ("data_source", "database") and "schema" in body.get("type", ""):
+            return 200, "queued", [SCHEMA_EVENT]
+        return 200, "not ours to act on", []
+
+    def webhook(self, raw: bytes, headers: dict, inbox: "queue.Queue[str]") -> tuple[int, str]:
+        code, msg, items = self._classify(raw, headers.get("X-Notion-Signature") or headers.get("x-notion-signature"))
+        for i in items:
+            inbox.put(i)
+        return code, msg
+
+    def apply_event(self, raw: bytes, signature: str | None) -> tuple[int, str]:
+        """One webhook event, handled in line without the server (H8): the runtime that hosts the
+        webhook route (a gateway) feeds each event here as it arrives — the same verification and
+        classification, then `handle_event` runs before returning. A box that hosts the route this
+        way does not need `holon-notion.service`; the poll stays the fallback."""
+        code, msg, items = self._classify(raw, signature)
+        for i in items:
+            msg = self.handle_event(i)
+        return code, msg
 
     def handle_event(self, item: str) -> str:
         """One queued webhook event: a schema change is checked and repaired; a page is handled."""
@@ -933,6 +949,10 @@ def main(argv: list[str] | None = None) -> int:
     c.add_argument("--repair", action="store_true")
     sub.add_parser("verify", help="compare every live page, value and relation with SQLite (read-only)")
     sub.add_parser("webhook-path", help="print the secret path webhooks are served on (created once)")
+    s = sub.add_parser("apply", help="one webhook event handled in line (a gateway hosting the webhook "
+                     "route feeds each event here); reads stdin, or --file")
+    s.add_argument("--signature", help="the event's X-Notion-Signature header value")
+    s.add_argument("--file", help="the event JSON (default: stdin)")
     sub.add_parser("status")
     v = sub.add_parser("serve")
     v.add_argument("--port", type=int, default=8787)
@@ -984,6 +1004,11 @@ def main(argv: list[str] | None = None) -> int:
                           "webhook_verified": bool(sync.cfg.get("webhook_token"))}, indent=2))
         for r in sync.db.execute("SELECT * FROM log ORDER BY ts DESC LIMIT 10"):
             print(f"{r['ts']} {r['kind']}: {r['detail']}")
+    elif a.cmd == "apply":
+        raw = (Path(a.file).read_bytes() if a.file else sys.stdin.buffer.read())
+        code, msg = sync.apply_event(raw, a.signature)
+        print(f"{code} {msg}")
+        return 0 if code < 400 else 1
     elif a.cmd == "serve":
         sync.serve(a.port, a.push_every, a.poll_every, a.reconcile_every, a.verify_every)
     return 0

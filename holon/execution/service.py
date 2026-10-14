@@ -58,6 +58,7 @@ DEFAULT_CONFIG = {
                "tokens_per_run": 0, "cost_per_run": 0.0},   # H5: compiled into policy.json; 0 = no cap
     "notify": {"command": ""},   # e.g. a chat CLI with {message}; empty = no notifications
     "events": {"cooldown_s": 300},   # an event routine fires at most once per this (H7)
+    "chair": {"channels": []},       # '<platform>:<user id>' refs whose channel messages are the Chair's (H8)
     # what employees may reach beyond their work's workdir; [scope.dept.<slug>] adds to it per department
     "scope": {"roots": [], "commands": [], "act_commands": []},
     # machine checks the kernel runs in the workdir after every execute, before any verifier;
@@ -1319,6 +1320,13 @@ class Kernel:
         if changed:
             return self._contract_breach(self.work.get_run(claimed.run["id"]), [breach], out, out["exit_code"])
         return self.submit(claimed.run["id"], out["envelope"], out["exit_code"], driver_output=out)
+
+    def chair_channels(self) -> set[str]:
+        """The Chair's channel identities (H8): '<platform>:<user id>' refs, e.g. 'telegram:123456'.
+        A runtime that fronts a channel (a gateway) may run Chair commands only for a message from
+        one of these identities; the broker allowlist still forbids every Chair command, so an agent
+        cannot reach that path."""
+        return set(self.config.get("chair", {}).get("channels") or [])
 
     def prepare_dispatch(self, employee_id: str, stage: str | None = None, task_id: str | None = None) -> dict | None:
         """H6: claim a stage and hand an external supervisor everything it needs to run the body
