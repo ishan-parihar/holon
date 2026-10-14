@@ -33,6 +33,7 @@ from holon.core.paths import Home
 from holon.core.vocab import CHAIR, EXECUTIVE
 from holon.execution import autonomy, briefs, drivers, genome, grading, isolation, security
 from holon.execution.briefs import kernel_env
+from holon.execution import policy as run_policy
 from holon.execution.org import Org, approver_ref
 from holon.execution.cron import Cron
 from holon.execution.schedules import Schedules
@@ -53,7 +54,8 @@ DEFAULT_CONFIG = {
     # a _min of 0 or a _max of 1 turns that bound off
     "metrics": {"min_samples": 5, "verify_pass_rate_min": 0.5, "rework_rate_max": 0.5, "rejection_rate_max": 0.5,
                 "rubric_agreement_min": 0.8},
-    "budget": {"max_running_per_dept": 0, "max_runs_per_dept_per_day": 0},   # 0 = no cap
+    "budget": {"max_running_per_dept": 0, "max_runs_per_dept_per_day": 0,   # 0 = no cap
+               "tokens_per_run": 0, "cost_per_run": 0.0},   # H5: compiled into policy.json; 0 = no cap
     "notify": {"command": ""},   # e.g. a chat CLI with {message}; empty = no notifications
     # what employees may reach beyond their work's workdir; [scope.dept.<slug>] adds to it per department
     "scope": {"roots": [], "commands": [], "act_commands": []},
@@ -110,7 +112,7 @@ FAILURE_CAUSES = {
     "work": "the work itself is impossible, contradictory or underspecified",
 }
 CONFIG_KEYS = {s: set(v) for s, v in DEFAULT_CONFIG.items() if s not in ("grading", "autonomy", "pipeline")}
-CONFIG_KEYS["budget"].add("dept")  # [budget.dept.<slug>] overrides
+CONFIG_KEYS["budget"] |= {"dept", "employee"}  # [budget.dept.<slug>], [budget.employee.<id>] overrides
 CONFIG_KEYS["scope"].add("dept")   # [scope.dept.<slug>] additions
 CONFIG_KEYS["checks"] |= {"dept", "class"}  # [checks.dept.<slug>], [checks.class.<task_class>]
 CONFIG_KEYS["smoke"].add("dept")  # [smoke.dept.<slug>]
@@ -465,8 +467,17 @@ class Kernel:
                    + ", ".join(f"`{c}`" for c in self.classes_for(slug)) + ".\n")
         if node["stage"] == "plan":
             md += self._grade_floor_section(self.work.work_of(node), slug, employee_id)
+        scope = self.scope(slug)
+        plan_out = None
+        if node["stage"] == "execute":
+            approved = self.work.approved_plan(node["parent_id"] or node["id"])
+            plan_out = (approved or {}).get("output", {}).get("body") if approved else None
+        policy_doc = run_policy.compile_policy(
+            node, work, scope, plan_out,
+            run_policy.per_run_budget(self.config, slug, emp["id"] if emp else None))
         bdir = briefs.build(self.home, run, node, md, self.skills, slug, emp,
-                            self.identity(emp["id"]) if emp else None, token, scope=self.scope(slug))
+                            self.identity(emp["id"]) if emp else None, token, scope=scope,
+                            policy=policy_doc)
         if self.isolation:
             isolation.share_run_dir(bdir, self.isolation["agent_user"])
         self.work.set_run_paths(run["id"], str(bdir), str(bdir / "driver.log"))
@@ -552,6 +563,18 @@ class Kernel:
                 out["routines"] = self._routines_from_items(out["routines"], None, f"emp:{run['employee_id']}")
             if work.get("task_class") == "retro" and work.get("dept_id"):
                 self._ack_proposals(work["dept_id"])
+        # H3: refusals the harness recorded under policy.json are blockers, never
+        # breaches — surface them on the run's event trail and in the submit output so
+        # rework/retro sees why the stage shrank from its plan.
+        refusals = env.get("refusals") or []
+        if refusals:
+            note = "; ".join(f"{r.get('tool', '?')}: {r.get('reason', '?')}" for r in refusals)[:400]
+            with write_txn(self.wconn):
+                self.work._event("run", run_id, None, None, f"policy refusal: {note}")
+            out["refusals"] = refusals
+            if stage == "execute" and env.get("outcome") == "success":
+                env["blockers"] = [*env.get("blockers", []),
+                                   *[f"refused: {r.get('tool', '?')} under policy" for r in refusals]]
         out["memory"] = self._consolidate(work, run, env, emp, stage)
         out["proposals_routed"] = self._route_proposals(work, env, emp)
         return {**out, "stage": stage}

@@ -193,6 +193,30 @@
         ]
       },
       "description": "improvements, routed to the steward"
+    },
+    "refusals": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "tool": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          },
+          "policy": {
+            "type": "string",
+            "description": "the policy.json rule that refused it (roots, writes, commands, budget)"
+          }
+        },
+        "required": [
+          "tool",
+          "reason"
+        ]
+      },
+      "description": "calls your harness refused under policy.json (H3): tool + reason + rule. The kernel treats them as blockers (rework or escalation), never breaches"
     }
   },
   "required": [

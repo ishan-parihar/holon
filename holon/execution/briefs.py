@@ -8,6 +8,7 @@ layers, so a department's tailored playbook is what its employees receive.
     runs/<run_id>/identity.md   who the employee is (for harnesses that put it in the system prompt)
     runs/<run_id>/context.md    compiled context bundle
     runs/<run_id>/result.json   WRITTEN BY THE AGENT: the result envelope
+    runs/<run_id>/policy.json   the run's reach + budget, compiled at claim (H3+H5)
     runs/<run_id>/driver.log    driver stdout/stderr (push mode only)
 """
 
@@ -44,7 +45,7 @@ def kernel_env(home: Home) -> dict[str, str]:
 
 def build(home: Home, run: dict, node: dict, context_md: str, library: Library | None = None,
           dept: str | None = None, employee: dict | None = None, identity_md: str | None = None,
-          token: str | None = None, scope: dict | None = None) -> Path:
+          token: str | None = None, scope: dict | None = None, policy: dict | None = None) -> Path:
     stage = run["kind"]
     d = home.run_dir(run["id"])
     d.mkdir(parents=True, exist_ok=True)
@@ -69,6 +70,12 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
             "Commands granted to your department: " + ", ".join(f"`{c}`" for c in cmds) + ".\n" if cmds else "") + \
             "Anything else is outside your department's scope: say so in your result instead of working around it.\n"
     (d / "BRIEF.md").write_text(md)
+    if policy:
+        (d / "policy.json").write_text(json.dumps(policy, indent=2))
+        try:
+            (d / "policy.json").chmod(0o600)
+        except OSError:   # pragma: no cover - the mode is advisory outside isolation
+            pass
     bj = d / "brief.json"
     bj.write_text(json.dumps({
         "run_id": run["id"], "task_id": node["id"], "work_id": node["parent_id"], "stage": stage,
@@ -79,6 +86,7 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
         "identity_md": str(d / "identity.md") if identity_md else None, "result_path": str(result_path),
         "workdir": workdir, "holon": holon, "lease_until": run.get("lease_until"), "token": token,
         "envelope": f"schemas/{stage}-result.schema.json", "skill": skill, "scope": scope or {"name": "org"},
+        "policy": str(d / "policy.json") if policy else None,
         "created_at": now()}, indent=2))
     bj.chmod(0o600)
     return d

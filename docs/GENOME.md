@@ -115,6 +115,8 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[budget]` | `max_running_per_dept` | 0 (no cap) | runs a department may have in flight; `[budget.dept.<slug>]` overrides |
 | `[notify]` | `command` | "" (off) | run on each heartbeat that finds something new for the Chair; `{message}` is the text (an adapter fills this in, e.g. a chat CLI) |
 | `[budget]` | `max_runs_per_dept_per_day` | 0 (no cap) | runs a department may start in 24 hours; its stages wait on the board beyond it |
+| `[budget]` | `tokens_per_run` | 0 (no cap) | per-run token cap compiled into `policy.json` (H5); `[budget.dept.<slug>]` then `[budget.employee.<id>]` override, last wins; a harness enforces it and reports stopping in `refusals` |
+| `[budget]` | `cost_per_run` | 0.0 (no cap) | per-run cost cap in the invoice currency, same overrides and enforcement as `tokens_per_run` |
 | `[scope]` | `roots` | [] | paths every employee may work in beyond its work's workdir; `[scope.dept.<slug>]` adds a department's own (§8) |
 | `[scope]` | `commands` | [] | extra shell commands every stage may use (a sandboxing harness grants them) |
 | `[scope]` | `act_commands` | [] | extra commands for the execute stage only |
@@ -223,7 +225,7 @@ A routine runs unattended, so it is a proposal graded at least G2 (G3 when the m
 reaches outside the organization) for the approver that grade names; on approval its schedule
 starts (`holon routine list`). With `--deliver`, each finished firing's result goes to the Chair
 through `[notify]` (a digest in the Chair's chat), retried by the heartbeat until it is sent.
-`holon routine import <cron-jobs/*.md> --dept <slug>` reads the legacy organism's cron protocols
+`holon routine import <cron-jobs/*.md> --dept <slug>` reads legacy cron-job protocol files
 (frontmatter `name`, `schedule`, `description`, `no_agent` + `script`, `deliver`, `status`) and shows the
 routines they would become; `--apply` proposes each active one (paused ones are skipped). Each firing of a script or fast routine enters at execute with the
 standing plan; a full routine plans every firing afresh.
@@ -333,12 +335,12 @@ database answers, a model endpoint responds. Checks are declared once:
 ```toml
 [[smoke.checks]]                         # everyone depends on it
 name = "model gateway"
-cmd = "curl -sf http://127.0.0.1:20129/v1/models -o /dev/null"
+cmd = "curl -sf http://127.0.0.1:8000/v1/models -o /dev/null"
 critical = true
 reason = "every agent's model goes through it"
 
 [smoke.dept.tools]                       # or kept with the department's code
-file = "~/ventures/tools/smoke.toml"     # a TOML file of [[checks]]
+file = "~/code/tools/smoke.toml"     # a TOML file of [[checks]]
 ```
 
 `holon doctor` runs them when the last results are older than `every_min` (so the heartbeat does

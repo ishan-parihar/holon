@@ -43,6 +43,11 @@ COMMON = {
     "learnings": F("list", items=F("entry", items=MEMORY_ENTRY), doc="lessons (your memory) and facts (the project's)"),
     "decisions": F("list", items=F("entry", items=MEMORY_ENTRY), doc="decisions future work must respect"),
     "proposals": F("list", items=F("entry", items=PROPOSAL), doc="improvements, routed to the steward"),
+    "refusals": F("list", items=F("object", fields={
+        "tool": F("str", required=True), "reason": F("text", required=True),
+        "policy": F("text", doc="the policy.json rule that refused it (roots, writes, commands, budget)"),
+    }), doc="calls your harness refused under policy.json (H3): tool + reason + rule. The kernel treats "
+            "them as blockers (rework or escalation), never breaches"),
 }
 WORK_ITEM = {"title": F("text", required=True), "intent": F("text", required=True), "acceptance": TEXT,
              "dept": F("str"), "task_class": F("str"), "priority": F("int", lo=0, hi=4),

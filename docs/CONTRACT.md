@@ -188,3 +188,30 @@ surfaces may `SELECT` from, opened **read-only** (`mode=ro`, law 3). Holon is th
   pattern, department, employee, enabled, failure_streak, next_run_at
 
 The memory capability stays reachable through its own FTS (`items_fts`), same law.
+
+## §9 policy.json and refusals (H3+H5)
+
+Every claim writes `runs/<id>/policy.json` beside the brief — the run's reach, compiled
+from the same sources the brief's prose and the sandbox adapters use ([scope] plus the
+department's own, the approved plan's declared `writes`, the `[budget]` per-run caps):
+
+```json
+{"version": 1, "grade": 2, "stage": "execute", "posture": "act",
+ "roots": ["<workdir>", "/srv/shared"], "writes": ["hello.txt"],
+ "commands": ["ls", "git"], "deny": [],
+ "budget": {"tokens": 8000, "cost": null}}
+```
+
+A harness MAY enforce it; a harness with its own enforcement layer MUST (its posture
+configs give way to the policy). A call outside the policy is refused by the harness and
+reported in the result envelope:
+
+```json
+{"refusals": [{"tool": "terminal", "reason": "rm -rf outside roots", "policy": "writes"}]}
+```
+
+The kernel treats refusals as blockers (rework or escalation), never breaches: the run's
+event trail records each refusal, and refusals on a "successful" execute surface as
+blockers for the verifier. Budgets: `[budget] tokens_per_run` / `cost_per_run`, overridden
+per department (`[budget.dept.<slug>]`) then per employee (`[budget.employee.<id>]`);
+0/absent = no cap. The harness stops the run at a cap and says so in `refusals`.

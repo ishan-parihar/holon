@@ -1,7 +1,10 @@
 """The work graph end to end, in pull mode (no harness involved)."""
 
+import json
+
 import unittest
 
+from holon.execution.service import Kernel
 from holon.execution.work import TransitionError, Work
 from tests.helpers import JD, KernelCase
 
@@ -281,3 +284,71 @@ class Communication(KernelCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RunPolicy(KernelCase):
+    """H3+H5: policy.json is compiled at claim, carries the run's reach and budget,
+    and refusals a harness reports are blockers, never breaches."""
+
+    def configure(self, toml):
+        self.home.config_file.write_text(self.pipeline + "\n" + self.config + "\n" + toml)
+        self.k.close()
+        self.k = Kernel(self.home)
+
+    def test_a_claim_writes_policy_json_with_reach_and_budget(self):
+        self.configure("[budget]\ntokens_per_run = 8000\n")
+        w = self.add(dept="eng")
+        claimed = self.k.claim("plan", self.hod, task_id=w["id"])
+        policy = json.loads((claimed.brief_dir / "policy.json").read_text())
+        self.assertEqual(policy["version"], 1)
+        self.assertEqual((policy["stage"], policy["posture"]), ("plan", "observe"))
+        self.assertEqual(policy["budget"]["tokens"], 8000)
+        self.assertEqual(policy["budget"]["cost"], None)
+        self.assertIn(str(self.workdir), policy["roots"], "the workdir is always a root")
+        self.assertEqual(policy["writes"], [], "an observer has no declared writes")
+        brief = json.loads((claimed.brief_dir / "brief.json").read_text())
+        self.assertEqual(brief["policy"], str(claimed.brief_dir / "policy.json"))
+
+    def test_budget_overrides_compile_in_order_org_dept_employee(self):
+        self.configure("[budget]\ntokens_per_run = 100\n[budget.dept.eng]\ntokens_per_run = 200\n"
+                       f"[budget.employee.{self.dev1}]\ntokens_per_run = 300\n")
+        from holon.execution import policy as run_policy
+        cfg = self.k.config
+        self.assertEqual(run_policy.per_run_budget(cfg, "eng", self.dev1),
+                         {"tokens": 300, "cost": None}, "employee beats department beats org")
+        self.assertEqual(run_policy.per_run_budget(cfg, "eng", None)["tokens"], 200)
+        self.assertEqual(run_policy.per_run_budget(cfg, None, None)["tokens"], 100)
+        self.assertEqual(run_policy.per_run_budget({}, "eng", None), {"tokens": None, "cost": None},
+                         "absent budget keys mean no cap")
+
+    def test_execute_policy_carries_the_approved_plans_writes_and_act_commands(self):
+        self.configure('[scope]\nroots = ["/srv/shared"]\ncommands = ["ls"]\nact_commands = ["git"]\n')
+        w = self.add(dept="eng")
+        self.plan_and_approve(w)
+        claimed = self.k.claim("execute", self.dev1)
+        policy = json.loads((claimed.brief_dir / "policy.json").read_text())
+        self.assertEqual(policy["posture"], "act")
+        self.assertIn("hello.txt", policy["writes"], "the approver saw these writes")
+        self.assertIn("/srv/shared", policy["roots"])
+        self.assertIn("git", policy["commands"], "act commands reach the act posture")
+        self.assertIn("ls", policy["commands"])
+
+    def test_observe_stages_never_see_act_commands(self):
+        self.configure('[scope]\nact_commands = ["git"]\n')
+        w = self.add(dept="eng")
+        claimed = self.k.claim("plan", self.hod, task_id=w["id"])
+        policy = json.loads((claimed.brief_dir / "policy.json").read_text())
+        self.assertNotIn("git", policy["commands"])
+
+    def test_reported_refusals_are_blockers_not_breaches(self):
+        w = self.add(dept="eng")
+        self.plan_and_approve(w)
+        claimed = self.k.claim("execute", self.dev1)
+        out = self.k.submit(claimed.run["id"], self.exec_env(
+            refusals=[{"tool": "terminal", "reason": "rm -rf outside roots", "policy": "writes"}]))
+        self.assertIn("refusals", out)
+        events = [e["note"] for e in self.k.wconn.execute(
+            "SELECT note FROM events WHERE entity='run' AND entity_id=?", (claimed.run["id"],))]
+        self.assertTrue(any(n and "policy refusal: terminal" in n for n in events), events)
+        self.assertEqual(self.status(w), "open",
+                     "the refusal was recorded; the work proceeds to verification, never a breach")
