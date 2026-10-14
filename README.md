@@ -90,10 +90,10 @@ failures and repeated rejections queue a retro whose actions become new work.
 
 | Adapter | Harness | Notes |
 |---|---|---|
-| `adapters/zeroclaw` | ZeroClaw | sandboxed agent aliases per scope; Holon as native MCP tools |
-| `adapters/hermes` | Hermes | one-shot sessions; see its README for read-only limits |
+| `adapters/zeroclaw` | [ZeroClaw](https://github.com/zeroclaw-labs/zeroclaw) | sandboxed agent aliases per scope; Holon as native MCP tools |
+| `adapters/hermes` | [Hermes](https://github.com/nousresearch/hermes-agent) | one-shot sessions; see its README for read-only limits |
 | `adapters/jcode` | [jcode](https://github.com/1jehuang/jcode) | about 3 MB per headless session |
-| `adapters/operant` | Operant | Rust harness; isolated state home per Holon instance |
+| `adapters/operant` | [Operant](https://github.com/ishan-parihar/operant) | Rust harness; the organization runtime (its `docs/agentic-os/` has the integration plan) |
 | `adapters/claude-code` | Claude Code | driver only; not yet through conformance |
 
 Anything else: copy `holon/execution/drivers/generic-shell.toml` into your instance's
