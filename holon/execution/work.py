@@ -503,14 +503,18 @@ class Work:
             self.conn.execute("UPDATE runs SET brief_path=?, log_path=? WHERE id=?", (brief_path, log_path, run_id))
 
     def set_run_usage(self, run_id: str, tokens_in: int | None, tokens_out: int | None, cost: float | None,
-                      tool_calls: int | None = None, duration_s: float | None = None) -> None:
-        """What the harness reported a run consumed (budgets and cost per verified result read it).
-        Coalesced: the first value wins, so a usage the driver measured beats the envelope's claim."""
+                      tool_calls: int | None = None, duration_s: float | None = None,
+                      build: str | None = None) -> None:
+        """What the harness reported a run consumed (budgets and cost per verified result read it),
+        and the harness build that ran it (pass rates group by build; a regression opens incident
+        work — H10). Coalesced: the first value wins, so a usage the driver measured beats the
+        envelope's claim."""
         with write_txn(self.conn):
             self.conn.execute("UPDATE runs SET tokens_in=coalesce(?, tokens_in), tokens_out=coalesce(?, tokens_out),"
                               " cost=coalesce(?, cost), tool_calls=coalesce(?, tool_calls),"
-                              " duration_s=coalesce(?, duration_s) WHERE id=?",
-                              (tokens_in, tokens_out, cost, tool_calls, duration_s, run_id))
+                              " duration_s=coalesce(?, duration_s), harness_build=coalesce(?, harness_build)"
+                              " WHERE id=?",
+                              (tokens_in, tokens_out, cost, tool_calls, duration_s, build, run_id))
 
     def _begin_submit(self, run_id: str, stage: str, exit_code: int | None, status: str = "succeeded",
                       **metrics: Any) -> tuple[dict, dict, dict, str | None]:

@@ -48,7 +48,8 @@ DEFAULT_CONFIG = {
     "pipeline": {},
     "memory": {"promotion_threshold": 2},
     "healing": {"incident_dept": "it", "lease_expiries_for_incident": 2, "schedule_failures_for_incident": 3,
-                "run_failures_for_incident": 3, "doctor_every_min": 30, "backup_every_h": 24, "backup_to": ""},
+                "run_failures_for_incident": 3, "doctor_every_min": 30, "backup_every_h": 24, "backup_to": "",
+                "build_regression_samples": 10, "build_regression_drop": 0.25},
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
     # a department rate past its bound (over min_samples) makes its retro due without proposals;
     # a _min of 0 or a _max of 1 turns that bound off
@@ -565,7 +566,7 @@ class Kernel:
             u = env.get("usage")
             if isinstance(u, dict):
                 self.work.set_run_usage(run_id, u.get("tokens_in"), u.get("tokens_out"), u.get("cost"),
-                                         u.get("tool_calls"), u.get("duration_s"))
+                                         u.get("tool_calls"), u.get("duration_s"), u.get("build"))
             self._hold_direct_skill_writes(work["id"], self.work.output(node["id"]), env)  # whatever the outcome
             v = self.work.latest(work["id"], "verify", "ready")
             if v and defer:
@@ -1164,9 +1165,10 @@ class Kernel:
         r = ((plan or {}).get("output") or {"body": {}})["body"].get("rubric")
         return list(r) if r else [work["acceptance"] or f"The result does what was asked: {work['intent'][:400]}"]
 
-    def judge(self, work: dict, env: dict) -> dict | None:
+    def judge(self, work: dict, env: dict, run: dict | None = None) -> dict | None:
         """The rubric judge: the decision model's probability that the result meets each criterion, and that
-        it is as good as the gold standard. None when the model is off or failed."""
+        it is as good as the gold standard. None when the model is off or failed. Each judgment row
+        carries the build that ran the result (H10), so pass rates group by build."""
         pb = self.playbook_of(work)
         rubric = (pb["rubric"] if pb and pb["rubric"] else self.rubric(work))[:12]
         gold = self.work.gold_standard(work)
@@ -1190,10 +1192,10 @@ class Kernel:
         w = self.work.get(work["id"])
         with write_txn(self.wconn):
             for c, p in scores.items():
-                self.wconn.execute("INSERT INTO judgments (work_id, playbook, version, criterion, p, passed, created_at)"
-                                   " VALUES (?,?,?,?,?,?,?)", (work["id"], w["playbook"] or (pb or {}).get("name"),
-                                                               w["playbook_version"] or (pb or {}).get("version"), c, p,
-                                                               int(p >= bar), now()))
+                self.wconn.execute("INSERT INTO judgments (work_id, playbook, version, criterion, p, passed, build, created_at)"
+                                    " VALUES (?,?,?,?,?,?,?,?)", (work["id"], w["playbook"] or (pb or {}).get("name"),
+                                    w["playbook_version"] or (pb or {}).get("version"), c, p,
+                                    int(p >= bar), (run or {}).get("harness_build"), now()))
         return {"pass": all(v >= bar for v in scores.values()), "scores": scores}
 
     def _lane_verification(self, work: dict, run: dict, env: dict) -> dict | None:
@@ -1212,7 +1214,7 @@ class Kernel:
                                  f"G{g['floor']} above its approved G{approved['grade']}: {'; '.join(g['reasons'])}"[:900],
                                  actor="kernel")
             return None
-        verdict = self.judge(work, env)
+        verdict = self.judge(work, env, run)
         if verdict is None:
             if work["lane"] == "script" and not self.decider.on:
                 return self.work.skip_verification(work["id"], "script exited 0 and its checks passed", by="checks")
@@ -1716,6 +1718,7 @@ class Kernel:
     def triggers(self, swept: list[dict] | None = None) -> list[dict]:
         out = []
         out += self._incidents(swept or [])
+        out += self._build_regression()
         out += self._probation_reviews()
         out += self._department_retros()
         out += self._doctor()
@@ -1970,6 +1973,38 @@ class Kernel:
         w = self.work.add_work(title, intent, dept=dept, source="kernel", requested_by="kernel", priority=1,
                                task_class="incident", acceptance="the cause is fixed and the failing path works again")
         return {"incident": w["id"], "title": title}
+
+    def _build_regression(self) -> list[dict]:
+        """H10: the rubric judge's pass rate groups by harness build; when the latest build's is materially
+        below the previous build's (both with enough judgments), incident work opens — a regressed build
+        is visible from judgments alone, before anyone reads the runs."""
+        h = self.config["healing"]
+        samples, drop = int(h["build_regression_samples"]), float(h["build_regression_drop"])
+        out = []
+        if not samples or drop <= 0:
+            return out
+        by_dept: dict[str, list[dict]] = {}
+        for r in self.wconn.execute(
+                "SELECT t.dept_id AS dept, j.build, count(*) AS n, avg(j.passed) AS rate, max(j.created_at) AS last "
+                "FROM judgments j JOIN tasks t ON t.id=j.work_id WHERE j.build IS NOT NULL "
+                "GROUP BY t.dept_id, j.build ORDER BY last").fetchall():
+            by_dept.setdefault(r["dept"], []).append(dict(r))
+        for dept, builds in by_dept.items():
+            if len(builds) < 2 or builds[-1]["build"] == builds[-2]["build"]:
+                continue
+            prev, new = builds[-2], builds[-1]
+            if min(prev["n"], new["n"]) < samples or new["rate"] >= prev["rate"] - drop:
+                continue
+            where = self._dept_slug(dept) or "the organization"
+            r = self._incident(f"Incident: harness build regressed ({new['build']})",
+                               f"The rubric judge's pass rate on {where} dropped from {prev['rate']:.0%} on build "
+                               f"{prev['build']} to {new['rate']:.0%} on build {new['build']} ({new['n']} judgments). "
+                               "The build changed and the work got worse: find what the new build does "
+                               "differently (result.usage.build names it on every run), fix or roll back the body, "
+                               "and let the department verify a result before closing this.")
+            if r:
+                out.append(r)
+        return out
 
     def _incidents(self, swept: list[dict]) -> list[dict]:
         h = self.config["healing"]

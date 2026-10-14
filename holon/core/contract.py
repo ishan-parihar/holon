@@ -52,6 +52,8 @@ COMMON = {
     "usage": F("object", fields={
         "tokens_in": F("num", lo=0), "tokens_out": F("num", lo=0), "cost": F("num", lo=0),
         "tool_calls": F("num", lo=0), "duration_s": F("num", lo=0),
+        "build": F("str", doc="the harness build that ran (its version or revision string); pass rates "
+                          "group by it and a regression opens incident work (H10)"),
     }, doc="what the run consumed (H4): the kernel records it on the run — budgets and cost per "
            "verified result read it; a usage the driver measured wins over the envelope's claim"),
 }

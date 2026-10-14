@@ -370,7 +370,8 @@ UNMIRRORED = {
         "brief_path": "a local path (holon run show)", "log_path": "a local path (holon run show)",
         "token_hash": "a credential: never leaves the kernel",
         "tool_calls": "usage detail; metrics aggregates cost per verified result",
-        "duration_s": "usage detail; metrics shows cycle time by stage"},
+        "duration_s": "usage detail; metrics shows cycle time by stage",
+        "harness_build": "kernel regression analysis groups judgments by it (H10)"},
 }
 TABLES = {"departments": "departments", "employees": "employees", "work": "tasks", "runs": "runs"}
 

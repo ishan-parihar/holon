@@ -246,6 +246,10 @@
         "duration_s": {
           "type": "object",
           "properties": {}
+        },
+        "build": {
+          "type": "string",
+          "description": "the harness build that ran (its version or revision string); pass rates group by it and a regression opens incident work (H10)"
         }
       },
       "description": "what the run consumed (H4): the kernel records it on the run — budgets and cost per verified result read it; a usage the driver measured wins over the envelope's claim"

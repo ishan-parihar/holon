@@ -299,3 +299,17 @@ class EventTriggers(LaneCase):
     def test_a_routine_needs_a_cron_or_an_event(self):
         with self.assertRaises(ValueError):
             self.k.add_routine("No clock", "Nothing schedules it", dept="eng", workdir=str(self.workdir))
+
+
+class BuildJudgments(LaneCase):
+    """H10 (phase H): the build in result.usage is recorded on the run, and the rubric judge's
+    rows carry the build they judged against — so pass rates group by build."""
+
+    def test_judgments_carry_the_build_that_ran_the_result(self):
+        w = self.add("Digest again", dept="eng", task_class="c", lane="fast", risk="low")
+        c = self.k.claim("execute", self.dev1)
+        self.k.submit(c.run["id"], self.exec_env(usage={"build": "harness-9"}))
+        run = self.k.work.get_run(c.run["id"])
+        self.assertEqual(run["harness_build"], "harness-9", "the envelope's build, recorded on the run")
+        rows = self.k.wconn.execute("SELECT DISTINCT build FROM judgments WHERE work_id=?", (w["id"],)).fetchall()
+        self.assertEqual([r[0] for r in rows], ["harness-9"], "the judge groups by that build")

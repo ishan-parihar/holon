@@ -172,3 +172,36 @@ class DoctorOnTheHeartbeat(KernelCase):
         first = [x for x in self.k.tick()["triggered"] if "incident" in x]
         self.assertEqual([x["title"] for x in first], ["Incident: doctor reports audit.chain"])
         self.assertFalse([x for x in self.k.tick()["triggered"] if "incident" in x], "doctor waits doctor_every_min")
+
+
+class BuildRegression(Loops):
+    """H10 (phase H): the build that ran a result is recorded on the run, the rubric judge's
+    judgments carry it, and a build whose pass rate drops materially below the previous
+    build's opens incident work — a regressed harness is visible from judgments alone."""
+
+    def _judged(self, work, build, n, passed, at):
+        for i in range(n):
+            self.k.wconn.execute(
+                "INSERT INTO judgments (work_id, playbook, version, criterion, p, passed, build, created_at)"
+                " VALUES (?,?,?,?,?,?,?,?)",
+                (work["id"], None, None, "does the job", 0.9 if passed else 0.2, int(passed), build, at))
+
+    def test_a_regressed_build_opens_incident_work(self):
+        t = self.add(dept="ops", task_class="restart")
+        self._judged(t, "harness-7", 12, True, "2026-10-10T09:00:00Z")    # the good build
+        self._judged(t, "harness-7", 12, True, "2026-10-11T09:00:00Z")
+        self._judged(t, "harness-8", 12, False, "2026-10-12T09:00:00Z")   # the regressed one
+        out = self.k.triggers()
+        inc = next(i for i in out if "harness-8" in i["title"])
+        w = self.k.work.get(inc["incident"])
+        self.assertEqual(w["task_class"], "incident", "incident work")
+        self.assertIn("from 100% on build harness-7 to 0% on build harness-8", w["intent"], "the drop is named")
+        self.assertTrue(all("harness-8" not in i["title"] for i in self.k.triggers()), "one incident, not one a sweep")
+
+    def test_a_better_build_or_too_few_judgments_is_not_an_incident(self):
+        t = self.add(dept="ops", task_class="restart")
+        self._judged(t, "harness-7", 12, False, "2026-10-10T09:00:00Z")
+        self._judged(t, "harness-8", 12, True, "2026-10-11T09:00:00Z")   # improved: no incident
+        self.assertFalse([i for i in self.k.triggers() if "regressed" in i.get("title", "")])
+        self._judged(t, "harness-9", 3, False, "2026-10-12T09:00:00Z")   # too few judgments to judge
+        self.assertFalse([i for i in self.k.triggers() if "regressed" in i.get("title", "")])

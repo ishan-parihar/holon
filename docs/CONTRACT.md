@@ -234,9 +234,12 @@ boundary). Absent or malformed, it is dropped — never fatal; the trajectory st
 next run, the result decides this one.
 
 The envelope may also carry `usage`: `{"tokens_in", "tokens_out", "cost", "tool_calls",
-"duration_s"}`, all optional numbers. The kernel records them on the run (budgets and cost
+"duration_s"}`, all optional numbers, plus `build` — an optional string naming the harness
+build that ran (its version or revision). The kernel records them on the run (budgets and cost
 per verified result read them); a usage the driver measured in its own output wins over
-the envelope's claim.
+the envelope's claim. The rubric judge's rows carry the judged run's build, so pass rates
+group by build — and when a build's pass rate drops materially below the previous build's,
+incident work opens (GENOME §6 `[healing] build_regression_*`).
 
 ## §11 The supervisor protocol (H6)
 
