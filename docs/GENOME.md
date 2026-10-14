@@ -114,6 +114,7 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[cadence]` | `probation_days` | 14 | days before a new hire's confirmation goes to their head |
 | `[budget]` | `max_running_per_dept` | 0 (no cap) | runs a department may have in flight; `[budget.dept.<slug>]` overrides |
 | `[notify]` | `command` | "" (off) | run on each heartbeat that finds something new for the Chair; `{message}` is the text (an adapter fills this in, e.g. a chat CLI) |
+| `[events]` | `cooldown_s` | 300 | an event routine (`routine add --on event:<pattern>`) fires at most once per this many seconds; the runtime that saw a matching event calls `holon routine fire` |
 | `[budget]` | `max_runs_per_dept_per_day` | 0 (no cap) | runs a department may start in 24 hours; its stages wait on the board beyond it |
 | `[budget]` | `tokens_per_run` | 0 (no cap) | per-run token cap compiled into `policy.json` (H5); `[budget.dept.<slug>]` then `[budget.employee.<id>]` override, last wins; a harness enforces it and reports stopping in `refusals` |
 | `[budget]` | `cost_per_run` | 0.0 (no cap) | per-run cost cap in the invoice currency, same overrides and enforcement as `tokens_per_run` |
@@ -225,6 +226,14 @@ A routine runs unattended, so it is a proposal graded at least G2 (G3 when the m
 reaches outside the organization) for the approver that grade names; on approval its schedule
 starts (`holon routine list`). With `--deliver`, each finished firing's result goes to the Chair
 through `[notify]` (a digest in the Chair's chat), retried by the heartbeat until it is sent.
+
+A routine may fire on **events** instead of a clock: `--on event:<pattern>` (no cron), e.g.
+`event:webhook:invoice.*`. The runtime that sees the event — a gateway, a webhook receiver —
+matches the published `api_triggers` patterns against it and calls
+`holon routine fire <schedule> --payload …`, at most once per `[events] cooldown_s`; the payload
+rides on the firing's work as a message, where the executor's brief shows it. Holon never
+matches events itself, and an event trigger never fires by time (`take_due` ignores it).
+
 `holon routine import <cron-jobs/*.md> --dept <slug>` reads legacy cron-job protocol files
 (frontmatter `name`, `schedule`, `description`, `no_agent` + `script`, `deliver`, `status`) and shows the
 routines they would become; `--apply` proposes each active one (paused ones are skipped). Each firing of a script or fast routine enters at execute with the

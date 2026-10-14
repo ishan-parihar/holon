@@ -255,3 +255,18 @@ under its own sandboxing, or spawn any driver's argv. The run's outcome depends 
 result handed in and the policy it was given: `result.json` written by the body,
 `trajectory.json` optional beside it (§10). A prepared run that is never finished reverts by
 lease expiry, like any abandoned run.
+
+## §12 Event triggers (H7)
+
+A routine may fire on events instead of a clock: `holon routine add … --on event:<pattern>`. The
+runtime that sees an event (a gateway, a webhook receiver) reads `api_triggers` (§8), matches
+`event` rows' patterns against it, and calls:
+
+```sh
+holon routine fire <schedule_id> --payload 'what the event carried'
+```
+
+Holon never matches events itself. Firing is at most once per `[events] cooldown_s` (GENOME §6),
+then the same skip-if-open rule a cron firing has: slow work never piles up. The payload rides on
+the firing's work as a message, where the executor's brief shows it. A webhook that many systems
+must react to is one routine per reaction, each with its own pattern and cooldown.

@@ -586,7 +586,10 @@ def cmd_schedule_add(args, k):
 @command("routine add", "chair", "a recurring job, in the cheapest lane that does it reliably (script, fast, full); "
          "the classifier enforces the lane and the routine goes to its approver", arg("title"),
          arg("--intent", required=True, help="what each firing does: text, '-' for stdin, or @file"),
-         arg("--dept", required=True), arg("--cron", required=True, help="5-field cron, e.g. '0 7 * * *'"),
+         arg("--dept", required=True),
+         arg("--cron", help="5-field cron, e.g. '0 7 * * *'; or --on for an event trigger"),
+         arg("--on", metavar="event:<pattern>", help="fire on events instead of a cron: the runtime that sees "
+             "a matching event fires it (`holon routine fire`), once per cooldown; Holon never matches events"),
          arg("--lane", choices=list(vocab.LANES), help="default: the classifier's"),
          arg("--command", help="the script lane: a command the kernel runs (no agent)"),
          arg("--rubric", action="append", default=[], help="a criterion each result is judged on (repeat)"),
@@ -595,12 +598,22 @@ def cmd_schedule_add(args, k):
          arg("--workdir"), arg("--task-class"), arg("--risk", default="normal", choices=list(vocab.RISKS)),
          arg("--project"))
 def cmd_routine_add(args, k):
-    a = k.add_routine(args.title, _text_arg(args.intent), dept=args.dept, cron=args.cron, lane=args.lane,
+    a = k.add_routine(args.title, _text_arg(args.intent), dept=args.dept, cron=args.cron, event=args.on,
+                      lane=args.lane,
                       command=args.command, rubric=args.rubric, why=args.why, task_class=args.task_class,
                       workdir=str(Path(args.workdir).expanduser().resolve()) if args.workdir else None,
                       risk=args.risk, project_ref=args.project, deliver=args.deliver)
     plan = k.work.plan_for_approval(a["id"])
     _out(args, {"approval": a, "plan": plan}, _plan_text(k, a) + "\n\nOn approval the schedule starts.")
+
+
+@command("routine fire", "kernel", "fire an event routine: the runtime that saw a matching event calls this "
+         "(once per cooldown, with the payload on the work)", arg("schedule_id"),
+         arg("--payload", help="what the event carried: text, '-' for stdin, or @file"))
+def cmd_routine_fire(args, k):
+    out = k.fire_routine(args.schedule_id, _text_arg(args.payload) if args.payload else None)
+    sk = out.get("skipped")
+    _out(args, out, f"skipped: {sk}" if sk else f"work {out.get('recurring_work')} fired")
 
 
 def legacy_cron(path: Path) -> dict:

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from holon.core import vocab
 from holon.core.db import now, write_txn
@@ -35,11 +35,17 @@ class Schedules:
         return self.get(sid)
 
     def insert(self, kind: str, cron: str, *, employee_id: str | None = None, stage: str | None = None,
-               template_id: str | None = None) -> str:
-        """`add` inside the caller's transaction (an approval that creates a routine's schedule)."""
+               template_id: str | None = None, event: str | None = None) -> str:
+        """`add` inside the caller's transaction (an approval that creates a routine's schedule).
+        `event` (H7): an event trigger — no cron, no clock; the runtime that sees a matching
+        event fires it (`holon routine fire`), at most once per [events] cooldown_s."""
         if kind not in KINDS:
             raise ValueError(f"kind must be one of {KINDS}")
-        c = Cron(cron)
+        if event:
+            if kind != "recurring":
+                raise ValueError("only a recurring schedule can fire on an event")
+            cron = ""
+        c = Cron(cron) if cron else None
         if kind == "recurring":
             t = self.work.get(template_id) if template_id else None
             if t is None or t["stage"] != "plan" or not t["recurring"]:
@@ -54,10 +60,11 @@ class Schedules:
                 raise ValueError(f"employee {employee_id} has no role that performs the '{stage}' stage")
         sid = new_id("schedule")
         self.conn.execute(
-            "INSERT INTO schedules (id, kind, cron, employee_id, stage, template_id, next_run_at, created_at)"
-            " VALUES (?,?,?,?,?,?,?,?)",
-            (sid, kind, cron, employee_id, stage, template_id, _iso(c.next_after(datetime.now(timezone.utc))), now()))
-        self.work._event("schedule", sid, None, "enabled", f"{kind} '{cron}'")
+            "INSERT INTO schedules (id, kind, cron, employee_id, stage, template_id, next_run_at, event, created_at)"
+            " VALUES (?,?,?,?,?,?,?,?,?)",
+            (sid, kind, cron, employee_id, stage, template_id,
+             _iso(c.next_after(datetime.now(timezone.utc))) if c else None, event, now()))
+        self.work._event("schedule", sid, None, "enabled", f"{kind} '{cron or event}'")
         return sid
 
     def get(self, sid: str) -> dict:
@@ -72,18 +79,28 @@ class Schedules:
     def set_enabled(self, sid: str, enabled: bool) -> dict:
         s = self.get(sid)
         with write_txn(self.conn):
-            nxt = _iso(Cron(s["cron"]).next_after(datetime.now(timezone.utc))) if enabled else s["next_run_at"]
+            nxt = (_iso(Cron(s["cron"]).next_after(datetime.now(timezone.utc)))
+                   if enabled and s["cron"] else s["next_run_at"])
             self.conn.execute("UPDATE schedules SET enabled=?, next_run_at=? WHERE id=?", (1 if enabled else 0, nxt, sid))
             self.work._event("schedule", sid, None, "enabled" if enabled else "disabled")
         return self.get(sid)
 
+    def arm_cooldown(self, sid: str, seconds: int) -> None:
+        """An event trigger fired: it will not fire again until the cooldown passes (next_run_at is
+        its clock; take_due ignores event rows, so it never fires by time)."""
+        at = datetime.now(timezone.utc)
+        with write_txn(self.conn):
+            self.conn.execute("UPDATE schedules SET last_run_at=?, next_run_at=? WHERE id=?",
+                              (_iso(at), _iso(at + timedelta(seconds=seconds)), sid))
+
     def take_due(self, at: datetime | None = None) -> list[dict]:
-        """Atomically advance every due schedule to its next fire time and return them."""
+        """Atomically advance every due schedule to its next fire time and return them.
+        Event triggers have no clock — they fire through `holon routine fire`, never by time."""
         at = at or datetime.now(timezone.utc)
         due = []
         with write_txn(self.conn):
-            for s in self.conn.execute("SELECT * FROM schedules WHERE enabled=1 AND next_run_at <= ?",
-                                       (_iso(at),)).fetchall():
+            for s in self.conn.execute("SELECT * FROM schedules WHERE enabled=1 AND event IS NULL AND next_run_at <= ?",
+                                        (_iso(at),)).fetchall():
                 self.conn.execute("UPDATE schedules SET last_run_at=?, next_run_at=? WHERE id=?",
                                   (_iso(at), _iso(Cron(s["cron"]).next_after(at)), s["id"]))
                 due.append(dict(s))

@@ -67,11 +67,12 @@ class Lint(KernelCase):
             lint.run(self.k, ["vibes"])
 
     def test_the_read_api_is_versioned_and_complete(self):
-        """H2 (boundary doc 4.1): every api_* view exists with the columns api_version 1
-        promises, and the api pack catches a dropped or reshaped view — a consumer that
-        opened the database read-only must never see a view drift under it silently."""
+        """H2 (boundary doc 4.1): every api_* view exists with the columns its api_version
+        promises (2: the v1 shapes, plus api_triggers event rows — H7), and the api pack
+        catches a dropped, reshaped or unknown-version read API — a consumer that opened the
+        database read-only must never see a view drift under it silently."""
         conn = self.k.wconn
-        self.assertEqual(conn.execute("SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "1")
+        self.assertEqual(conn.execute("SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "2")
         self.assertEqual(lint.run(self.k, ["api"]), [])
         conn.execute("DROP VIEW api_board")
         conn.execute("DROP VIEW api_messages")
@@ -79,8 +80,11 @@ class Lint(KernelCase):
         found = lint.run(self.k, ["api"])
         self.assertEqual({f["rule"] for f in found}, {"api.views"})
         self.assertTrue(any("api_board missing" in f["message"] for f in found))
-        self.assertTrue(any("api_messages columns ('id', 'ts') do not match api_version 1" in f["message"]
+        self.assertTrue(any("api_messages columns ('id', 'ts') do not match api_version 2" in f["message"]
                             for f in found))
+        conn.execute("UPDATE api_meta SET value='9' WHERE key='api_version'")
+        self.assertTrue(any(f["rule"] == "api.version" for f in lint.run(self.k, ["api"])),
+                        "a version this Holon does not know is an error, not silence")
 
 
 class Doctor(KernelCase):

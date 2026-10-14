@@ -57,6 +57,7 @@ DEFAULT_CONFIG = {
     "budget": {"max_running_per_dept": 0, "max_runs_per_dept_per_day": 0,   # 0 = no cap
                "tokens_per_run": 0, "cost_per_run": 0.0},   # H5: compiled into policy.json; 0 = no cap
     "notify": {"command": ""},   # e.g. a chat CLI with {message}; empty = no notifications
+    "events": {"cooldown_s": 300},   # an event routine fires at most once per this (H7)
     # what employees may reach beyond their work's workdir; [scope.dept.<slug>] adds to it per department
     "scope": {"roots": [], "commands": [], "act_commands": []},
     # machine checks the kernel runs in the workdir after every execute, before any verifier;
@@ -993,17 +994,26 @@ class Kernel:
         lane = "full" if cls["lane"] in (None, "full") or self._external(cls) else "fast"
         return lane, cls
 
-    def add_routine(self, title: str, intent: str, *, dept: str, cron: str, lane: str | None = None,
+    def add_routine(self, title: str, intent: str, *, dept: str, cron: str | None = None, event: str | None = None,
+                    lane: str | None = None,
                     command: str | None = None, rubric: list[str] | None = None, why: str | None = None,
                     workdir: str | None = None, task_class: str | None = None, risk: str = "normal",
                     project_ref: str | None = None, objective_id: str | None = None, strict: bool = True,
                     deliver: bool = False) -> dict:
-        """A routine (a cron job) as a proposal for the approver its grade names. The lane is enforced
-        cheapest first: a job the classifier judges deterministic must be a script (`command`); a costlier lane
-        than the classifier's needs `why`, which is recorded; a cheaper one is raised to the classifier's.
-        A routine runs unattended, so its floor is G2 (G3 when it reaches outside the organization).
-        `strict=False` (a planner's routine): a costlier lane than the classifier's is lowered to it instead."""
-        Cron(cron)
+        """A routine (a cron job, or an event trigger) as a proposal for the approver its grade names. The
+        lane is enforced cheapest first: a job the classifier judges deterministic must be a script
+        (`command`); a costlier lane than the classifier's needs `why`, which is recorded; a cheaper one
+        is raised to the classifier's. A routine runs unattended, so its floor is G2 (G3 when it
+        reaches outside the organization). `strict=False` (a planner's routine): a costlier lane than
+        the classifier's is lowered to it instead.
+        `event` (H7): 'event:<pattern>' — no cron; the runtime that sees a matching event fires it
+        (`holon routine fire`), once per [events] cooldown_s; Holon never matches events itself."""
+        if bool(cron) == bool(event):
+            raise ValueError("a routine needs --cron or --on event:<pattern>, exactly one")
+        if event and not event.startswith("event:"):
+            raise ValueError("an event trigger is 'event:<pattern>': the runtime that sees the event matches it")
+        if cron:
+            Cron(cron)
         if lane not in (None, *vocab.LANES):
             raise ValueError(f"lane must be one of {vocab.LANES}")
         if command and lane not in (None, "script"):
@@ -1048,13 +1058,17 @@ class Kernel:
             reasons.append(f"risk={risk}: floor G{grading.RISK_FLOOR[risk]}")
         dept_id = self.org.dept(dept)["id"]
         approver = self.org.resolve_approver({"dept_id": dept_id, "task_class": task_class}, floor, None)
-        steps = {"script": f"The kernel runs `{command}` in {workdir or 'its run directory'} on `{cron}`; checks and "
+        when = (f"on `{cron}`" if cron else
+                f"when a matching event fires it (`{event}`; the runtime that saw it calls `holon routine fire`, "
+                "once per cooldown)")
+        steps = {"script": f"The kernel runs `{command}` in {workdir or 'its run directory'} {when}; checks and "
                            "the rubric judge each result.",
-                 "fast": f"On `{cron}`, one agent session does the job; the rubric judge checks each result and a "
-                         "verifier sees the unsure ones.",
-                 "full": f"On `{cron}`, a fresh piece of work is planned, approved, executed and verified."}[lane]
+                 "fast": f"{when[0].upper() + when[1:]}, one agent session does the job; the rubric judge checks "
+                         "each result and a verifier sees the unsure ones.",
+                 "full": f"{when[0].upper() + when[1:]}, a fresh piece of work is planned, approved, executed and verified."}[lane]
         return self.work.propose(
-            title=f"Routine: {title}", intent=intent, steps=steps, apply={"kind": "routine", "cron": cron},
+            title=f"Routine: {title}", intent=intent, steps=steps,
+            apply={"kind": "routine", "cron": cron, "event": event},
             approver=approver, grade=floor, task_class=task_class, dept=dept_id, author=self.actor,
             reasons=reasons + notes, body={"lane": lane, "rubric": list(rubric or []), "classification": cls,
                                            "playbook": playbooks.for_routine(title), "deliver": bool(deliver),
@@ -1066,7 +1080,7 @@ class Kernel:
         """On approval: the plan becomes a standing (recurring) plan, its schedule starts, and its playbook
         (protocol + rubric, version 1) is written into the department's skills, where refinement improves it."""
         self.wconn.execute("UPDATE tasks SET recurring=1 WHERE id=?", (a["_plan"],))
-        self.schedules.insert("recurring", a["cron"], template_id=a["_plan"])
+        self.schedules.insert("recurring", a.get("cron") or "", template_id=a["_plan"], event=a.get("event"))
         plan = self.work.get(a["_plan"])
         src, body = self.work.get(plan["parent_id"]), self.work.output(a["_plan"])["body"]
         slug, name = self._dept_slug(src["dept_id"]), body.get("playbook")
@@ -1401,6 +1415,25 @@ class Kernel:
                 self.work._event("run", rid, None, None, "salvaged: its result was on disk when its lease expired",
                                  actor="kernel")
             out.append(rid)
+        return out
+
+    def fire_routine(self, schedule_id: str, payload: str | None = None) -> dict:
+        """H7: fire an event routine once per cooldown. The runtime that saw a matching event calls
+        this (a gateway, a webhook receiver — `holon routine fire`); Holon never matches events
+        itself. The payload rides on the firing's work as a message, where the executor's brief shows
+        it. Cooldown first, then the same skip-if-open guard a cron firing has."""
+        s = self.schedules.get(schedule_id)
+        if not s["event"]:
+            raise TransitionError(f"schedule {schedule_id} has no event; a cron schedule fires on its clock")
+        if not s["enabled"]:
+            return {"schedule": schedule_id, "skipped": "disabled"}
+        if s["next_run_at"] and s["next_run_at"] > now():
+            return {"schedule": schedule_id, "skipped": f"cooldown until {s['next_run_at']}"}
+        self.schedules.arm_cooldown(schedule_id, int(self.config.get("events", {}).get("cooldown_s", 300)))
+        out = self._fire_recurring(s)
+        wid = out.get("recurring_work")
+        if wid and payload:
+            self.work.post_message("event", f"work:{wid}", f"{s['event']}\n{payload}", task_id=wid)
         return out
 
     def _fire_recurring(self, s: dict) -> dict:

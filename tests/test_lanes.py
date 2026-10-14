@@ -257,3 +257,45 @@ class Classifier(LaneCase):
         with contextlib.redirect_stdout(buf):
             cli.main(["--home", str(self.home.root), "--json", "classify", "Rotate logs", "--intent", "move old logs"])
         self.assertEqual(json.loads(buf.getvalue())["lane"], "script")
+
+
+class EventTriggers(LaneCase):
+    """H7 (phase F): a routine may fire on an event pattern instead of a cron. The runtime
+    that sees a matching event fires it (`holon routine fire`), once per cooldown, with the
+    payload on the work; api_triggers (api_version 2) publishes it with trigger_kind 'event'."""
+
+    def _routine(self):
+        a = self.k.add_routine("Watch invoices", "Summarise each invoice", dept="eng",
+                               event="event:webhook:invoice.*", lane="fast", why="each needs judgement",
+                               workdir=str(self.workdir))
+        approval = self.k.work.plan_for_approval(a["id"])
+        self.k.approve(approval["id"])
+        return next(r for r in self.k.schedules.list() if r["event"])
+
+    def test_an_event_routine_is_approved_into_a_schedule_that_time_never_fires(self):
+        s = self._routine()
+        self.assertEqual((s["kind"], s["cron"]), ("recurring", ""))
+        self.assertIsNone(s["next_run_at"])
+        self.assertEqual(self.k.schedules.take_due(), [], "an event trigger has no clock")
+
+    def test_fire_creates_work_carries_the_payload_and_cools_down(self):
+        s = self._routine()
+        out = self.k.fire_routine(s["id"], payload="invoice 42: $10")
+        wid = out["recurring_work"]
+        self.assertIn("invoice 42", self.k.work.messages(task_id=wid)[0]["body"])
+        c = self.k.claim("execute", self.dev1)
+        self.assertIn("invoice 42", (c.brief_dir / "context.md").read_text())
+        self.assertTrue(self.k.fire_routine(s["id"]).get("skipped"), "within the cooldown")
+        self.k.wconn.execute("UPDATE schedules SET next_run_at=NULL WHERE id=?", (s["id"],))
+        self.assertTrue(self.k.fire_routine(s["id"]).get("skipped"), "the last firing's work is open")
+
+    def test_api_triggers_v2_publishes_event_rows(self):
+        s = self._routine()
+        row = next(dict(r) for r in self.k.wconn.execute("SELECT * FROM api_triggers WHERE id=?", (s["id"],)))
+        self.assertEqual((row["trigger_kind"], row["pattern"]), ("event", "event:webhook:invoice.*"))
+        self.assertEqual(self.k.wconn.execute(
+            "SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "2")
+
+    def test_a_routine_needs_a_cron_or_an_event(self):
+        with self.assertRaises(ValueError):
+            self.k.add_routine("No clock", "Nothing schedules it", dept="eng", workdir=str(self.workdir))
