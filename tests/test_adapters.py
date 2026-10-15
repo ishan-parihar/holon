@@ -282,3 +282,30 @@ class ImportCast(KernelCase):
         emp = self.k.wconn.execute("SELECT id FROM employees WHERE name='Chief of Staff'").fetchone()[0]
         self.assertIn("charter of chief-of-staff",
                       self.k.org.employee(emp)["job_description"], "the seat's charter is the job description")
+
+
+class SupervisorConformance(KernelCase):
+    """H-10 (integration audit): the supervisor conformance suite. The known-good reference
+    supervisor passes every clause; a supervisor that leaks its environment into the body,
+    never hands in, never renews the lease, or never enforces the timeout fails."""
+
+    def _run(self, script: str, clauses: list[str] | None = None):
+        from holon.integrity import supervisor_conformance as sc
+        return sc.run_supervisor(self.k, script, clauses)
+
+    def test_the_reference_supervisor_passes_every_clause(self):
+        report = self._run(f"{sys.executable} {ADAPTERS.parent / 'tests' / 'reference_supervisor.py'}")
+        self.assertEqual(report["passed"], len(report["clauses"]),
+                         [c for c in report["clauses"] if not c["ok"]])
+
+    def test_a_supervisor_that_leaks_and_never_finishes_fails(self):
+        leak = ("import json, os, subprocess, sys; p=json.load(sys.stdin); "
+                "subprocess.run(p['command'], shell=True, cwd=p['cwd'], env=dict(os.environ))")
+        report = self._run(leak, clauses=["env", "finish"])
+        by = {c["clause"]: c for c in report["clauses"]}
+        self.assertFalse(by["env"]["ok"], "the body saw the supervisor's whole environment")
+
+    def test_a_supervisor_that_hangs_the_body_fails_the_timeout_clause(self):
+        neglect = "import json, sys; json.load(sys.stdin); import time; time.sleep(120)"
+        report = self._run(neglect, clauses=["timeout"])
+        self.assertFalse(report["clauses"][0]["ok"], "nobody enforced the timeout")

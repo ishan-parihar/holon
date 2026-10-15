@@ -1166,12 +1166,24 @@ def cmd_restore(args, k):
     _out(args, out, f"restored from {out['restored_from']}; run `holon doctor`")
 
 
-@command("adapter test", "chair", "run the harness conformance suite against a driver", arg("driver"),
+@command("adapter test", "chair", "run the harness conformance suite against a driver, or the "
+         "supervisor conformance suite against a supervisor command (CONTRACT §11)",
+         arg("driver", nargs="?", help="a driver name — omit with --supervisor"),
          arg("--workdir", help="scratch directory (default: a temporary one)"),
-         arg("--clauses", help="comma list of clauses to run (default: all)"))
+         arg("--clauses", help="comma list of clauses to run (default: all)"),
+         arg("--supervisor", metavar="CMD", help="test this supervisor command: it reads the prepared "
+             "run JSON on stdin, runs the body, renews the lease, enforces the timeout, and hands the "
+             "body in (`holon adapter test --supervisor '…'` — the scripted fixture spends no model calls)"))
 def cmd_adapter_test(args, k):
-    from holon.integrity import conformance
-    report = conformance.run(k, args.driver, args.workdir, args.clauses.split(",") if args.clauses else None)
+    if args.supervisor:
+        from holon.integrity import supervisor_conformance
+        report = supervisor_conformance.run_supervisor(k, args.supervisor,
+                                                        args.clauses.split(",") if args.clauses else None)
+    else:
+        if not args.driver:
+            raise ValueError("a driver name, or --supervisor <cmd>")
+        from holon.integrity import conformance
+        report = conformance.run(k, args.driver, args.workdir, args.clauses.split(",") if args.clauses else None)
     _out(args, report, "\n".join(f"{'pass' if c['ok'] else 'FAIL'}  {c['clause']:<22} {c['detail']}"
                                  for c in report["clauses"]) + f"\n{report['passed']}/{len(report['clauses'])} passed")
     return 0 if report["passed"] == len(report["clauses"]) else 1
