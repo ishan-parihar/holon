@@ -787,14 +787,19 @@ class Sync:
         want = "sha256=" + hmac.new(token.encode(), raw, hashlib.sha256).hexdigest()
         return hmac.compare_digest(want, signature)
 
-    def _classify(self, raw: bytes, signature: str | None) -> tuple[int, str, list[str]]:
+    def _classify(self, raw: bytes, signature: str | None, path_verified: bool = True) -> tuple[int, str, list[str]]:
         """The shared receiver logic: verify, and say what the event means. Returns the receiver's
-        status, a message, and the items to handle (page ids, or the schema event)."""
+        status, a message, and the items to handle (page ids, or the schema event). A
+        verification_token body rotates the stored token only when the caller sits behind the
+        secret path (`path_verified`): `apply` runs wherever a host mounts it, and a public
+        mount must never be able to swap the token (H-05)."""
         try:
             body = json.loads(raw or b"{}")
         except json.JSONDecodeError:
             return 400, "bad json", []
         if "verification_token" in body:
+            if not path_verified:
+                return 401, "token refused: apply is not mounted behind the secret path", []
             # Notion re-sends the token on "Resend" and when a subscription is recreated; the newest
             # one wins. Only a caller who knows the secret path gets this far.
             self.cfg["webhook_token"] = body["verification_token"]
@@ -820,12 +825,13 @@ class Sync:
             inbox.put(i)
         return code, msg
 
-    def apply_event(self, raw: bytes, signature: str | None) -> tuple[int, str]:
+    def apply_event(self, raw: bytes, signature: str | None, path_verified: bool = False) -> tuple[int, str]:
         """One webhook event, handled in line without the server (H8): the runtime that hosts the
         webhook route (a gateway) feeds each event here as it arrives — the same verification and
         classification, then `handle_event` runs before returning. A box that hosts the route this
-        way does not need `holon-notion.service`; the poll stays the fallback."""
-        code, msg, items = self._classify(raw, signature)
+        way does not need `holon-notion.service`; the poll stays the fallback. The host passes
+        `--path-verified` only when its route carries the secret path (H05)."""
+        code, msg, items = self._classify(raw, signature, path_verified=path_verified)
         for i in items:
             msg = self.handle_event(i)
         return code, msg
@@ -954,6 +960,8 @@ def main(argv: list[str] | None = None) -> int:
                      "route feeds each event here); reads stdin, or --file")
     s.add_argument("--signature", help="the event's X-Notion-Signature header value")
     s.add_argument("--file", help="the event JSON (default: stdin)")
+    s.add_argument("--path-verified", action="store_true", help="the route this event arrived on carries "
+                     "the secret path; without it a verification_token body is refused (H05)")
     sub.add_parser("status")
     v = sub.add_parser("serve")
     v.add_argument("--port", type=int, default=8787)
@@ -1007,7 +1015,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{r['ts']} {r['kind']}: {r['detail']}")
     elif a.cmd == "apply":
         raw = (Path(a.file).read_bytes() if a.file else sys.stdin.buffer.read())
-        code, msg = sync.apply_event(raw, a.signature)
+        code, msg = sync.apply_event(raw, a.signature, path_verified=a.path_verified)
         print(f"{code} {msg}")
         return 0 if code < 400 else 1
     elif a.cmd == "serve":

@@ -547,11 +547,16 @@ def cmd_verify(args, k):
          arg("--stage", choices=list(vocab.STAGES)), arg("--task"), arg("--schedule", help=argparse.SUPPRESS),
          arg("--prepare", action="store_true", help="claim and write the brief, policy.json and the run "
              "token, and print them as JSON without running the body (an external supervisor runs it; "
-             "CONTRACT §11)"))
+             "CONTRACT §11)"),
+         arg("--runs-as-agent-user", action="store_true", help="the supervisor's promise: it runs the body as "
+             "the isolated agent user through the runner. Required with --prepare under isolation"))
 def cmd_dispatch(args, k):
     if not args.as_:
         raise ValueError("--as <emp_id> is required")
     if args.prepare:
+        if k.isolation and not args.runs_as_agent_user:
+            raise PermissionError("--prepare under isolation needs --runs-as-agent-user: a supervisor that "
+                                  "runs the body as itself defeats the trust boundary (CONTRACT §11)")
         out = k.prepare_dispatch(args.as_, args.stage, args.task)
         if out is None:
             _out(args, {"prepared": None}, f"nothing to do for {args.as_}")
@@ -617,11 +622,19 @@ def cmd_routine_add(args, k):
 
 @command("routine fire", "kernel", "fire an event routine: the runtime that saw a matching event calls this "
          "(once per cooldown, with the payload on the work)", arg("schedule_id"),
-         arg("--payload", help="what the event carried: text, '-' for stdin, or @file"))
+         arg("--payload", help="what the event carried, taken literally: never a file reference — a runtime "
+             "relaying channel text MUST NOT let that text name a path. Use --payload-file for a file the "
+             "runtime itself chose"),
+         arg("--payload-file", help="read the payload from this file (the runtime's own choice of path)"))
 def cmd_routine_fire(args, k):
-    out = k.fire_routine(args.schedule_id, _text_arg(args.payload) if args.payload else None)
+    payload = args.payload
+    if args.payload_file:
+        payload = _read(args.payload_file)
+    out = k.fire_routine(args.schedule_id, payload)
     sk = out.get("skipped")
     _out(args, out, f"skipped: {sk}" if sk else f"work {out.get('recurring_work')} fired")
+    if sk:   # H-13: a skip is not a firing; runtimes count them (CONTRACT §12)
+        return NOTHING
 
 
 def legacy_cron(path: Path) -> dict:
@@ -803,9 +816,12 @@ def _sender(args, k) -> str:
 
 
 @command("msg send", "employee", "message a colleague, a department, the organization or the Chair",
-         AS, arg("to", help="emp:<id> | dept:<slug> | org | chair"), arg("body"), arg("--task"))
+         AS, arg("to", help="emp:<id> | dept:<slug> | org | chair"), arg("body"), arg("--task"),
+         arg("--literal", action="store_true", help="the body is literal text: a runtime relaying it must not "
+             "let '@path' or '-' choose a file"))
 def cmd_msg_send(args, k):
-    mid = k.work.post_message(_sender(args, k), args.to, _text_arg(args.body),
+    body = args.body if args.literal else _text_arg(args.body)
+    mid = k.work.post_message(_sender(args, k), args.to, body,
                               kind="channel" if args.to.startswith(("dept:", "org")) else "dm", task_id=args.task)
     _out(args, {"id": mid}, f"sent {mid} to {args.to}")
 
@@ -831,7 +847,9 @@ def cmd_msg_request(args, k):
          AS, arg("--scope", required=True, help="emp:<id> | dept:<slug> | org | <project ref> | class:<name>"),
          arg("--kind", required=True, choices=list(vocab.MEMORY_KINDS)), arg("--content", required=True),
          arg("--provenance"), arg("--confidence", default="medium", choices=list(vocab.CONFIDENCE)),
-         arg("--pin", action="store_true"))
+         arg("--pin", action="store_true"),
+         arg("--literal", action="store_true", help="the content is literal text: a runtime relaying it must not "
+             "let '@path' or '-' choose a file"))
 def cmd_memory_add(args, k):
     p = args.principal
     if p.kind == "employee":
@@ -842,8 +860,8 @@ def cmd_memory_add(args, k):
             raise PermissionError("employees write only their own department's scope")
         if args.scope == "org" or args.pin:
             raise PermissionError("org-scope and pinned memory are the Chair's (promotion does the rest)")
-    it = k.memory.add_item(args.scope, args.kind, _text_arg(args.content), args.provenance or p.actor,
-                           confidence=args.confidence, pinned=args.pin)
+    it = k.memory.add_item(args.scope, args.kind, args.content if args.literal else _text_arg(args.content),
+                           args.provenance or p.actor, confidence=args.confidence, pinned=args.pin)
     _out(args, it, f"{it['id']} {it['action']}")
 
 

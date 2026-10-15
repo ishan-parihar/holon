@@ -11,8 +11,10 @@ import secrets
 import subprocess
 import sys
 import threading
+import types
 from pathlib import Path
 
+from holon import cli as holon_cli
 from holon.execution import isolation
 from holon.execution.service import Kernel
 from tests.helpers import FAKE_AGENT, REPO, KernelCase
@@ -183,3 +185,31 @@ class Setup(KernelCase):
         from holon.capabilities.skills import SkillError
         with self.assertRaises(SkillError):
             self.k.skills.resolve("../../../.config", "x.md")
+
+
+class PreparedUnderIsolation(Isolated):
+    """H-07/H-08 (integration audit): the enforcing harness must be able to read policy.json, and
+    a supervisor takes the body only with the isolation it must run it under — or it is refused."""
+
+    def test_policy_json_is_readable_by_the_enforcing_harness(self):
+        w = self.add(dept="eng")
+        c = self.k.claim("plan", self.hod)
+        mode = (c.brief_dir / "policy.json").stat().st_mode & 0o777
+        self.assertEqual(mode, 0o640, "policy.json: the harness that must enforce it can read it")
+
+    def test_the_prepared_handoff_carries_isolation_and_the_cli_gates_it(self):
+        self.add(dept="eng")
+        out = self.k.prepare_dispatch(self.hod, "plan")
+        self.assertEqual(out["isolation"]["agent_user"], getpass.getuser())
+        self.assertEqual(out["isolation"]["runner"], self.runner)
+        self.k.submit(out["run"], self.plan_env())   # free the concurrency slot
+        self.add("second", dept="eng")
+        args = types.SimpleNamespace(as_=self.hod, stage="plan", task=None, prepare=True,
+                                     runs_as_agent_user=False, json=True, schedule=None)
+        with self.assertRaises(PermissionError):
+            holon_cli.cmd_dispatch(args, self.k)
+        args.runs_as_agent_user = True
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            holon_cli.cmd_dispatch(args, self.k)
+        self.assertIn("isolation", buf.getvalue(), "the supervisor sees what it must run the body as")

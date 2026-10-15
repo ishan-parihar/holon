@@ -1348,7 +1348,9 @@ class Kernel:
                 "employee": employee_id, "driver": drv.name, "command": cmd, "cwd": cwd,
                 "env": env, "timeout_s": drv.timeout_s, "brief_md": brief["brief_md"],
                 "result_path": brief["result_path"], "policy_json": str(claimed.brief_dir / "policy.json"),
-                "lease_until": claimed.run["lease_until"]}
+                "lease_until": claimed.run["lease_until"],
+                **({"isolation": {"agent_user": self.isolation["agent_user"],
+                                   "runner": self.isolation.get("runner")}} if self.isolation else {})}
 
     def finish_run(self, run_id: str, exit_code: int = 0) -> dict:
         """H6: a supervisor hands a finished body in. This process is the kernel's short Python

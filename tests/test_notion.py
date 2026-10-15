@@ -4,9 +4,12 @@ import hashlib
 import hmac
 import importlib.util
 import json
+import os
 import queue
 import re
 import sys
+import tempfile
+import unittest
 from pathlib import Path
 
 from tests.fake_notion import BOT, CHAIR, FakeNotion
@@ -319,9 +322,38 @@ class ApplyEvent(NotionMirror):
         self.assertEqual(self.sync.apply_event(raw, sig), (200, "chair approve"))
 
     def test_apply_stores_a_resent_token_and_ignores_bot_events(self):
-        self.assertEqual(self.sync.apply_event(b'{"verification_token": "secret_z"}', None), (200, "token stored"))
+        # H-05: `apply` is mounted wherever a host puts it, so a token body stores only when the
+        # host says its route carries the secret path.
+        self.assertEqual(self.sync.apply_event(b'{"verification_token": "secret_z"}', None),
+                         (401, "token refused: apply is not mounted behind the secret path"))
+        self.assertEqual(self.sync.apply_event(b'{"verification_token": "secret_z"}', None, path_verified=True),
+                         (200, "token stored"))
         self.assertEqual(self.sync.cfg["webhook_token"], "secret_z")
         raw = json.dumps({"authors": [{"id": BOT, "type": "bot"}],
                           "entity": {"id": "p2", "type": "page"}}).encode()
         sig = "sha256=" + hmac.new(b"secret_z", raw, hashlib.sha256).hexdigest()
         self.assertEqual(self.sync.apply_event(raw, sig), (200, "our own change"))
+
+
+class ApplyTokenRotation(KernelCase):
+    """H-05 (integration audit): `apply` runs wherever a host mounts it. A verification_token
+    body — which rotates the stored webhook token — is refused unless the host says its route
+    carries the secret path."""
+
+    def setUp(self):
+        super().setUp()
+        self.fake = FakeNotion()
+        self.sync = hn.Sync(self.home, hn.Notion("tok", self.fake.base, min_interval=0))
+        self.sync.setup("parent-page", [CHAIR])
+
+    def tearDown(self):
+        self.sync.close()
+        self.fake.close()
+        super().tearDown()
+
+    def test_apply_refuses_a_token_body_without_the_secret_path(self):
+        body = b'{"verification_token": "rotated-by-anyone"}'
+        self.assertEqual(self.sync.apply_event(body, None)[0], 401)
+        self.assertNotIn("webhook_token", self.sync.cfg, "nothing was rotated")
+        self.assertEqual(self.sync.apply_event(body, None, path_verified=True), (200, "token stored"))
+        self.assertEqual(self.sync.cfg["webhook_token"], "rotated-by-anyone")

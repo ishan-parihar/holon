@@ -57,7 +57,7 @@ def write_policy(run_dir: Path, policy: dict) -> Path:
     p = run_dir / "policy.json"
     p.write_text(json.dumps(policy, indent=2))
     try:
-        p.chmod(0o600)
+        p.chmod(0o640)   # the enforcing harness must read it (CONTRACT §9, H-07)
     except OSError:  # pragma: no cover - mode is advisory outside isolation
         pass
     return p

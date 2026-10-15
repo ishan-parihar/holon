@@ -74,7 +74,7 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
     if policy:
         (d / "policy.json").write_text(json.dumps(policy, indent=2))
         try:
-            (d / "policy.json").chmod(0o600)
+            (d / "policy.json").chmod(0o640)   # the enforcing harness must read it (CONTRACT §9, H-07)
         except OSError:   # pragma: no cover - the mode is advisory outside isolation
             pass
     bj = d / "brief.json"

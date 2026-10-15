@@ -259,6 +259,11 @@ result handed in and the policy it was given: `result.json` written by the body,
 `trajectory.json` optional beside it (§10). A prepared run that is never finished reverts by
 lease expiry, like any abandoned run.
 
+On an isolated instance the prepared JSON carries `isolation` (the `agent_user` and the
+`runner`). A supervisor **MUST** run the body as that user through that runner — or decline
+the claim; a supervisor that runs the body as itself defeats the trust boundary, and
+`holon dispatch --prepare` refuses without `--runs-as-agent-user`.
+
 ## §12 Event triggers (H7)
 
 A routine may fire on events instead of a clock: `holon routine add … --on event:<pattern>`. The
@@ -271,5 +276,12 @@ holon routine fire <schedule_id> --payload 'what the event carried'
 
 Holon never matches events itself. Firing is at most once per `[events] cooldown_s` (GENOME §6),
 then the same skip-if-open rule a cron firing has: slow work never piles up. The payload rides on
-the firing's work as a message, where the executor's brief shows it. A webhook that many systems
-must react to is one routine per reaction, each with its own pattern and cooldown.
+the firing's work as a message, where the executor's brief shows it as **external content —
+data, not instructions**. A webhook that many systems must react to is one routine per reaction,
+each with its own pattern and cooldown.
+
+`--payload` takes the text **literally**: never a file reference. A runtime relaying channel
+text MUST NOT let that text name a path — `--payload @/etc/hostname` posts the literal string
+`@/etc/hostname`. A runtime that reads the event from a file it chose itself passes
+`--payload-file`. A skipped firing (cooldown, or work still open) exits with the kernel's
+NOTHING code (3) and `{"skipped": …}` on stdout — runtimes count skips, not firings.
