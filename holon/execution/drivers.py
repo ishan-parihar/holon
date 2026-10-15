@@ -64,7 +64,9 @@ class Driver:
     read_only_enforced: bool = False   # the harness itself denies writes on observe stages
     scope_fingerprint: str = ""        # set by an installer that built sandboxes from [scope]; doctor compares
     usage_line: str = ""               # regex with tokens_in/tokens_out groups, matched on stdout and stderr;
-                                       # when it matches, it is the run's usage (else the JSON summary's)
+                                        # when it matches, it is the run's usage (else the JSON summary's)
+    build_cmd: str = ""                 # a cheap command naming the harness build (a version report);
+                                        # run once per driver per tick and cached, it is the build fallback (H10)
     stages: list[str] = field(default_factory=lambda: list(vocab.STAGES))
     env: dict[str, str] = field(default_factory=dict)
     source: str = ""
@@ -73,7 +75,8 @@ class Driver:
     def from_toml(cls, text: str, source: str) -> "Driver":
         data = tomllib.loads(text)
         unknown = set(data) - {"name", "command", "cwd", "timeout_s", "result", "read_only", "act_args",
-                               "read_only_enforced", "stages", "duties", "env", "scope_fingerprint", "usage_line"}
+                               "read_only_enforced", "stages", "duties", "env", "scope_fingerprint", "usage_line",
+                               "build_cmd"}
         if "duties" in data:  # pre-graph drivers named four duties; observe-capable ones serve every observe stage
             stages = {LEGACY_STAGE.get(d, d) for d in data.pop("duties")}
             data["stages"] = sorted(stages | ({"research", "shape", "retro"} if "plan" in stages else set()))

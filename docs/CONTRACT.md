@@ -235,11 +235,14 @@ next run, the result decides this one.
 
 The envelope may also carry `usage`: `{"tokens_in", "tokens_out", "cost", "tool_calls",
 "duration_s"}`, all optional numbers, plus `build` — an optional string naming the harness
-build that ran (its version or revision). The kernel records them on the run (budgets and cost
-per verified result read them); a usage the driver measured in its own output wins over
-the envelope's claim. The rubric judge's rows carry the judged run's build, so pass rates
-group by build — and when a build's pass rate drops materially below the previous build's,
-incident work opens (GENOME §6 `[healing] build_regression_*`).
+build that ran (its version or revision). The kernel records them on the run for **every**
+stage (budgets and cost per verified result read them). A usage the harness measured itself
+wins over the envelope's claim: write `<run dir>/usage.json` with the same fields beside
+`result.json`. A run that names no build falls back to its driver's `build_cmd` (a cheap
+command like `operant --version`, run once per driver per tick and cached). The rubric judge's
+rows carry the judged run's build, so pass rates group by build — and when a build's pass rate
+drops materially below the previous build's, incident work opens (GENOME §6
+`[healing] build_regression_*`).
 
 ## §11 The supervisor protocol (H6)
 

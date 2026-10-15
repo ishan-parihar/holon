@@ -1,11 +1,12 @@
 """The work graph end to end, in pull mode (no harness involved)."""
 
 import json
-
+import sys
 import unittest
 
 from holon.execution.service import Kernel
 from holon.execution.work import TransitionError, Work
+from tests.helpers import FAKE_AGENT, REPO
 from tests.helpers import JD, KernelCase
 
 
@@ -404,3 +405,72 @@ class RunUsage(KernelCase):
             t, c, out = self._executed(trajectory=bad)
             self.assertFalse(out.get("breach"), bad)
             self.assertNotIn("_trajectory", self.k.work.last_execute_output(t["id"])["body"])
+
+
+class RefusalBlockers(KernelCase):
+    """H-03 (integration audit): refusals fold into blockers BEFORE the result is stored and
+    judged — an execute that succeeded by shrinking from its plan never verifies clean
+    without a decision on what it refused."""
+
+    def test_a_success_with_refusals_carries_blockers_into_the_stored_result(self):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        out = self.k.submit(c.run["id"], self.exec_env(
+            refusals=[{"tool": "terminal", "reason": "rm -rf denied by policy", "rule": "no-destructive"}]))
+        self.assertFalse(out.get("breach"))
+        body = self.k.work.last_execute_output(t["id"])["body"]
+        self.assertIn("refused: terminal under policy (no-destructive)", body.get("blockers", []),
+                      "the blockers CONTRACT §9 promises are in the stored result")
+        v = self.k.claim("verify", self.dev2)
+        ctx = (v.brief_dir / "context.md").read_text()
+        self.assertIn("refused: terminal under policy", ctx, "the verifier sees what was refused")
+    def test_a_clean_success_has_no_blockers(self):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        out = self.k.submit(c.run["id"], self.exec_env())
+        self.assertFalse(out.get("breach"))
+        self.assertEqual(self.k.work.last_execute_output(t["id"])["body"].get("blockers", []), [])
+
+
+class UsageEveryStage(KernelCase):
+    """H-04 (integration audit): usage is recorded for every stage, not just execute; what the
+    harness measured in usage.json wins over the envelope's claim; a run that names no build
+    falls back to its driver's build_cmd."""
+
+    def test_a_plan_run_records_its_usage(self):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan(t, usage={"tokens_in": 11, "tokens_out": 7, "cost": 0.02})
+        plan_node = self.k.work.stages(t["id"], "plan")[0]
+        run = self.k.work.get_run(self.k.wconn.execute(
+            "SELECT run_id FROM outputs WHERE task_id=?", (plan_node["id"],)).fetchone()[0])
+        self.assertEqual((run["tokens_in"], run["tokens_out"], run["cost"]), (11, 7, 0.02),
+                         "cost per verified result counts every stage")
+
+    def test_usage_json_beats_the_envelope_and_the_driver_names_the_build(self):
+        (self.home.drivers_dir / "fake.toml").write_text(
+            f'name = "fake"\ncommand = "{sys.executable} {FAKE_AGENT}"\ntimeout_s = 60\n'
+            f'build_cmd = "echo harness-7.1.0"\n[env]\nPYTHONPATH = "{REPO}"\n')
+        self.k.close(); self.k = Kernel(self.home)   # reload the drivers
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        (self.home.run_dir(c.run["id"]) / "usage.json").write_text(
+            json.dumps({"tokens_in": 100, "tokens_out": 40, "duration_s": 5.0, "build": "measured-9"}))
+        self.k.submit(c.run["id"], self.exec_env(usage={"tokens_in": 1, "tokens_out": 1, "cost": 9.9}))
+        run = self.k.work.get_run(c.run["id"])
+        self.assertEqual((run["tokens_in"], run["tokens_out"]), (100, 40), "the measurement wins")
+        self.assertEqual(run["harness_build"], "measured-9")
+
+    def test_a_run_without_a_build_gets_the_drivers(self):
+        (self.home.drivers_dir / "fake.toml").write_text(
+            f'name = "fake"\ncommand = "{sys.executable} {FAKE_AGENT}"\ntimeout_s = 60\n'
+            f'build_cmd = "echo harness-7.1.0"\n[env]\nPYTHONPATH = "{REPO}"\n')
+        self.k.close(); self.k = Kernel(self.home)
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        self.k.submit(c.run["id"], self.exec_env(usage={"tokens_in": 5}))
+        self.assertEqual(self.k.work.get_run(c.run["id"])["harness_build"], "harness-7.1.0",
+                         "pass rates group by the driver's build when nothing else names one")

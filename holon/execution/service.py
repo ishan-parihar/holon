@@ -236,6 +236,7 @@ class Kernel:
         self.work.appliers["employee_status"] = self._apply_status
         self.work.appliers["routine"] = self._apply_routine
         self.decider = Decider(self.config["classifier"])
+        self._build_cache: dict[str, str | None] = {}   # driver → harness build (H10), one probe per process
         self.skills = Library(home)
         self.schedules = Schedules(self.wconn, actor)
         self.org.bootstrap()
@@ -511,6 +512,47 @@ class Kernel:
         except (json.JSONDecodeError, isolation.IsolationError, ValueError):
             return None
 
+    def _run_usage(self, run: dict, env: dict) -> dict | None:
+        """H-04: what the run consumed, for every stage. The harness's own measurement
+        (`<run dir>/usage.json`) wins over the envelope's claim (§10); a build neither of them
+        names falls back to the driver's build_cmd so H10's pass rates always group by something."""
+        u: dict = {}
+        try:
+            text = isolation.read_agent_file(self.home.run_dir(run["id"]) / "usage.json")
+            if text:
+                f = json.loads(text)
+                if isinstance(f, dict):
+                    u = {k: f[k] for k in ("tokens_in", "tokens_out", "cost", "tool_calls", "duration_s", "build")
+                         if f.get(k) is not None}
+        except (json.JSONDecodeError, isolation.IsolationError, ValueError):
+            pass
+        e = env.get("usage") if isinstance(env.get("usage"), dict) else {}
+        for k in ("tokens_in", "tokens_out", "cost", "tool_calls", "duration_s", "build"):
+            if u.get(k) is None and e.get(k) is not None:
+                u[k] = e[k]
+        if u.get("build") is None and run.get("driver"):
+            build = self._driver_build(run["driver"])
+            if build:
+                u["build"] = build
+        return u or None
+
+    def _driver_build(self, driver_name: str) -> str | None:
+        """The harness build that ran (H10): the driver's build_cmd, run once per driver per
+        process and cached. A cheap version-reporting command; a driver without one, or a
+        failing one, reports no build."""
+        if driver_name in self._build_cache:
+            return self._build_cache[driver_name]
+        build = None
+        try:
+            cmd = getattr(drivers.get(self.home, driver_name), "build_cmd", "") or ""
+            if cmd:
+                p = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=10)
+                build = (p.stdout or p.stderr).strip()[:120] if p.returncode == 0 else None
+        except (subprocess.SubprocessError, OSError, drivers.DriverError):
+            build = None
+        self._build_cache[driver_name] = build
+        return build
+
     # ── ingestion: the one place agent output enters the organization ─────
     def submit(self, run_id: str, envelope: dict | None = None, exit_code: int | None = 0,
                driver_output: dict | None = None, defer: bool = False) -> dict:
@@ -543,6 +585,13 @@ class Kernel:
         node = self.work.get(run["task_id"])
         work = self.work.get(node["parent_id"])
         emp = self.org.employee(run["employee_id"]) if run["employee_id"] else None
+        # H-03: refusals the harness recorded under policy.json are blockers, and they must be in the
+        # stored result before anything judges it — an execute that succeeded only by shrinking from
+        # its plan never verifies clean without a decision on what it refused.
+        if stage == "execute" and env.get("outcome") == "success" and env.get("refusals"):
+            env = {**env, "blockers": [*env.get("blockers", []),
+                   *[f"refused: {r.get('tool', '?')} under policy" + (f" ({r['rule']})" if r.get("rule") else "")
+                     for r in env["refusals"]]]}
         if stage == "research":
             out = self.work.submit_research(run_id, env, exit_code)
         elif stage == "shape":
@@ -562,11 +611,11 @@ class Kernel:
             traj = self._read_trajectory(run_id)
             if traj:
                 env["_trajectory"] = traj
-            out = self.work.submit_execute(run_id, env, exit_code)
-            u = env.get("usage")
-            if isinstance(u, dict):
+            u = self._run_usage(run, env)   # before the judge: its rows carry this run's build (H10)
+            if u:
                 self.work.set_run_usage(run_id, u.get("tokens_in"), u.get("tokens_out"), u.get("cost"),
                                          u.get("tool_calls"), u.get("duration_s"), u.get("build"))
+            out = self.work.submit_execute(run_id, env, exit_code)
             self._hold_direct_skill_writes(work["id"], self.work.output(node["id"]), env)  # whatever the outcome
             v = self.work.latest(work["id"], "verify", "ready")
             if v and defer:
@@ -583,6 +632,15 @@ class Kernel:
                 out["routines"] = self._routines_from_items(out["routines"], None, f"emp:{run['employee_id']}")
             if work.get("task_class") == "retro" and work.get("dept_id"):
                 self._ack_proposals(work["dept_id"])
+        # H-04: usage is recorded for every stage — what the harness measured in usage.json wins
+        # over the envelope's claim (§10), and a run that reports no build falls back to its
+        # driver's build_cmd so pass rates always group by something (H10). Execute recorded
+        # its usage before its judge ran, above.
+        if stage != "execute":
+            u = self._run_usage(run, env)
+            if u:
+                self.work.set_run_usage(run_id, u.get("tokens_in"), u.get("tokens_out"), u.get("cost"),
+                                         u.get("tool_calls"), u.get("duration_s"), u.get("build"))
         # H3: refusals the harness recorded under policy.json are blockers, never
         # breaches — surface them on the run's event trail and in the submit output so
         # rework/retro sees why the stage shrank from its plan.
@@ -592,9 +650,6 @@ class Kernel:
             with write_txn(self.wconn):
                 self.work._event("run", run_id, None, None, f"policy refusal: {note}")
             out["refusals"] = refusals
-            if stage == "execute" and env.get("outcome") == "success":
-                env["blockers"] = [*env.get("blockers", []),
-                                   *[f"refused: {r.get('tool', '?')} under policy" for r in refusals]]
         out["memory"] = self._consolidate(work, run, env, emp, stage)
         out["proposals_routed"] = self._route_proposals(work, env, emp)
         return {**out, "stage": stage}
