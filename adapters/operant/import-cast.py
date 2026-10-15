@@ -67,10 +67,28 @@ MECHANISMS = {  # seat → the kernel mechanism that covers its duty
 }
 
 
-def holon_cron(schedule: str) -> str:
-    five = " ".join(schedule.split()[1:])  # operant schedules are 6-field (seconds first)
+def holon_cron(schedule: str, shift_min: int = 0) -> str:
+    """Operant's 6-field schedule (seconds first) as Holon's 5-field cron. `shift_min` staggers a
+    daily cadence (H-11): four routines proposed for the same minute would otherwise fire as one burst."""
+    five = " ".join(schedule.split()[1:])
+    f = five.split()
+    if shift_min and len(f) == 5 and f[1].isdigit() and f[2:] == ["*", "*", "*"]:
+        f[0] = str((int(f[0]) + shift_min) % 60)
+        five = " ".join(f)
     Cron(five)
     return five
+
+
+def fires_per_day(cron: str) -> int:
+    """A rough lower bound of a 5-field cron's firings a day — enough to spot an hourly agent job."""
+    f = cron.split()
+    if len(f) != 5:
+        return 0
+    if f[1] == "*":
+        return 24
+    if "," in f[1] or "-" in f[1] or f[1].startswith("*/"):
+        return 12
+    return 1
 
 
 def read_org(org_db: Path, cron_db: Path) -> tuple[list[dict], list[dict]]:
@@ -93,37 +111,59 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--cron-db", default=str(Path("~/.operant/operant_cron.db").expanduser()),
                     help="operant's cron database (the cron_jobs table)")
     ap.add_argument("--driver", default="operant", help="the harness the imported employees run in")
+    ap.add_argument("--dept-map", default=[], action="append", metavar="seat=slug",
+                    help="override where a seat lands (repeatable), e.g. identity-warden=ops")
+    ap.add_argument("--stagger", type=int, default=7,
+                    help="minutes between proposed daily routines (H-11: same-minute jobs are one burst otherwise)")
     ap.add_argument("--apply", action="store_true", help="hire and propose (default: dry run)")
     a = ap.parse_args(argv)
+    dept_map = dict(kv.split("=", 1) for kv in a.dept_map)
 
     seats, crons = read_org(Path(a.org_db), Path(a.cron_db))
     k = Kernel(Home(Path(a.holon_home).expanduser()))
     try:
+        hires = {sid: (dept_map.get(sid, d), slot, roles) for sid, (d, slot, roles) in HIRES.items()}
+        routines = {sid: (dept_map.get(sid, d), deliver) for sid, (d, deliver) in ROUTINES.items()}
+        present = {s["employee_id"] for s in seats}
+        needed = sorted(({hires[s][0] for s in present if s in hires}
+                         | {routines[s][0] for s in present if s in routines}))
+        known = {d["slug"] for d in k.org.depts()}
+        missing = [d for d in needed if d not in known]
+        if missing:
+            print("missing departments: " + ", ".join(missing)
+                  + "\n  create them first (holon dept create), or pass --dept-map seat=slug")
+            return 1
         cast = [c for c in crons if c["id"].startswith("cron_cast_")]
         other = [c for c in crons if not c["id"].startswith("cron_cast_")]
         print(f"{len(seats)} seats, {len(cast)} cast crons, {len(other)} other cron jobs\n")
         applied = []
+        stagger = 0
         for s in seats:
             sid = s["employee_id"]
             cron = next((c for c in cast if c["id"] == f"cron_cast_{sid}"), None)
-            if sid in HIRES:
-                dept, slot, roles = HIRES[sid]
+            if sid in hires:
+                dept, slot, roles = hires[sid]
                 print(f"hire      {sid:<18} executive employee (slot {slot}, roles {'+'.join(roles)})")
                 if a.apply:
                     emp = k.org.hire(name=s["name"], title=s["name"].title(), dept=dept,
                                      job_description=s["system_prompt"] or s["role"], driver=a.driver,
                                      slot=slot, roles=roles, reason=f"operant cast import ({sid})")
                     applied.append(f"hired {s['name']} ({emp['id']}) into {dept}")
-            if sid in ROUTINES:
+            if sid in routines:
                 if cron is None:
                     print(f"routine?  {sid:<18} no cron_cast row: nothing to propose")
                 else:
-                    dept, deliver = ROUTINES[sid]
-                    print(f"routine   {sid:<18} dept {dept}: '{cron['name']}' on {holon_cron(cron['schedule'])}"
-                          + (" (delivered)" if deliver else ""))
+                    dept, deliver = routines[sid]
+                    when = holon_cron(cron["schedule"], shift_min=stagger * a.stagger)
+                    hot = fires_per_day(when) >= 12
+                    print(f"routine   {sid:<18} dept {dept}: '{cron['name']}' on {when}"
+                          + (" (delivered)" if deliver else "")
+                          + ("\n          ⚠ agent cadence ≥ 12×/day: review before approving (script lane? slower cron?)"
+                             if hot else ""))
+                    stagger += 1
                     if a.apply:
                         approval = k.add_routine(cron["name"], cron["prompt"][:2000], dept=dept,
-                                                 cron=holon_cron(cron["schedule"]), deliver=deliver,
+                                                 cron=when, deliver=deliver,
                                                  task_class=f"operant-cast:{sid}")
                         applied.append(f"routine proposal for {sid} → approval {approval['id']}")
             elif sid in MECHANISMS:

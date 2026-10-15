@@ -2,6 +2,7 @@
 conformance suite tells a compliant harness from a broken one."""
 
 import io
+import re
 import sqlite3
 import subprocess
 import sys
@@ -282,6 +283,30 @@ class ImportCast(KernelCase):
         emp = self.k.wconn.execute("SELECT id FROM employees WHERE name='Chief of Staff'").fetchone()[0]
         self.assertIn("charter of chief-of-staff",
                       self.k.org.employee(emp)["job_description"], "the seat's charter is the job description")
+
+    def test_a_seat_whose_department_is_missing_stops_the_apply_and_a_dept_map_fixes_it(self):
+        org = sqlite3.connect(self.tmp / "org.db")
+        org.execute("INSERT INTO employees VALUES ('identity-warden','Identity Warden','warden','it','[]','c')")
+        cron = sqlite3.connect(self.tmp / "cron.db")
+        cron.execute("INSERT INTO cron_jobs VALUES ('cron_cast_identity-warden','identity audit','audit','0 0 * * * *','local')")
+        org.commit(), cron.commit(), org.close(), cron.close()
+        p = subprocess.run(self.cmd(True), capture_output=True, text=True)
+        self.assertEqual(p.returncode, 1, "a seat mapped to a department the instance lacks refuses to apply")
+        self.assertIn("missing departments: it", p.stdout)
+        self.assertIn("--dept-map", p.stdout)
+        p = subprocess.run(self.cmd(True) + ["--dept-map", "identity-warden=executive"],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn("⚠ agent cadence", p.stdout, "the hourly audit is flagged for review before approving")
+
+    def test_daily_routines_are_staggered_not_one_burst(self):
+        p = subprocess.run(self.cmd(False) + ["--stagger", "7"], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        minutes = sorted(int(m) for m in re.findall(r"on (\d+) 9 \* \* \*", p.stdout))
+        self.assertEqual(minutes, [0, 7], "two daily proposals, staggered by --stagger")
+        p = subprocess.run(self.cmd(False) + ["--stagger", "0"], capture_output=True, text=True)
+        self.assertEqual([int(m) for m in re.findall(r"on (\d+) 9 \* \* \*", p.stdout)], [0, 0],
+                         "--stagger 0 keeps the operator's cadence")
 
 
 class SupervisorConformance(KernelCase):

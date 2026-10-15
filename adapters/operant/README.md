@@ -22,6 +22,9 @@ through the classifier:
 ```sh
 python3 adapters/operant/import-cast.py               # dry run: the mapping, seat by seat
 python3 adapters/operant/import-cast.py --apply       # hire the seat employees, propose the crons
+# --dept-map seat=slug overrides where a seat lands (the apply refuses a department the
+#   instance lacks); --stagger N spaces same-minute daily proposals N minutes apart (H-11);
+#   an agent cadence ≥ 12×/day is flagged for review before you approve it.
 ```
 
 premiere and chief-of-staff become executive routines with `--deliver`; governor's governance
