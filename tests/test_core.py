@@ -288,3 +288,12 @@ class ChairChannels(KernelCase):
         self.k.close()
         from holon.execution.service import Kernel
         self.assertEqual(Kernel(self.home).chair_channels(), set(), "no channels configured")
+
+    def test_the_cli_exposes_the_channel_refs_for_runtimes(self):
+        # a runtime that fronts a channel (a gateway) reads the refs through
+        # the CLI — one parser of [chair], never a second one in the runtime
+        from holon import cli
+        rc = cli.main(["--home", str(self.home.root), "--json", "chair-channels"])
+        self.assertEqual(rc, 0)
+        rc = cli.main(["--home", str(self.home.root), "chair-channels"])
+        self.assertEqual(rc, 0)  # the text arm prints; the exit is the contract

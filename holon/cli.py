@@ -149,6 +149,14 @@ def cmd_status(args, k):
         f"organization: {data['departments']} departments, {data['employees']} employees · auth: {data['auth']}"]))
 
 
+@command("chair-channels", "any",
+         "the Chair's channel refs ([chair] channels) — a runtime that fronts a channel runs Chair "
+         "commands only for these identities (H8)", mutates=False)
+def cmd_chair_channels(args, k):
+    _out(args, {"channels": sorted(k.chair_channels())},
+         "chair channels: " + (", ".join(sorted(k.chair_channels())) or "(none configured)"))
+
+
 @command("org", "any", "the org chart", mutates=False)
 def cmd_org(args, k):
     out, lines = [], []
