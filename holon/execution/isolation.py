@@ -260,7 +260,7 @@ def serve_runner(address: str, allowed_uids: set[int], stop: threading.Event | N
 
 
 def run(address: str, cmd: str, cwd: str, env: dict, timeout_s: float, alive=None,
-        alive_every_s: float = 60.0) -> tuple[int, str, str]:
+        alive_every_s: float = 15.0) -> tuple[int, str, str]:
     """Start `cmd` through the runner and wait; `alive()` returning False stops it (the run's result is
     already in). `env` is added to the runner's own environment: the kernel's never crosses over."""
     s = connect(address, timeout=None)

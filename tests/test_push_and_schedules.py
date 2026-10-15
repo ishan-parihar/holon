@@ -270,7 +270,7 @@ if __name__ == "__main__":
 class SupervisorProtocol(KernelCase):
     """H6 (phase E): dispatch --prepare hands an external supervisor everything it needs to run
     the body itself; run finish salvages the result and runs what follows. One protocol for any
-    supervisor; the claim, lease and concurrency rules are exactly push mode's (CONTRACT §11)."""
+    supervisor; the claim, lease and concurrency rules are exactly push mode's (CONTRACT §12)."""
 
     def _prepared(self):
         t = self.add(dept="eng", task_class="demo")

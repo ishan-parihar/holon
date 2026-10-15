@@ -421,7 +421,7 @@ class RefusalBlockers(KernelCase):
         self.assertFalse(out.get("breach"))
         body = self.k.work.last_execute_output(t["id"])["body"]
         self.assertIn("refused: terminal under policy (no-destructive)", body.get("blockers", []),
-                      "the blockers CONTRACT §9 promises are in the stored result")
+                      "the blockers CONTRACT §10 promises are in the stored result")
         v = self.k.claim("verify", self.dev2)
         ctx = (v.brief_dir / "context.md").read_text()
         self.assertIn("refused: terminal under policy", ctx, "the verifier sees what was refused")

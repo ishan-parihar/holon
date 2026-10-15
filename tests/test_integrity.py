@@ -1,8 +1,14 @@
 """R1: `holon lint` (artifacts) and `holon doctor` (live state) catch what they claim to catch."""
 
+import contextlib
+import io
+import json
+import types
 from pathlib import Path
 from unittest import mock
 
+from holon import cli as holon_cli
+from holon.execution.service import Kernel
 from holon.integrity import doctor, lint
 from tests.helpers import KernelCase
 
@@ -155,3 +161,93 @@ class Operations(KernelCase):
         self.k.config["budget"] = {"max_running_per_dept": 0, "dept": {"eng": {"max_running_per_dept": 2}}}
         self.assertIsNotNone(self.k.claim("plan", self.hod), "a department override raises the cap")
         self.assertEqual(self.k.metrics("eng")["budget"]["running"], 2)
+
+
+class Retention(KernelCase):
+    """H-14 (integration audit): nothing was ever collected. gc collects run directories of
+    closed work and old messages, keeps what the organization still learns from, and refuses
+    to delete without a recent backup."""
+
+    def _closed_work_with_old_run(self):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        rd = self.home.run_dir(c.run["id"])          # a real harness writes its result to disk
+        (rd / "result.json").write_text(json.dumps(self.exec_env()))
+        (rd / "trajectory.json").write_text(json.dumps({"steps": [{"tool": "x", "outcome": "y"}]}))
+        self.k.submit(c.run["id"], self.exec_env())
+        v = self.k.claim("verify", self.dev2)
+        self.k.submit(v.run["id"], {"verdict": "pass", "note": "ok"})
+        self.assertEqual(self.k.work.get(t["id"])["status"], "done")
+        self.k.wconn.execute("INSERT INTO judgments (work_id, playbook, version, criterion, p, passed, build,"
+                             " created_at) VALUES (?,?,?,?,?,?,?,?)",
+                             (t["id"], None, None, "does the job", 0.9, 1, "test-1",
+                              "2026-01-01T00:00:00.000000Z"))
+        self.k.wconn.execute("UPDATE runs SET ended_at='2020-01-01T00:00:00.000000Z'")
+        self.k.wconn.execute("UPDATE messages SET ts='2020-01-01T00:00:00.000000Z' WHERE EXISTS"
+                             " (SELECT 1 FROM messages)")
+        self.k.wconn.execute("INSERT INTO messages (id, sender, to_ref, body, kind, ts, task_id)"
+                             " VALUES ('msg_old','emp:x','org','an old note','channel',"
+                             " '2020-01-01T00:00:00.000000Z',NULL)")
+        self.k.wconn.commit()
+        return t, c
+
+    def _configure(self):
+        text = self.home.config_file.read_text()
+        if "[healing]" in text:
+            text = text.replace("[healing]\n", f"[healing]\nbackup_to = \"{self.tmp / 'backups'}\"\n")
+        else:
+            text += f"\n[healing]\nbackup_to = \"{self.tmp / 'backups'}\"\n"
+        text += "\n[retention]\nruns_days = 7\nmessages_days = 7\nbackup_max_age_days = 7\n"
+        self.home.config_file.write_text(text)
+        self.k.close()
+        self.k = Kernel(self.home)
+
+    def test_gc_plans_but_never_deletes_on_a_dry_run(self):
+        t, c = self._closed_work_with_old_run()
+        self._configure()
+        from holon.integrity import gc
+        p = gc.plan(self.k)
+        self.assertEqual(len(p["run_dirs"]), 3, "the work's plan, execute and verify run directories")
+        keeps = {r["dir"]: r["keep"] for r in p["run_dirs"]}
+        kept = [r for r in p["run_dirs"] if r["keep"]]
+        self.assertEqual(len(kept), 1, "only the judged execute run keeps files")
+        self.assertIn("result.json", kept[0]["keep"])
+        self.assertGreater(p["messages"], 0)
+        self.assertTrue((self.home.run_dir(c.run["id"]) / "result.json").exists(), "the dry run deleted nothing")
+
+    def test_apply_refuses_without_a_recent_backup_then_collects(self):
+        from holon.integrity import gc, backup
+        t, c = self._closed_work_with_old_run()
+        self._configure()
+        p = gc.plan(self.k)
+        with self.assertRaises(PermissionError):
+            gc.apply(self.k, p)                     # no backup at all
+        backup.backup(self.k, str(self.tmp / "backups"))
+        out = gc.apply(self.k, gc.plan(self.k))
+        self.assertEqual(out["run_dirs_removed"], 3)
+        self.assertEqual(out["run_dirs_trimmed_to_kept_files"], 1, "the judged execute run keeps its files")
+        d = self.home.run_dir(c.run["id"])
+        self.assertEqual(sorted(f.name for f in d.iterdir()), ["result.json", "trajectory.json"],
+                         "the kept run's directory is trimmed to what the organization still learns from")
+        self.assertEqual(self.k.wconn.execute("SELECT count(*) FROM messages").fetchone()[0], 0,
+                         "old messages pruned")
+
+
+class KeysList(KernelCase):
+    """H-14: the Chair's key dir collects orphans (scratch instances); `holon keys list --orphans`
+    names them — deletion stays the Chair's, by hand."""
+
+    def test_keys_list_names_orphans(self):
+        d = Path("~/.config/holon/keys").expanduser()
+        d.mkdir(parents=True, exist_ok=True)
+        stray = d / "conformance-scratch-123.chair"
+        stray.write_text("hck_orphan")
+        self.addCleanup(stray.unlink)
+        args = types.SimpleNamespace(orphans=True, json=True)
+        buf, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(err):
+            holon_cli.cmd_keys_list(args, self.k)
+        rows = json.loads(buf.getvalue())
+        self.assertTrue(all(not r["this_instance"] for r in rows))
+        self.assertIn("conformance-scratch-123.chair", {r["file"] for r in rows})

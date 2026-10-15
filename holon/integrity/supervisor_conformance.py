@@ -129,7 +129,7 @@ def run_supervisor(k, supervisor_cmd: str, clauses: list[str] | None = None) -> 
         o = s.org
         ceo = o.hire(name="S CEO", title="CEO", dept=vocab.EXECUTIVE, job_description=JD, slot="ceo",
                      driver="supervisor-fixture", reason="conformance", status="active")["id"]
-        o.create_dept("conformance", "Conformance", "Check a supervisor against CONTRACT §11")
+        o.create_dept("conformance", "Conformance", "Check a supervisor against CONTRACT §12")
         lead = o.hire(name="S Lead", title="Head", dept="conformance", job_description=JD,
                       roles=["head", "planner", "verifier"], driver="supervisor-fixture",
                       reason="conformance", status="active")["id"]

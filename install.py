@@ -125,7 +125,10 @@ def reachable(url: str, tries: int = 12) -> bool:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--home", default=os.environ.get("HOLON_HOME", "~/holon"), help="the instance directory")
-    ap.add_argument("--bin-dir", default="~/bin", help="where the `holon` launcher goes")
+    ap.add_argument("--bin-dir", help="where the `holon` launcher goes (default: the first of "
+                    "~/.local/bin or ~/bin that is on PATH)")
+    ap.add_argument("--repoint", action="store_true", help="replace a launcher that belongs to "
+                    "another checkout (the installer stops and names both otherwise)")
     ap.add_argument("--notion-parent-page", help="a Notion page shared with the integration")
     ap.add_argument("--notion-token-file", help="file holding the integration token (0600)")
     ap.add_argument("--notion-chair-user", action="append", default=[], help="Notion user id(s) of the Chair")
@@ -135,10 +138,17 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--notion-api-base", help=argparse.SUPPRESS)  # tests
     ap.add_argument("--systemd", action="store_true", help="write the user units; enable the Notion sync")
     ap.add_argument("--heartbeat", action="store_true", help="also enable holon-tick (starts dispatching work)")
+    ap.add_argument("--no-notion", action="store_true", help="skip the Notion check --repair and push on an "
+                    "instance that is already mirrored (the mirror keeps its configuration)")
     ap.add_argument("--systemd-dir", default="~/.config/systemd/user")
     ap.add_argument("--no-start", action="store_true", help="write the units without enabling them")
     a = ap.parse_args(argv)
-    home, bin_dir = Path(a.home).expanduser().resolve(), Path(a.bin_dir).expanduser()
+    home, bin_dir = Path(a.home).expanduser().resolve(), Path(a.bin_dir or "").expanduser() if a.bin_dir else \
+        next((d for d in (Path("~/.local/bin").expanduser(), Path("~/bin").expanduser())
+             if d.is_dir() and str(d) in os.environ.get("PATH", "")), Path("~/bin").expanduser())
+    path_dirs = [p for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    if str(bin_dir) not in path_dirs:
+        print(f"  ⚠ {bin_dir} is not on PATH: shells will not find `holon` (add it, or pass --bin-dir)")
 
     print("1. prerequisites")
     if sys.version_info < (3, 11):
@@ -155,6 +165,13 @@ def main(argv: list[str] | None = None) -> int:
     print(f"3. launcher in {bin_dir}")
     bin_dir.mkdir(parents=True, exist_ok=True)
     launcher = bin_dir / "holon"
+    if launcher.is_symlink():
+        target = Path(os.path.realpath(launcher))
+        if ROOT not in target.parents and not a.repoint:
+            raise SystemExit(f"{launcher} belongs to another checkout:\n  {launcher} -> {target}\n"
+                             f"  this installer: {ROOT}\n"
+                             "  pass --repoint to make this checkout the installation, or install "
+                             "that checkout instead")
     if launcher.is_symlink() or not launcher.exists():
         launcher.unlink(missing_ok=True)
         launcher.symlink_to(ROOT / "bin" / "holon")
@@ -163,7 +180,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  {launcher} exists and is not a link; left alone")
 
     notion_cfg = home / "adapters" / "notion" / "notion.json"
-    if a.notion_parent_page or notion_cfg.exists():
+    if a.notion_parent_page or (notion_cfg.exists() and not a.no_notion):
         print("4. Notion mirror")
         base = [sys.executable, str(NOTION), "--holon-home", str(home)]
         set_up = notion_cfg.exists() and json.loads(notion_cfg.read_text()).get("data_sources")

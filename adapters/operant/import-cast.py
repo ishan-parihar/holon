@@ -63,7 +63,7 @@ MECHANISMS = {  # seat → the kernel mechanism that covers its duty
     "crew-chief": "`holon metrics` and `holon doctor` (telemetry and health)",
     "hrmaster": "`holon hr review`, probation cadence, earned authority",
     "dispatcher": "the board (`holon status`), claims and the concurrency cap",
-    "dp-the-program": "the run supervisor (CONTRACT §11) and the departments' executor slots",
+    "dp-the-program": "the run supervisor (CONTRACT §12) and the departments' executor slots",
 }
 
 

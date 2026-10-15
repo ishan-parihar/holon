@@ -168,7 +168,7 @@ def run_env(home: Home, brief: dict, token: str | None, broker: str | None = Non
 
 
 def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive=None,
-        alive_every_s: float = 60.0, isolation: dict | None = None) -> dict:
+        alive_every_s: float = 15.0, isolation: dict | None = None) -> dict:
     """Invoke the harness and return {'exit_code', 'envelope' | None, 'log_path', 'stdout_tail'}.
     `alive()` is called every `alive_every_s` while the harness process runs (the kernel renews the
     run's lease with it), so a lease expires only when the dispatcher itself has died. When it returns
@@ -212,7 +212,7 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive
             "stderr_tail": stderr[-2000:], "usage": usage}
 
 
-def execute(cmd: str, cwd: str, env: dict, timeout_s: float, alive=None, alive_every_s: float = 60.0
+def execute(cmd: str, cwd: str, env: dict, timeout_s: float, alive=None, alive_every_s: float = 15.0
             ) -> tuple[int, str, str]:
     """Run a shell command in its own process group as this user; (exit code, stdout, stderr)."""
     proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,

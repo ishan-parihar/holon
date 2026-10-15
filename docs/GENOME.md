@@ -107,6 +107,9 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[healing]` | `backup_every_h` | 24 | how often the heartbeat takes `holon backup` (0 = never); a failure opens an incident |
 | `[healing]` | `backup_to` | `$HOLON_HOME/backups` | where scheduled backups go; point it at another disk or a synced mount, or a dead disk takes the backups too |
 | `[healing]` | `build_regression_samples`, `build_regression_drop` | 10, 0.25 | judgments a harness build needs (per department) before its pass rate counts, and the drop from the previous build that opens incident work; 0 turns the check off (H10) |
+| `[retention]` | `runs_days` | 0 (keep) | days after a work closes before `holon gc` collects its run directories; a gold standard's or a judged run's `result.json` and `trajectory.json` are kept (H-14) |
+| `[retention]` | `messages_days` | 0 (keep) | days before `holon gc` prunes old messages |
+| `[retention]` | `backup_max_age_days` | 7 | `holon gc --apply` refuses without a backup newer than this; `--force` overrides |
 | `[healing]` | `run_failures_for_incident` | 3 | runs of one stage that ended without a valid result before an incident opens; past it the stage waits 10 min before the next try, doubling per failure (at most a day) |
 | `[cadence]` | `dept_retro_days` | 7 | how often a department retro may run over pending proposals |
 | `[cadence]` | `dept_retro_min_proposals` | 1 | proposals needed before a department retro is due |

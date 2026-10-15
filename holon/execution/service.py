@@ -50,6 +50,7 @@ DEFAULT_CONFIG = {
     "healing": {"incident_dept": "it", "lease_expiries_for_incident": 2, "schedule_failures_for_incident": 3,
                 "run_failures_for_incident": 3, "doctor_every_min": 30, "backup_every_h": 24, "backup_to": "",
                 "build_regression_samples": 10, "build_regression_drop": 0.25},
+    "retention": {"runs_days": 0, "messages_days": 0, "backup_max_age_days": 7},
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
     # a department rate past its bound (over min_samples) makes its retro due without proposals;
     # a _min of 0 or a _max of 1 turns that bound off
@@ -514,7 +515,7 @@ class Kernel:
 
     def _run_usage(self, run: dict, env: dict) -> dict | None:
         """H-04: what the run consumed, for every stage. The harness's own measurement
-        (`<run dir>/usage.json`) wins over the envelope's claim (§10); a build neither of them
+        (`<run dir>/usage.json`) wins over the envelope's claim (§11); a build neither of them
         names falls back to the driver's build_cmd so H10's pass rates always group by something."""
         u: dict = {}
         try:
@@ -633,7 +634,7 @@ class Kernel:
             if work.get("task_class") == "retro" and work.get("dept_id"):
                 self._ack_proposals(work["dept_id"])
         # H-04: usage is recorded for every stage — what the harness measured in usage.json wins
-        # over the envelope's claim (§10), and a run that reports no build falls back to its
+        # over the envelope's claim (§11), and a run that reports no build falls back to its
         # driver's build_cmd so pass rates always group by something (H10). Execute recorded
         # its usage before its judge ran, above.
         if stage != "execute":
@@ -1389,7 +1390,7 @@ class Kernel:
         """H6: claim a stage and hand an external supervisor everything it needs to run the body
         itself — the driver's rendered command, the run's environment, the brief, policy.json and the
         run token — without spawning anything. The supervisor hands the finished body back with
-        `finish_run` (CONTRACT §11). The claim, lease and concurrency rules are exactly dispatch's."""
+        `finish_run` (CONTRACT §12). The claim, lease and concurrency rules are exactly dispatch's."""
         emp = self.org.employee(employee_id)
         claimed = self.claim(stage, employee_id, emp["driver"], task_id, max_running=emp["max_concurrency"])
         if claimed is None:

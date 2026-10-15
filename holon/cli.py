@@ -17,6 +17,7 @@ import json
 import os
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
@@ -125,6 +126,10 @@ def cmd_init(args, k):
             "[autonomy]\n# supervised (safe default) | delegated | autonomous; keys below override the preset\n"
             "mode = \"supervised\"\n# verify_sample_rate = 0.2\n# [autonomy.dept.<slug>]\n# mode = \"delegated\"\n\n"
             "[memory]\npromotion_threshold = 2\n")
+    # which checkout migrated this instance (I-04/H-09's silent half): doctor warns when the
+    # running code comes from somewhere else — two checkouts, one launcher, was a live hazard
+    root = Path(__file__).resolve().parents[1]
+    k.auth._put("code_root", str(root))
     path = k.auth.init_chair_key(rotate=args.rotate_chair_key)
     msg = f"holon initialized at {k.home.root}"
     if path:
@@ -529,7 +534,7 @@ def cmd_run_heartbeat(args, k):
 
 
 @command("run finish", "kernel", "a supervisor hands a finished body in: salvage result.json, submit it, "
-         "run the checks and the judge (CONTRACT §11)", arg("run_id"),
+         "run the checks and the judge (CONTRACT §12)", arg("run_id"),
          arg("--exit", type=int, default=0, help="the body's exit code"))
 def cmd_run_finish(args, k):
     out = k.finish_run(args.run_id, args.exit)
@@ -547,7 +552,7 @@ def cmd_verify(args, k):
          arg("--stage", choices=list(vocab.STAGES)), arg("--task"), arg("--schedule", help=argparse.SUPPRESS),
          arg("--prepare", action="store_true", help="claim and write the brief, policy.json and the run "
              "token, and print them as JSON without running the body (an external supervisor runs it; "
-             "CONTRACT §11)"),
+             "CONTRACT §12)"),
          arg("--runs-as-agent-user", action="store_true", help="the supervisor's promise: it runs the body as "
              "the isolated agent user through the runner. Required with --prepare under isolation"))
 def cmd_dispatch(args, k):
@@ -556,7 +561,7 @@ def cmd_dispatch(args, k):
     if args.prepare:
         if k.isolation and not args.runs_as_agent_user:
             raise PermissionError("--prepare under isolation needs --runs-as-agent-user: a supervisor that "
-                                  "runs the body as itself defeats the trust boundary (CONTRACT §11)")
+                                  "runs the body as itself defeats the trust boundary (CONTRACT §12)")
         out = k.prepare_dispatch(args.as_, args.stage, args.task)
         if out is None:
             _out(args, {"prepared": None}, f"nothing to do for {args.as_}")
@@ -633,7 +638,7 @@ def cmd_routine_fire(args, k):
     out = k.fire_routine(args.schedule_id, payload)
     sk = out.get("skipped")
     _out(args, out, f"skipped: {sk}" if sk else f"work {out.get('recurring_work')} fired")
-    if sk:   # H-13: a skip is not a firing; runtimes count them (CONTRACT §12)
+    if sk:   # H-13: a skip is not a firing; runtimes count them (CONTRACT §13)
         return NOTHING
 
 
@@ -1151,6 +1156,41 @@ def cmd_backup(args, k):
     _out(args, out, f"backed up {out['files']} files to {out['path']}")
 
 
+@command("gc", "chair", "collect what [retention] says is expired: run directories of closed work "
+         "(a gold standard's and a judged run's result.json and trajectory.json are kept) and old "
+         "messages. Dry run by default; --apply refuses without a recent backup",
+         arg("--apply", action="store_true"), arg("--force", action="store_true",
+         help="delete even without a recent backup (the Chair's call)"))
+def cmd_gc(args, k):
+    from holon.integrity import gc
+    p = gc.plan(k)
+    if not args.apply:
+        _out(args, p, f"{len(p['run_dirs'])} run directories, {p['messages']} messages "
+                      f"(dry run; --apply collects them)")
+        return
+    out = gc.apply(k, p, force=args.force)
+    _out(args, out, f"removed {out['run_dirs_removed']} run directories "
+                    f"({out['run_dirs_trimmed_to_kept_files']} trimmed to their kept files), "
+                    f"{out['messages_deleted']} messages")
+
+
+@command("keys list", "chair", "the Chair key files in the default key dir, and which belong to this "
+         "instance -- a scratch instance's key outlives it; deletion is yours, by hand",
+         arg("--orphans", action="store_true", help="only the files this instance does not claim"))
+def cmd_keys_list(args, k):
+    d = Path("~/.config/holon/keys").expanduser()
+    mine = Path(k.auth.chair_key_path()).name
+    files = sorted(d.glob("*.chair")) if d.is_dir() else []
+    rows = [{"file": f.name, "instance": f.stem, "size": f.stat().st_size,
+             "mtime": datetime.fromtimestamp(f.stat().st_mtime, timezone.utc).isoformat()[:19],
+             "this_instance": f.name == mine} for f in files]
+    if args.orphans:
+        rows = [r for r in rows if not r["this_instance"]]
+    _out(args, rows, "\n".join(f"{r['file']}  {r['size']}B  {r['mtime']}"
+                                + ("" if r["this_instance"] else "  (no local instance claims it)")
+                                for r in rows) or "no key files")
+
+
 @command("restore", "chair", "restore a backup into this instance (verifies its checksums first)", arg("path"),
          arg("--force", action="store_true", help="required: the instance's current state is replaced"),
          arg("--verify-only", action="store_true"))
@@ -1167,7 +1207,7 @@ def cmd_restore(args, k):
 
 
 @command("adapter test", "chair", "run the harness conformance suite against a driver, or the "
-         "supervisor conformance suite against a supervisor command (CONTRACT §11)",
+         "supervisor conformance suite against a supervisor command (CONTRACT §12)",
          arg("driver", nargs="?", help="a driver name — omit with --supervisor"),
          arg("--workdir", help="scratch directory (default: a temporary one)"),
          arg("--clauses", help="comma list of clauses to run (default: all)"),

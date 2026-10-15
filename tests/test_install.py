@@ -94,3 +94,23 @@ class JcodeRerun(unittest.TestCase):
         dropped = mod.BLOCK.split("\n", 1)[1]
         text = mod.strip_block(dropped + "\n" + provider + "\n" + mod.BLOCK)
         self.assertEqual(text.strip(), provider.strip())
+
+
+class LauncherOwnership(ColdStart):
+    """I-04 (integration audit): two checkouts, one launcher — each install silently repointed
+    it. Now an installer refuses to steal another checkout's launcher, and --repoint is the
+    operator's explicit word."""
+
+    def test_another_checkouts_launcher_is_kept_unless_repoint(self):
+        b = self.tmp / "bin"
+        b.mkdir(parents=True, exist_ok=True)
+        (b / "holon").symlink_to("/usr/local/lib/not-the-holon-you-think")
+        out = subprocess.run([sys.executable, str(ROOT / "install.py"), "--home", str(self.tmp / "holon"),
+                              "--bin-dir", str(b)], env=self.env, text=True, capture_output=True)
+        self.assertEqual(out.returncode, 1, "the installer stops instead of repointing silently")
+        self.assertIn("belongs to another checkout", out.stdout + out.stderr)
+        self.assertEqual(os.readlink(b / "holon"), "/usr/local/lib/not-the-holon-you-think")
+        out = subprocess.run([sys.executable, str(ROOT / "install.py"), "--home", str(self.tmp / "holon"),
+                              "--bin-dir", str(b), "--repoint"], env=self.env, text=True, capture_output=True)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertEqual(os.readlink(b / "holon"), str(ROOT / "bin/holon"))

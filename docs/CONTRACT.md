@@ -49,7 +49,7 @@ kernel wrote.
 One JSON object per run, defined once in `holon/core/contract.py` and published as JSON Schemas
 in [`schemas/`](../schemas) (`holon contract schemas` prints them). Every envelope may also carry
 `learnings` and `decisions` (become memory), `proposals` (go to the department's steward),
-`refusals` (§9) and `usage` (§10).
+`refusals` (§10) and `usage` (§11).
 
 | Stage | Shape |
 |---|---|
@@ -171,7 +171,7 @@ write), and the employee commands of the registry (`holon_memory_search`, `holon
 `holon_run_heartbeat`, …). The server inherits the harness's environment, so `HOLON_RUN_TOKEN` or
 `HOLON_KEY` authenticates every call exactly as on the CLI; chair-only commands are never exposed.
 
-## §8 The read API (v1)
+## 9. The read API (api_version 2)
 
 Migration `work/0008_read_api_views.sql` publishes SQL views over `work.db` that outside
 surfaces may `SELECT` from, opened **read-only** (`mode=ro`, law 3). Holon is the only writer.
@@ -185,12 +185,12 @@ surfaces may `SELECT` from, opened **read-only** (`mode=ro`, law 3). Holon is th
 - `api_approvals` — pending approvals: id, title, department, grade, approver, risk, plan
   (the plan output JSON), created_at
 - `api_messages` — unacked messages: id, ts, sender, to_ref, kind, task_id, body
-- `api_triggers` — routine triggers: id, trigger_kind ('cron' today; events land with H7),
+- `api_triggers` — routine triggers: id, trigger_kind ('cron' or 'event' (H7)),
   pattern, department, employee, enabled, failure_streak, next_run_at
 
 The memory capability stays reachable through its own FTS (`items_fts`), same law.
 
-## §9 policy.json and refusals (H3+H5)
+## 10. policy.json and refusals (H3+H5)
 
 Every claim writes `runs/<id>/policy.json` beside the brief — the run's reach, compiled
 from the same sources the brief's prose and the sandbox adapters use ([scope] plus the
@@ -217,7 +217,7 @@ blockers for the verifier. Budgets: `[budget] tokens_per_run` / `cost_per_run`, 
 per department (`[budget.dept.<slug>]`) then per employee (`[budget.employee.<id>]`);
 0/absent = no cap. The harness stops the run at a cap and says so in `refusals`.
 
-## §10 trajectory.json and usage (H4)
+## 11. trajectory.json and usage (H4)
 
 Beside `result.json` a harness MAY write `trajectory.json` — the run's ordered steps, one
 object per step with `thought` (a summary), `tool`, `args` (a digest) and `outcome`:
@@ -244,7 +244,7 @@ rows carry the judged run's build, so pass rates group by build — and when a b
 drops materially below the previous build's, incident work opens (GENOME §6
 `[healing] build_regression_*`).
 
-## §11 The supervisor protocol (H6)
+## 12. The supervisor protocol (H6)
 
 Push mode spawns the driver from `holon dispatch`. A **supervisor** — a resident runtime that
 owns processes (a daemon, a sandbox supervisor) — runs the body itself, through the same claim
@@ -259,7 +259,7 @@ and the same rules (lease, concurrency, budget, policy). Three commands, one run
 The supervisor may run the body in-process (its own harness), spawn the returned `command`
 under its own sandboxing, or spawn any driver's argv. The run's outcome depends only on the
 result handed in and the policy it was given: `result.json` written by the body,
-`trajectory.json` optional beside it (§10). A prepared run that is never finished reverts by
+`trajectory.json` optional beside it (§11). A prepared run that is never finished reverts by
 lease expiry, like any abandoned run.
 
 On an isolated instance the prepared JSON carries `isolation` (the `agent_user` and the
@@ -267,10 +267,10 @@ On an isolated instance the prepared JSON carries `isolation` (the `agent_user` 
 the claim; a supervisor that runs the body as itself defeats the trust boundary, and
 `holon dispatch --prepare` refuses without `--runs-as-agent-user`.
 
-## §12 Event triggers (H7)
+## 13. Event triggers (H7)
 
 A routine may fire on events instead of a clock: `holon routine add … --on event:<pattern>`. The
-runtime that sees an event (a gateway, a webhook receiver) reads `api_triggers` (§8), matches
+runtime that sees an event (a gateway, a webhook receiver) reads `api_triggers` (§9), matches
 `event` rows' patterns against it, and calls:
 
 ```sh

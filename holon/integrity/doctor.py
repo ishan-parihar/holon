@@ -7,7 +7,9 @@ guarantees do not hold right now and need the Chair.
 from __future__ import annotations
 
 import json
+import sqlite3
 import stat
+from pathlib import Path
 
 from holon.core import vocab
 from holon.core.db import event_hash, now
@@ -56,6 +58,19 @@ def run(k) -> list[dict]:
     q = lambda sql, *a: w.execute(sql, a).fetchall()  # noqa: E731
 
     _isolation(k, add)
+    # which checkout owns this instance (H-09's silent half): two checkouts sharing one
+    # launcher made a stale checkout the live installation without a word
+    recorded = None
+    try:
+        recorded = k.wconn.execute("SELECT value FROM settings WHERE key='code_root'").fetchone()
+    except sqlite3.OperationalError:
+        recorded = None
+    if recorded:
+        running = str(Path(__file__).resolve().parents[1])
+        if recorded[0] != running:
+            add("warning", "code.root",
+                f"this instance was last migrated from {recorded[0]}, but is running from {running} — "
+                "one of them is stale (install.py --repoint, or merge that checkout)")
     for r in k.smoke_results():
         if not r["ok"]:
             add("error" if r["critical"] else "warning", "smoke.critical" if r["critical"] else "smoke.check",

@@ -1,4 +1,4 @@
-"""A reference supervisor (CONTRACT §11): reads the prepared JSON on stdin, runs the body with
+"""A reference supervisor (CONTRACT §12): reads the prepared JSON on stdin, runs the body with
 exactly the prepared environment (plus the OS baseline, never its own secrets), renews the
 lease while the body runs (at most lease/3), enforces the run's timeout by killing the process
 group, and hands the body in with `holon run finish`. Used by the supervisor conformance suite
