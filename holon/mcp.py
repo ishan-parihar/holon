@@ -75,8 +75,13 @@ def tools() -> list[dict]:
             spec = _arg_schema(a, kw)
             if spec is None:
                 continue
-            name, s, req, _ = spec
+            name, s, req, positional = spec
             props[name] = s
+            # H-14: the positional marker is part of the tool contract —
+            # a runtime building argv from this list must know which
+            # properties are positional (operant's native tools read it).
+            if positional:
+                s["positional"] = True
             if req:
                 required.append(name)
         schema: dict = {"type": "object", "properties": props}
