@@ -369,3 +369,22 @@ in `[checks]`, smoke checks, script routines and installed drivers must exist on
 absolute paths they name should; a department with its own reach or scripts but no smoke checks is
 reported (`ref.smoke`).
 
+
+## 14. Units and the genome layer
+
+A **unit** is a thing with an identity the organization works through — a service its
+departments consume or pool (a "foundation"), or a department's own declared genome. Units
+are **declared, never registered**: one manifest per unit, `$HOLON_HOME/genome/units/<slug>.toml`
+(charter, category, tier, `roots`, `pool_of`, `consumed`, `[[services]]` with entry points),
+synced by `holon genome sync` (the only writer), checked by `holon lint`
+(`bind.service`: every consumed `unit:service` is offered; `bind.pool`: every pooled unit
+names a real department), and derived into `genome/registry.md` by `holon genome emit`.
+
+**Pooling** (`pool_of = ["<dept>"]`) grants three things and nothing else: the unit's charter
+and services render in that department's briefs (presence), its `roots` join the department's
+reach (reads), and requests for it go through `msg request --service <unit>:<service>` —
+validated against the registry (K-5), and never the pen: writing to a unit is work for its
+own owner.
+
+Nothing about a unit is implicit: no inherited scope, no hidden authority — the manifest is
+the whole contract, the tables and registry are views of it.

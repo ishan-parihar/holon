@@ -29,7 +29,7 @@ from pathlib import Path
 from holon.core import contract, vocab
 from holon.core.db import checksum, migration_files
 
-PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api")
+PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "genome")
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
@@ -526,6 +526,15 @@ def harness_names() -> set[str]:
     return names
 
 
+def pack_genome(k, f: Findings) -> None:
+    """The genome layer (U1): unit manifests parse, every consumed service is offered by some unit
+    (bind.service), every pooled unit names a real department (bind.pool), and the sync is not
+    stale. The manifests are the source; the tables are a view of them."""
+    from holon.genome import units as units_mod
+    for p in units_mod.validate(k):
+        f.add("error", "genome.manifest", "genome/units", p)
+
+
 def pack_api(k, f: Findings) -> None:
     """The read API (boundary doc 4.1, H2): every api_* view exists on a migrated database
     and api_version matches the views this Holon ships. A view changes only with a version
@@ -544,8 +553,17 @@ def pack_api(k, f: Findings) -> None:
     if row is None:
         f.add("error", "api.version", "work.db", "no api_version row; the read-API migration did not run")
         return
-    if row[0] not in ("1", "2"):
-        f.add("error", "api.version", "work.db", f"api_version {row[0]!r} is not one this Holon knows (1, 2)")
+    if row[0] not in ("1", "2", "3"):
+        f.add("error", "api.version", "work.db", f"api_version {row[0]!r} is not one this Holon knows (1, 2, 3)")
+    if row[0] == "3":
+        expected = {**expected,
+                    "api_units": ("slug", "charter", "category", "tier", "synced_at"),
+                    "api_services": ("unit", "service", "command", "accepts", "returns")}
+        # api_memory lives on memory.db (a view cannot reach across attached databases)
+        have = tuple(r[1] for r in k.mconn.execute("PRAGMA table_info(api_memory)"))
+        if have != ("id", "scope", "kind", "content", "provenance", "confidence", "pinned", "valid_from"):
+            f.add("error", "api.views", "memory.db",
+                  f"api_memory columns {have} do not match api_version 3; a view changes only with a version bump")
     present = {r[0] for r in k.wconn.execute("SELECT name FROM sqlite_master WHERE type='view'")}
     for name, cols in expected.items():
         if name not in present:
@@ -556,7 +574,7 @@ def pack_api(k, f: Findings) -> None:
             f.add("error", "api.views", "work.db",
                   f"{name} columns {have} do not match api_version {row[0]} {cols}; a view changes only with a version bump")
     for extra in sorted(n for n in present if n.startswith("api_") and n not in expected):
-        f.add("warning", "api.views", "work.db", f"{extra} is not part of api_version 1; rename or bump")
+        f.add("warning", "api.views", "work.db", f"{extra} is not part of api_version {row[0]}; rename or bump")
 
 
 def run(k, packs: list[str] | None = None) -> list[dict]:

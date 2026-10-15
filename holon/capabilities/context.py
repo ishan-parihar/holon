@@ -15,6 +15,7 @@ from holon.capabilities.memory import STEERING_KINDS, Memory, fts_query, scope_f
 from holon.core.db import connect
 from holon.core.paths import Home
 from holon.execution.work import Work
+from holon.genome import units
 
 DEFAULT_BUDGET_CHARS = 24_000  # ~6k tokens
 
@@ -242,6 +243,16 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
                   f"{gold['summary'] or ''}\n\n{(gold['documentation'] or '')[:4000]}")
             if gold.get("trajectory_text"):
                 b.add("Gold standard trajectory (how it got there, compacted)", gold["trajectory_text"])
+        if task_dept and stage in ("plan", "execute", "research", "shape", "verify"):
+            pooled = units.pooled_by(work.conn, task_dept)
+            if pooled:
+                body = "\n\n".join(
+                    f"**{u['slug']}** — {u['charter']}\n"
+                    + "\n".join(f"- `{u['slug']}:{s['service']}` — `{s['command']}`"
+                                 f" (accepts: {s['accepts'] or '?'}; returns: {s['returns'] or '?'})"
+                                 for s in u["services"])
+                    for u in pooled)
+                b.add("Pooled units (declared capabilities: read them; writes go through msg request)", body)
     if stage == "retro":
         b.add("History of this work", _history(work, task_id))
         if task.get("task_class") == "retro" and task_dept:

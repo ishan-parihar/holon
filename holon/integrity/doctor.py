@@ -88,6 +88,24 @@ def run(k) -> list[dict]:
                 f"{t['title']}: closed without a guard or a waiver — the fix leaves nothing that "
                 "re-checks it (a `guard` field on the fix's result, or `holon incident waive {t['id']}`)")
 
+    # U1/U3: the genome's synced view must not be older than its source, nor the registry than the sync
+    from holon.genome import units as units_mod
+    manifests, _ = units_mod.load(k.home)
+    if manifests:
+        newest = max(u["mtime"] for u in manifests.values())
+        row = w.execute("SELECT max(synced_at) FROM units").fetchone()
+        if not row[0] or row[0] < newest:
+            add("warning", "genome.stale",
+                f"a unit manifest changed after the last `holon genome sync` ({newest[:19]}): the tables, "
+                "pooled reach and registry are a stale view of the genome")
+        reg = k.home.genome_registry
+        if row[0] and reg.exists():
+            from datetime import datetime, timezone
+            reg_at = datetime.fromtimestamp(reg.stat().st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+            if reg_at < row[0]:
+                add("warning", "genome.registry",
+                    "genome/registry.md is older than the last sync: `holon genome emit` regenerates it")
+
     # databases
     for name, conn in (("work.db", k.wconn), ("memory.db", k.mconn)):
         r = conn.execute("PRAGMA integrity_check").fetchone()[0]

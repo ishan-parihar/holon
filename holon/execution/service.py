@@ -28,6 +28,7 @@ from holon.capabilities import skills as skills_mod
 from holon.capabilities.skills import Library
 from holon.core import contract, vocab
 from holon.core.contract import EnvelopeError
+from holon.genome import units
 from holon.core.db import connect, migrate, now, write_txn
 from holon.core.paths import Home
 from holon.core.vocab import CHAIR, EXECUTIVE
@@ -1602,11 +1603,14 @@ class Kernel:
 
     # ── scope: what a department's employees may reach beyond their work's workdir ──
     def scope(self, dept_slug: str | None) -> dict:
-        """The effective reach for a department: [scope] plus [scope.dept.<slug>]. `name` is the slug when
-        the department has its own section, else "org"; harness adapters build one sandbox per name."""
+        """The effective reach for a department: [scope] plus [scope.dept.<slug>], plus the roots of
+        every unit the department pools (U2). `name` is the slug when the department has its own
+        section, else "org"; harness adapters build one sandbox per name."""
         base = self.config.get("scope", {})
         own = (base.get("dept") or {}).get(dept_slug) if dept_slug else None
         merged = {k: [*base.get(k, []), *((own or {}).get(k, []))] for k in ("roots", "commands", "act_commands")}
+        if dept_slug:   # pooled units' roots join the reach (synced rows; presence and writes are msg request)
+            merged["roots"] += [r for u in units.pooled_by(self.wconn, dept_slug) for r in u["roots"]]
         merged["roots"] = [str(Path(r).expanduser()) for r in merged["roots"]]
         return {"name": dept_slug if own is not None else "org", **merged}
 

@@ -172,10 +172,12 @@ write), and the employee commands of the registry (`holon_memory_search`, `holon
 `holon_run_heartbeat`, …). The server inherits the harness's environment, so `HOLON_RUN_TOKEN` or
 `HOLON_KEY` authenticates every call exactly as on the CLI; chair-only commands are never exposed.
 
-## 9. The read API (api_version 2)
+## 9. The read API (api_version 3)
 
-Migration `work/0008_read_api_views.sql` publishes SQL views over `work.db` that outside
-surfaces may `SELECT` from, opened **read-only** (`mode=ro`, law 3). Holon is the only writer.
+Migrations `work/0008` and `work/0013` publish SQL views over `work.db` that outside surfaces
+may `SELECT` from, opened **read-only** (`mode=ro`, law 3). Holon is the only writer. One view
+lives on `memory.db` — SQLite views cannot reach across attached databases, so `api_memory`
+is published there (migration `memory/0003`); open or attach `memory.db` read-only for it.
 
 - `api_meta`: the `api_version` row. A view's columns change only with a version bump; a
   consumer refuses a version it does not know (`holon lint` pack `api` proves both sides).
@@ -188,6 +190,11 @@ surfaces may `SELECT` from, opened **read-only** (`mode=ro`, law 3). Holon is th
 - `api_messages` — unacked messages: id, ts, sender, to_ref, kind, task_id, body
 - `api_triggers` — routine triggers: id, trigger_kind ('cron' or 'event' (H7)),
   pattern, department, employee, enabled, failure_streak, next_run_at
+- `api_units` — the synced genome units: slug, charter, category, tier, synced_at (§14)
+- `api_services` — the services units offer: unit, service, command (the entry point), accepts,
+  returns — the registry `msg request --service` validates against
+- `api_memory` (on `memory.db`) — the organization's live knowledge: id, scope, kind, content,
+  provenance, confidence, pinned, valid_from
 
 The memory capability stays reachable through its own FTS (`items_fts`), same law.
 

@@ -289,12 +289,12 @@ class EventTriggers(LaneCase):
         self.k.wconn.execute("UPDATE schedules SET next_run_at=NULL WHERE id=?", (s["id"],))
         self.assertTrue(self.k.fire_routine(s["id"]).get("skipped"), "the last firing's work is open")
 
-    def test_api_triggers_v2_publishes_event_rows(self):
+    def test_api_triggers_publishes_event_rows(self):
         s = self._routine()
         row = next(dict(r) for r in self.k.wconn.execute("SELECT * FROM api_triggers WHERE id=?", (s["id"],)))
         self.assertEqual((row["trigger_kind"], row["pattern"]), ("event", "event:webhook:invoice.*"))
         self.assertEqual(self.k.wconn.execute(
-            "SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "2")
+            "SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "3")
 
     def test_a_routine_needs_a_cron_or_an_event(self):
         with self.assertRaises(ValueError):

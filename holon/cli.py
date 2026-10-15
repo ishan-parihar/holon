@@ -839,10 +839,21 @@ def cmd_msg_inbox(args, k):
 
 
 @command("msg request", "employee", "ask another department for work (it becomes work there)",
-         AS, arg("dept"), arg("title"), arg("--intent", required=True), arg("--acceptance"),
+         AS, arg("dept"), arg("title"), arg("--intent", required=True, help="text, '-' for stdin, or @file"),
+         arg("--acceptance", help="text, '-' for stdin, or @file"),
+         arg("--service", metavar="unit:service", help="a declared service (K-5): validated against the "
+             "genome registry, and named in the request so the performer knows which entry point to run"),
          arg("--priority", type=int, default=3, choices=list(vocab.PRIORITIES)))
 def cmd_msg_request(args, k):
-    t = k.request(_sender(args, k), args.dept, args.title, _text_arg(args.intent),
+    title = args.title
+    if args.service:
+        u, _, s = args.service.rpartition(":")
+        if not u or not k.wconn.execute("SELECT 1 FROM unit_services WHERE slug=? AND service=?",
+                                       (u, s)).fetchone():
+            raise ValueError(f"{args.service!r} is not a declared service (holon genome sync; "
+                             "api_services lists them)")
+        title = f"[{args.service}] {title}"
+    t = k.request(_sender(args, k), args.dept, title, _text_arg(args.intent),
                   acceptance=_text_arg(args.acceptance), priority=args.priority)
     _out(args, t, f"request filed as {t['id']} in {args.dept}")
 
@@ -1208,6 +1219,24 @@ def cmd_guards(args, k):
         " FROM guards g LEFT JOIN tasks t ON t.id = g.work_id ORDER BY g.created_at")]
     _out(args, rows, "\n".join(f"{r['name']:<30} {r['cmd']}  ← {r['incident']}" for r in rows)
          or "no guards registered: an incident fix's `guard` field registers one")
+
+
+@command("genome sync", "chair", "regenerate the units tables from $HOLON_HOME/genome/units/*.toml "
+         "(the only writer; refuses on a manifest that does not parse)")
+def cmd_genome_sync(args, k):
+    from holon.genome import units
+    out = units.sync(k)
+    _out(args, out, f"{out['units']} units, {out['services']} services")
+
+
+@command("genome emit", "chair", "derive genome/registry.md from the synced units (U3): the unit tree, "
+         "the services each offers, and the consumption graph")
+def cmd_genome_emit(args, k):
+    from holon.genome import units
+    if not k.wconn.execute("SELECT 1 FROM units LIMIT 1").fetchone():
+        raise ValueError("nothing synced yet: `holon genome sync` first")
+    p = units.emit(k)
+    _out(args, {"path": str(p)}, f"registry written to {p}")
 
 
 @command("restore", "chair", "restore a backup into this instance (verifies its checksums first)", arg("path"),

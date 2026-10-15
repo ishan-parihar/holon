@@ -57,6 +57,14 @@ class Home:
         return self.root / "capabilities" / "memory" / "memory.db"
 
     @property
+    def genome_units_dir(self) -> Path:
+        return self.root / "genome" / "units"
+
+    @property
+    def genome_registry(self) -> Path:
+        return self.root / "genome" / "registry.md"
+
+    @property
     def trajectory_db(self) -> Path:
         return self.root / "capabilities" / "strategy" / "trajectory.db"
 
