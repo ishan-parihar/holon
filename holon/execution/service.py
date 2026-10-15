@@ -336,12 +336,46 @@ class Kernel:
         out = self.work.verify(ref, verdict, note, run_id)
         if out["work"]["status"] == "done":
             out["skill_changes"] = self.apply_skill_changes(out["work"])
+            self._register_guard(out["work"])
         plan = self.work.approved_plan(out["work"]["id"])
         change = None
         decider = plan["approval"]["decided_by"] if plan else None
         if decider and decider.startswith("emp:"):
             change = self._earned_authority(decider, out["work"].get("task_class"))
         return {**out, "authority_change": change}
+
+    def _register_guard(self, work: dict) -> None:
+        """K-2: an incident's verified fix may register one guard — the fixer's `guard` field on the
+        execute result (a name and a shell command). The heartbeat runs it forever; a failure
+        reopens the incident. A fix that registers nothing is a doctor warning until waived."""
+        if work.get("task_class") != "incident":
+            return
+        ex = self.work.latest(work["id"], "execute")
+        body = (self.work.output(ex["id"]) or {}).get("body") or {} if ex else {}
+        g = body.get("guard")
+        if not isinstance(g, dict) or not g.get("cmd"):
+            return
+        name = (g.get("name") or work["title"][:60]).strip()
+        with write_txn(self.wconn):
+            self.wconn.execute("INSERT OR REPLACE INTO guards VALUES (?,?,?,?,?)",
+                               (work["id"], name, g["cmd"], int(g.get("timeout") or 60), now()))
+            self.work._event("work", work["id"], None, None, f"guard registered: {name}")
+
+    def _guard_triggers(self) -> list[dict]:
+        """K-2: registered guards run on the heartbeat like smoke checks; a failing one reopens its
+        incident — a fixed defect is re-checked forever, not just remembered."""
+        out = []
+        for g in self.wconn.execute("SELECT * FROM guards").fetchall():
+            code, tail = self._exec(g["cmd"], str(self.home.root), {}, g["timeout"] or 60)
+            if code:
+                r = self._incident(f"Incident: guard '{g['name']}' failed",
+                                   f"The guard registered by the fix of {g['work_id']} (`{g['cmd']}`) "
+                                   f"exited {code}:\n```\n{tail.strip()[-400:]}\n```\n"
+                                   "This defect was fixed and verified once; it is back. Find what regressed, "
+                                   "fix it, and the guard passing again closes this.")
+                if r:
+                    out.append(r)
+        return out
 
     # ── authority: narrowing applies at once, widening needs the approver the autonomy policy names ──
     def _approver_dept(self, approver: str) -> str | None:
@@ -1777,6 +1811,7 @@ class Kernel:
         out = []
         out += self._incidents(swept or [])
         out += self._build_regression()
+        out += self._guard_triggers()
         out += self._probation_reviews()
         out += self._department_retros()
         out += self._doctor()

@@ -49,7 +49,8 @@ kernel wrote.
 One JSON object per run, defined once in `holon/core/contract.py` and published as JSON Schemas
 in [`schemas/`](../schemas) (`holon contract schemas` prints them). Every envelope may also carry
 `learnings` and `decisions` (become memory), `proposals` (go to the department's steward),
-`refusals` (§10) and `usage` (§11).
+`refusals` (§10), `usage` (§11) and `guard` (an incident fix's regression check: registered when
+the fix verifies, run on every heartbeat; a failure reopens the incident).
 
 | Stage | Shape |
 |---|---|

@@ -78,6 +78,16 @@ def run(k) -> list[dict]:
                 + (f" — {r['reason']}" if r["reason"] else "") + (f": {r['tail'][-200:]}" if r["tail"] else "")
                 + (" — its agents wait until it passes" if r["critical"] else ""))
 
+    # K-2: a closed incident with neither a registered guard nor a waiver
+    for t in q("SELECT id, title FROM tasks WHERE status='done' AND task_class='incident' AND stage IS NULL"):
+        if q("SELECT 1 FROM guards WHERE work_id=?", t["id"]):
+            continue
+        if k._setting(f"incident:{t['id']}:waived"):
+            continue
+        add("warning", "incident.guard",
+                f"{t['title']}: closed without a guard or a waiver — the fix leaves nothing that "
+                "re-checks it (a `guard` field on the fix's result, or `holon incident waive {t['id']}`)")
+
     # databases
     for name, conn in (("work.db", k.wconn), ("memory.db", k.mconn)):
         r = conn.execute("PRAGMA integrity_check").fetchone()[0]

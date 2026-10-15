@@ -188,6 +188,22 @@
         }
       },
       "description": "what the run consumed (H4): the kernel records it on the run — budgets and cost per verified result read it; a usage the driver measured wins over the envelope's claim"
+    },
+    "guard": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "cmd": {
+          "type": "string"
+        },
+        "timeout": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "description": "a fix's regression guard (K-2), on an incident fix's execute result: registered when the fix verifies; the heartbeat runs it forever, and a failure reopens the incident"
     }
   },
   "required": [

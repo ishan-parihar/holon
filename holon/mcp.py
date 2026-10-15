@@ -79,7 +79,7 @@ def tools() -> list[dict]:
             props[name] = s
             # H-14: the positional marker is part of the tool contract —
             # a runtime building argv from this list must know which
-            # properties are positional (operant's native tools read it).
+            # properties are positional (native tools read it).
             if positional:
                 s["positional"] = True
             if req:

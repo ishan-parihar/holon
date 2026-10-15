@@ -5,8 +5,8 @@ as JSON Schema for harness authors (`holon contract schemas` writes schemas/; `h
 the published files drift from this module). No schema library: stdlib only.
 
 Every envelope may also carry the common fields: `learnings` and `decisions` (become memory),
-`proposals` (improvements, routed to the department's steward), `refusals` (policy refusals)
-and `usage` (what the run consumed).
+`proposals` (improvements, routed to the department's steward), `refusals` (policy refusals),
+`usage` (what the run consumed) and `guard` (an incident fix's regression check).
 """
 
 from __future__ import annotations
@@ -56,6 +56,10 @@ COMMON = {
                           "group by it and a regression opens incident work (H10)"),
     }, doc="what the run consumed (H4): the kernel records it on the run — budgets and cost per "
            "verified result read it; a usage the driver measured wins over the envelope's claim"),
+    "guard": F("object", fields={
+        "name": F("str"), "cmd": F("str"), "timeout": F("num", lo=1),
+    }, doc="a fix's regression guard (K-2), on an incident fix's execute result: registered when the "
+           "fix verifies; the heartbeat runs it forever, and a failure reopens the incident"),
 }
 WORK_ITEM = {"title": F("text", required=True), "intent": F("text", required=True), "acceptance": TEXT,
              "dept": F("str"), "task_class": F("str"), "priority": F("int", lo=0, hi=4),

@@ -1,5 +1,6 @@
 """R5: the feedback loops. Every loop has a sensor, a comparator, and an actuator that is work."""
 
+from holon.integrity import doctor
 from tests.helpers import JD, KernelCase
 
 
@@ -205,3 +206,41 @@ class BuildRegression(Loops):
         self.assertFalse([i for i in self.k.triggers() if "regressed" in i.get("title", "")])
         self._judged(t, "harness-9", 3, False, "2026-10-12T09:00:00Z")   # too few judgments to judge
         self.assertFalse([i for i in self.k.triggers() if "regressed" in i.get("title", "")])
+
+
+class GuardLoop(Loops):
+    """K-2: an incident's verified fix registers its `guard` (the fixer's regression check); the
+    heartbeat runs registered guards, and a failure reopens the incident — a fixed defect is
+    re-checked forever, not remembered. A closed incident with neither guard nor waiver is a
+    doctor warning."""
+
+    def _fixed_incident(self, guard=None):
+        w = self.add(dept="ops", task_class="incident")
+        self.plan_and_approve(w, planner=self.maker, assignee=self.maker, writes=[])
+        c = self.k.claim("execute", self.maker)
+        self.k.submit(c.run["id"], self.exec_env(**({"guard": guard} if guard else {})))
+        v = self.k.claim("verify", self.checker)
+        out = self.k.submit(v.run["id"], {"verdict": "pass", "note": "fixed"})
+        return w, out
+
+    def test_a_verified_incident_fix_registers_its_guard(self):
+        w, out = self._fixed_incident(guard={"name": "disk free", "cmd": "test -e .", "timeout": 5})
+        self.assertEqual(self.k.work.get(w["id"])["status"], "done")
+        row = self.k.wconn.execute("SELECT name, cmd FROM guards WHERE work_id=?", (w["id"],)).fetchone()
+        self.assertEqual(tuple(row), ("disk free", "test -e ."), "the guard, with provenance on the incident")
+
+    def test_a_failing_guard_reopens_the_incident_once(self):
+        w, out = self._fixed_incident(guard={"name": "disk free", "cmd": "false"})
+        opened = self.k._guard_triggers()
+        self.assertEqual(len(opened), 1, "the regression opens incident work")
+        inc = self.k.work.get(opened[0]["incident"])
+        self.assertIn("fixed and verified once; it is back", inc["intent"], "the provenance is named")
+        self.assertEqual(self.k._guard_triggers(), [], "one open incident per guard, not one a sweep")
+
+    def test_a_closed_incident_needs_a_guard_or_a_waiver(self):
+        w, out = self._fixed_incident()                     # fixed, but registered no guard
+        findings = [f for f in doctor.run(self.k) if f["check"] == "incident.guard"]
+        self.assertEqual(len(findings), 1, "doctor warns: the fix leaves nothing that re-checks it")
+        self.k.auth._put(f"incident:{w['id']}:waived", "the disk fills and empties by design")
+        self.assertEqual([f for f in doctor.run(self.k) if f["check"] == "incident.guard"], [],
+                         "a recorded waiver is a decision, not an omission")

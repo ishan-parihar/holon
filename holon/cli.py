@@ -1191,6 +1191,25 @@ def cmd_keys_list(args, k):
                                 for r in rows) or "no key files")
 
 
+@command("incident waive", "chair", "record why a closed incident's fix carries no guard (a deliberate "
+         "decision, not an omission; `holon doctor` checks for it)", arg("work_id"),
+         arg("--note", required=True, help="why this fix needs no re-check"))
+def cmd_incident_waive(args, k):
+    k.auth._put(f"incident:{args.work_id}:waived", args.note[:400])
+    _out(args, {"work": args.work_id, "waived": args.note[:400]},
+         f"waived: {args.note[:80]}")
+
+
+@command("guards", "chair", "the registered incident guards (K-2): what re-checks a fixed defect on "
+         "every heartbeat, and the incident each came from")
+def cmd_guards(args, k):
+    rows = [dict(r) for r in k.wconn.execute(
+        "SELECT g.work_id, g.name, g.cmd, g.timeout, g.created_at, t.title AS incident"
+        " FROM guards g LEFT JOIN tasks t ON t.id = g.work_id ORDER BY g.created_at")]
+    _out(args, rows, "\n".join(f"{r['name']:<30} {r['cmd']}  ← {r['incident']}" for r in rows)
+         or "no guards registered: an incident fix's `guard` field registers one")
+
+
 @command("restore", "chair", "restore a backup into this instance (verifies its checksums first)", arg("path"),
          arg("--force", action="store_true", help="required: the instance's current state is replaced"),
          arg("--verify-only", action="store_true"))
