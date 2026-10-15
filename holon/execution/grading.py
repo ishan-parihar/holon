@@ -27,10 +27,13 @@ def verified_in_class(conn: sqlite3.Connection, task_class: str | None) -> int:
 
 
 def grade_plan(conn: sqlite3.Connection, task: dict, env: dict, cfg: dict | None = None,
-               reach: list[str] | None = None) -> dict:
+                reach: list[str] | None = None) -> dict:
     """`reach`: the department's scope roots ([scope] in holon.toml). Writes there count as in bounds;
-    writes beyond the workdir and the reach of a department that has one go to the Chair (G3)."""
-    cfg = {**DEFAULTS, **((cfg or {}).get("grading", {}))}
+    writes beyond the workdir and the reach of a department that has one go to the Chair (G3).
+    In a `[pilot]` department, anything the floor puts at G3 (outside reach) is the Chair's call:
+    floor G4 — the standing rule "pilot work never sends outreach" as a grade floor, not a hope."""
+    full = cfg or {}
+    cfg = {**DEFAULTS, **(full.get("grading", {}))}
     floor, reasons = RISK_FLOOR.get(task.get("risk") or "normal", 1), []
     reasons.append(f"risk={task.get('risk')}: floor G{floor}")
 
@@ -67,6 +70,11 @@ def grade_plan(conn: sqlite3.Connection, task: dict, env: dict, cfg: dict | None
                 "successes (novel work): floor G2")
     elif not task.get("task_class"):
         bump(2, "unclassified task (no track record to trust): floor G2")
+    pilot = (full.get("pilot") or {}).get("depts") or []
+    if pilot and floor >= 3 and task.get("dept_id"):
+        r = conn.execute("SELECT slug FROM departments WHERE id=?", (task["dept_id"],)).fetchone()
+        if r and r["slug"] in pilot:
+            bump(4, f"pilot department '{r['slug']}': outside-reach (G3) is the Chair's call (G4)")
     proposed = parse_grade(env.get("grade"))
     effective = max(floor, proposed if proposed is not None else int(cfg["default_proposed"]))
     if proposed is not None and proposed < floor:

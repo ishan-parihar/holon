@@ -682,14 +682,16 @@ def cmd_routine_import(args, k):
         if args.apply and not r["paused"]:
             try:
                 a = k.add_routine(r["title"], r["intent"], dept=args.dept, cron=r["cron"], command=r["command"],
-                                  workdir=r["workdir"], deliver=r["deliver"], strict=False)
+                                  workdir=r["workdir"], deliver=r["deliver"], strict=False, imported=True)
                 r.update(approval=a["id"], approver=a["approver"], grade=a["grade"])
             except (ValueError, LookupError) as e:
                 r["error"] = str(e)
         rows.append({k_: v for k_, v in r.items() if k_ != "intent"})
     _out(args, rows, "\n".join(f"{'paused ' if r['paused'] else ''}{r['title']:<36} `{r['cron']}` "
                                f"{'script: ' + r['command'] if r['command'] else 'agent'}{' deliver' if r['deliver'] else ''}"
-                               + (f"  -> {r['approval']} ({r['approver']}, G{r['grade']})" if r.get("approval") else "")
+                               + (f"  -> {r['approval']} ({r['approver']}, G{r['grade']})"
+                                  + (", starts OFF: outside-reach import, enable per job" if r.get("grade", 0) >= 3
+                                     else ", starts on approval") if r.get("approval") else "")
                                + (f"  !! {r['error']}" if r.get("error") else "") for r in rows))
 
 

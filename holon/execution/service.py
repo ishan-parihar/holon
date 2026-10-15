@@ -52,6 +52,7 @@ DEFAULT_CONFIG = {
                 "run_failures_for_incident": 3, "doctor_every_min": 30, "backup_every_h": 24, "backup_to": "",
                 "build_regression_samples": 10, "build_regression_drop": 0.25},
     "retention": {"runs_days": 0, "messages_days": 0, "backup_max_age_days": 7},
+    "pilot": {"depts": []},   # pilot departments: outside-reach floors at G4 — the Chair's call, job by job
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
     # a department rate past its bound (over min_samples) makes its retro due without proposals;
     # a _min of 0 or a _max of 1 turns that bound off
@@ -1092,7 +1093,7 @@ class Kernel:
                     command: str | None = None, rubric: list[str] | None = None, why: str | None = None,
                     workdir: str | None = None, task_class: str | None = None, risk: str = "normal",
                     project_ref: str | None = None, objective_id: str | None = None, strict: bool = True,
-                    deliver: bool = False) -> dict:
+                    deliver: bool = False, imported: bool = False) -> dict:
         """A routine (a cron job, or an event trigger) as a proposal for the approver its grade names. The
         lane is enforced cheapest first: a job the classifier judges deterministic must be a script
         (`command`); a costlier lane than the classifier's needs `why`, which is recorded; a cheaper one
@@ -1144,6 +1145,10 @@ class Kernel:
         external = self._external(cls)
         floor = max(2, grading.RISK_FLOOR.get(risk, 1), 3 if external else 0)
         reasons = ["a routine runs unattended on a schedule: floor G2"]
+        pilot = self.config.get("pilot", {}).get("depts") or []
+        if external and pilot and dept in pilot:
+            floor = max(floor, 4)   # I5: in a pilot department the Chair approves outside-reach, job by job
+            reasons.append(f"pilot department '{dept}': outside-reach is the Chair's call (G4)")
         if external:
             reasons.append(f"the classifier judges it reaches outside the organization (p={cls['external_p']}): "
                            "floor G3")
@@ -1161,7 +1166,9 @@ class Kernel:
                  "full": f"{when[0].upper() + when[1:]}, a fresh piece of work is planned, approved, executed and verified."}[lane]
         return self.work.propose(
             title=f"Routine: {title}", intent=intent, steps=steps,
-            apply={"kind": "routine", "cron": cron, "event": event},
+            apply={"kind": "routine", "cron": cron, "event": event,
+                   "starts_disabled": bool(imported and floor >= 3)},   # I1: an outside-reach import
+            #      lands OFF; the Chair enables it per job after review
             approver=approver, grade=floor, task_class=task_class, dept=dept_id, author=self.actor,
             reasons=reasons + notes, body={"lane": lane, "rubric": list(rubric or []), "classification": cls,
                                            "playbook": playbooks.for_routine(title), "deliver": bool(deliver),
@@ -1173,7 +1180,14 @@ class Kernel:
         """On approval: the plan becomes a standing (recurring) plan, its schedule starts, and its playbook
         (protocol + rubric, version 1) is written into the department's skills, where refinement improves it."""
         self.wconn.execute("UPDATE tasks SET recurring=1 WHERE id=?", (a["_plan"],))
-        self.schedules.insert("recurring", a.get("cron") or "", template_id=a["_plan"], event=a.get("event"))
+        sid = self.schedules.insert("recurring", a.get("cron") or "", template_id=a["_plan"], event=a.get("event"))
+        if a.get("starts_disabled"):
+            # I1: an outside-reach import (G3+) starts OFF; one bulk approval must never light an
+            # outreach fleet. The Chair enables it per job after review (`holon schedule enable`).
+            # Appliers run inside the approval's transaction — direct rows, like insert above.
+            self.wconn.execute("UPDATE schedules SET enabled=0, next_run_at=NULL WHERE id=?", (sid,))
+            self.work._event("schedule", sid, None, "disabled",
+                             "outside-reach import: starts off, enabled per job by the Chair")
         plan = self.work.get(a["_plan"])
         src, body = self.work.get(plan["parent_id"]), self.work.output(a["_plan"])["body"]
         slug, name = self._dept_slug(src["dept_id"]), body.get("playbook")
