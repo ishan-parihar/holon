@@ -75,6 +75,11 @@ def migrate(conn: sqlite3.Connection, db_name: str) -> list[str]:
     if "checksum" not in {r[1] for r in conn.execute("PRAGMA table_info(schema_migrations)")}:
         conn.execute("ALTER TABLE schema_migrations ADD COLUMN checksum TEXT")
     done = {r[0] for r in conn.execute("SELECT name FROM schema_migrations")}
+    shipped = {f.name for f in migration_files(db_name)}
+    unknown = sorted(done - shipped)
+    if unknown:
+        raise RuntimeError(f"this instance was migrated by a newer Holon (unknown {db_name} migrations: "
+                           f"{', '.join(unknown)}); run the checkout that owns it, or upgrade this one")
     # migrations applied before checksums existed: adopt the shipped file as the baseline, once
     unsummed = {r[0] for r in conn.execute("SELECT name FROM schema_migrations WHERE checksum IS NULL")}
     for f in migration_files(db_name):

@@ -188,6 +188,25 @@ class Operant(KernelCase):
         d = Driver.from_toml((ADAPTERS / "operant" / "driver.toml").read_text(), "operant")
         self.assertIn("/{posture}.toml", d.command)
 
+    def test_operant_driver_env_is_absolute_after_install(self):
+        """H-02 (integration audit): install.py must substitute every driver [env] value. A
+        literal template in the installed driver gave every operant body `{holon_home}` as its
+        state home — a false read-only breach on observe stages, and none of the isolation the
+        adapter promises."""
+        subprocess.run([sys.executable, str(ADAPTERS / "operant" / "install.py"), "--holon-home",
+                        str(self.home.root), "--base-url", "http://127.0.0.1:9/v1", "--model", "test-model",
+                        "--api-key-file", "/dev/null", "--operant", "/bin/true"],
+                       capture_output=True, text=True, check=True)
+        installed = self.home.root / "config" / "drivers" / "operant.toml"
+        d = Driver.from_toml(installed.read_text(), "operant")
+        self.assertTrue(d.env, "the installed driver carries its environment")
+        for k, v in d.env.items():
+            self.assertNotIn("{", v, f"{k} still carries a template")
+            self.assertNotIn("}", v, f"{k} still carries a template")
+            self.assertTrue(v.startswith("/"), f"{k} must be absolute after install: {v!r}")
+        self.assertEqual(d.env["HERMES_HOME"], str(self.home.root / "adapters" / "operant" / "home"),
+                         "an isolated operant home per instance")
+
     def test_operant_dry_run_never_prints_a_key(self):
         import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".key", delete=False) as fh:

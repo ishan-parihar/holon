@@ -34,7 +34,7 @@ Environment in push mode:
 | `HOLON_STAGE`, `HOLON_ROLE` | research, shape, plan, approve, execute, verify or retro; the role that performs it |
 | `HOLON_POSTURE` | `observe` (change nothing) or `act` (execute only) |
 | `HOLON_EMPLOYEE_ID` | who is working |
-| `HOLON_BRIEF_DIR`, `HOLON_RESULT_PATH` | where the brief is and where the result goes |
+| `HOLON_RUN_DIR`, `HOLON_RESULT_PATH` | this run's directory (where `policy.json`, `trajectory.json`, `usage.json` and refusals live) and where the result goes; `HOLON_BRIEF_DIR` is an alias of `HOLON_RUN_DIR` |
 | `HOLON_RUN_TOKEN` | authenticates this employee for this run only (§6) |
 | `HOLON_BROKER` | set under isolation (GENOME §11): the broker's address; `holon` sends every call there |
 

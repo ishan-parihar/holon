@@ -70,6 +70,9 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
   it names must exist, so a guard cannot be deleted silently.
 - **Real-harness lessons belong in the adapter's README** (what the harness does that the
   contract does not expect) and, when the kernel changed, in GENOME or CONTRACT.
+- **An interface package is done only when one test crosses the seam with the other side's real
+  artifact** — the kernel's real prepared run into the runtime, the runtime's real files into
+  the kernel's `submit`. Unit tests that stub the seam mark phases "landed" that have never run.
 - **A new config key is documented in `docs/GENOME.md` §6** or lint fails (`bind.config`).
 - **After deploying to an instance:** pull, run the tests there, `holon doctor`, and re-run an
   adapter installer whose inputs changed (`[scope]`, model, notify); doctor reports `scope.drift`
@@ -155,6 +158,9 @@ What that means for every change here:
 | Decision models, live script routine | the free tier's 50 decisions a day ran out (HTTP 429); the judge fell back to a verifier, but nothing said why | `test_a_decision_model_that_is_down_is_never_silent` |
 | Decision models, live run over 61 recurring jobs | "reaches outside the organization" counted digests to the Chair, flagging 58 of 61 jobs (9 after the fix) | `test_reports_to_the_chair_do_not_count_as_reaching_outside` |
 | Notion webhooks | the public URL was set up by hand, so a new machine had no webhooks | `test_a_new_machine_gets_every_database_and_a_rerun_changes_nothing` |
+| Integration audit, live probe | the kernel and the body's runtime disagreed on the run directory's variable name, so no real run ever saw enforcement, trajectory or usage | `test_prepare_writes_the_run_without_spawning` |
+| Integration audit, live probe | the operant driver shipped a literal template in its `[env]`, so every body used a false state home — a silent read-only breach | `test_operant_driver_env_is_absolute_after_install` |
+| Integration audit, live probe | a database migrated by newer code ran silently under older code (two checkouts, one launcher) | `test_a_database_newer_than_the_code_refuses_to_run` |
 
 ## Reading order for a new agent
 

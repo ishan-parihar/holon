@@ -153,7 +153,9 @@ def run_env(home: Home, brief: dict, token: str | None, broker: str | None = Non
     stage = brief["stage"]
     env = {**kernel_env(home), "HOLON_RUN_ID": brief["run_id"], "HOLON_TASK_ID": brief["task_id"],
            "HOLON_STAGE": stage, "HOLON_ROLE": vocab.STAGE_ROLE[stage], "HOLON_POSTURE": vocab.POSTURE[stage],
-           "HOLON_EMPLOYEE_ID": brief.get("employee_id") or "", "HOLON_BRIEF_DIR": str(Path(brief["brief_md"]).parent),
+           "HOLON_EMPLOYEE_ID": brief.get("employee_id") or "",
+           "HOLON_RUN_DIR": str(Path(brief["brief_md"]).parent),
+           "HOLON_BRIEF_DIR": str(Path(brief["brief_md"]).parent),
            "HOLON_RESULT_PATH": brief["result_path"]}
     if token:
         env["HOLON_RUN_TOKEN"] = token

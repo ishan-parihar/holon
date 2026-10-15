@@ -286,6 +286,9 @@ class SupervisorProtocol(KernelCase):
         self.assertEqual(json.loads((run_dir / "policy.json").read_text())["posture"], "act")
         self.assertIn("HOLON_RUN_TOKEN", p["env"])
         self.assertIn("HOLON_RESULT_PATH", p["env"])
+        self.assertEqual(p["env"]["HOLON_RUN_DIR"], str(run_dir),
+                         "the run directory's name (H-01): policy.json, trajectory.json, usage.json")
+        self.assertEqual(p["env"]["HOLON_BRIEF_DIR"], str(run_dir), "the alias keeps working")
         self.assertTrue(p["command"])
         self.assertIn(("execute", "claimed"), self.pipeline_of(t))
 

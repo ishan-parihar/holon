@@ -19,6 +19,7 @@ from holon.core.ids import new_id, ulid
 from holon.execution.cron import Cron, CronError
 from holon.execution.drivers import extract_last_json
 from holon.execution.grading import grade_plan
+from holon.execution.service import Kernel
 from tests.helpers import KernelCase
 
 PKG = Path(__file__).resolve().parents[1] / "holon"
@@ -297,3 +298,24 @@ class ChairChannels(KernelCase):
         self.assertEqual(rc, 0)
         rc = cli.main(["--home", str(self.home.root), "chair-channels"])
         self.assertEqual(rc, 0)  # the text arm prints; the exit is the contract
+
+
+class DatabaseVersion(KernelCase):
+    """H-09 (integration audit): a database migrated by a newer Holon must refuse to run under
+    older code — silently writing to a newer schema is undefined behaviour, and two checkouts
+    sharing one launcher made it a live hazard."""
+
+    def _inject_future_migration(self):
+        for db in (self.home.work_db, self.home.memory_db):
+            c = sqlite3.connect(db)
+            c.execute("INSERT INTO schema_migrations VALUES ('9999_future.sql', ?, 'x')",
+                      (datetime.now(timezone.utc).isoformat(),))
+            c.commit()
+            c.close()
+
+    def test_a_database_newer_than_the_code_refuses_to_run(self):
+        self._inject_future_migration()
+        with self.assertRaises(RuntimeError) as cm:
+            Kernel(self.home, "chair")
+        self.assertIn("9999_future.sql", str(cm.exception))
+        self.assertIn("newer Holon", str(cm.exception))

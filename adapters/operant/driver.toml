@@ -24,4 +24,4 @@ read_only_enforced = false
 # envelope JSON the brief asks for is the last JSON object on stdout.
 
 [env]
-HERMES_HOME = "{holon_home}"
+HERMES_HOME = "{ohome}"
