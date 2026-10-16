@@ -17,8 +17,11 @@
    [cron], [kanban]) and point [memory] at the builtin provider within the isolated home — in a
    Holon run the organization's memory is Holon's (boundary doc S1/S3).
 3. mounts the Holon MCP server (stdio, one process per run, so each run's token stays its own)
-   in both postures — observe stages hand their result in with holon_submit, since they cannot
-   write result.json. The run token reaches it through the environment operant's child inherits.
+   in both postures — UNLESS the pinned operant binary registers the holon_* native tools under
+   the run env (probed at install; operant iter-854+): those builds get no MCP mount, the native
+   tools are the organization's read/submit surface. Observe stages hand their result in with
+   holon_submit, since they cannot write result.json. The run token reaches the tools through
+   the environment operant's child inherits.
 4. exports Holon's skills to $HERMES_HOME/skills (registered: verified skill changes refresh them)
 5. installs the driver, pinned to this operant binary and HERMES_HOME
 """
@@ -52,7 +55,8 @@ AFT_WRITE = ["aft_edit", "aft_write", "aft_patch", "aft_append"]
 
 
 def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
-                memory_dir: Path, observe: bool, api_key: str | None) -> str:
+                memory_dir: Path, observe: bool, api_key: str | None,
+                native_tools: bool = False) -> str:
     tools = sorted(WRITE_TOOLS + AFT_WRITE) if observe else AFT_WRITE
     lines = [
         "# Written by Holon's operant adapter installer. One posture config per {posture} run.",
@@ -113,13 +117,23 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
         "[mcp]",
         "autoload = true",
         "deferred_loading = true",
-        "",
-        "[[mcp.servers]]",
-        'name = "holon"',
-        'transport = "stdio"',
-        f'command = "{holon_cmd}"',
-        'args = ["mcp"]',
-        "enabled = true",
+    ]
+    # W1/O-03: a binary that registers the holon_* native tools under the
+    # run env does not need the resident Python MCP server — the native
+    # tools are the replacement, and no Python process stays alive per run.
+    # An older (or probed-unknown) binary keeps the mount: it has no other
+    # path to the organization.
+    if not native_tools:
+        lines += [
+            "",
+            "[[mcp.servers]]",
+            'name = "holon"',
+            'transport = "stdio"',
+            f'command = "{holon_cmd}"',
+            'args = ["mcp"]',
+            "enabled = true",
+        ]
+    lines += [
         "",
         "[tools]",
         f"disabled_tools = {json.dumps(tools)}",
@@ -127,6 +141,19 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
     if not observe:
         pass  # command_allowlist is emitted in the file header, before any [section]
     return "\n".join(lines) + "\n"
+
+
+def carries_native_tools(operant: str) -> bool:
+    """Whether this operant binary registers the holon_* native tools under a
+    Holon run env (registration keys on HOLON_RUN_DIR — operant iter-854).
+    Such builds make the resident `holon mcp` Python subprocess redundant
+    (W1/O-03's second half): one probe at install time decides the mount."""
+    try:
+        p = subprocess.run([operant, "tools", "list"], capture_output=True, text=True,
+                           env={**os.environ, "HOLON_RUN_DIR": "/probe"}, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "holon_" in (p.stdout or "")
 
 
 def main() -> int:
@@ -147,17 +174,19 @@ def main() -> int:
         return 2
     operant = os.path.abspath(os.path.expanduser(found)) if found else "operant"
     key = Path(a.api_key_file).expanduser().read_text().strip() if a.api_key_file else None
+    native = not a.dry_run and carries_native_tools(operant)
 
     driver = (HERE / "driver.toml").read_text().replace("{operant}", operant).replace("{ohome}", str(ohome))
     tomllib.loads(driver)
     skills_dir = ohome / "skills"
     holon_cmd = REPO / "bin" / "holon"
-    obs = config_text(a.base_url, a.model, str(holon_cmd), skills_dir, ohome / "memory", True, key)
-    act = config_text(a.base_url, a.model, str(holon_cmd), skills_dir, ohome / "memory", False, key)
+    obs = config_text(a.base_url, a.model, str(holon_cmd), skills_dir, ohome / "memory", True, key, native)
+    act = config_text(a.base_url, a.model, str(holon_cmd), skills_dir, ohome / "memory", False, key, native)
     tomllib.loads(obs)
     tomllib.loads(act)
 
     print(f"operant: {operant}\nHERMES_HOME: {ohome}\nprovider: {a.base_url} ({a.model})")
+    print("native holon tools: " + ("yes — the resident holon mcp mount is dropped" if native else "no (dry-run probe or older build) — the resident holon mcp server stays mounted"))
     if a.dry_run:
         shown = driver + "--- observe.toml ---\n" + obs + "--- act.toml ---\n" + act
         if key:
