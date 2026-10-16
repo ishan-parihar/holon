@@ -172,14 +172,16 @@ class Operant(KernelCase):
         self.assertEqual(act.get("command_allowlist"), ["*"])
         self.assertNotIn("command_allowlist", obs)
         # the organization's records are Holon's, and the body's own lanes stay pinned off: the
-        # continual-harness lane ([kernel], deny_unknown_fields — only `enabled` exists) is off, and
+        # continual-harness lane (KernelSettings lives at [tools.kernel] — config.rs's
+        # ToolSettings.kernel; a top-level [kernel] is an unknown field and operant refuses the
+        # whole config, the live day's sixth body died at startup on it) is off, and
         # [memory] carries no `provider` key — current operant ignores it ("memory-wire is the only
         # memory engine now"), so the pin promised isolation that did not exist (R-08/R-10)
         for cfg in (obs, act):
             self.assertEqual(cfg["genome"]["unrestricted_default"], "lockdown")
             self.assertFalse(cfg["context_injection"]["enabled"])
             self.assertFalse(cfg["socialization"]["enabled"])
-            self.assertFalse(cfg["kernel"]["enabled"], "the continual-harness lane is pinned off")
+            self.assertFalse(cfg["tools"]["kernel"]["enabled"], "the continual-harness lane is pinned off")
             self.assertNotIn("provider", cfg["memory"], "the [memory] provider key is dead in current operant")
             self.assertTrue(cfg["memory"]["enabled"])
             servers = cfg["mcp"]["servers"]

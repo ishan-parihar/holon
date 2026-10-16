@@ -42,7 +42,9 @@ Everything operant writes — config, sessions, memory, approval allowlist, `.en
 employees never share the user's own operant state, and the Chair key never reaches a run. The
 endpoint key is read from `--api-key-file` into that home's `.env` (mode 0600), never a command
 line. The posture configs also pin operant's own org surfaces off (`[genome]` lockdown,
-`[context_injection]` and `[socialization]` disabled, `[kernel]` — the continual-harness lane —
+`[context_injection]` and `[socialization]` disabled, `[tools.kernel]` — the continual-harness
+lane (`KernelSettings` is a `ToolSettings` field in operant's config; a top-level `[kernel]`
+section is an unknown field there and operant refuses the whole config) —
 off) and keep `[memory]` on inside the isolated home: the body's own working memory, while the
 organization's memory is Holon's (boundary S1/S3). The `cron`/`kanban` TOOLS are disabled through
 `tools.disabled_tools` (they are tools, not config sections). Operant's only memory engine today
