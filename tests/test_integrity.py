@@ -62,6 +62,17 @@ class Lint(KernelCase):
         self.assertIn("no guard test", msgs)
         self.assertNotIn("test_kept", msgs)
 
+    def test_a_doc_with_frontmatter_still_has_its_title_seen(self):
+        """The corpus convention is YAML frontmatter (status/date/description) before the title;
+        depth.doc must see through it, not demand the fence be the title."""
+        d = self.tmp / "doc.md"
+        d.write_text("---\nstatus: living\ndate: 2026-10-16\ndescription: a doc with frontmatter\n---\n\n"
+                     "# A titled doc\n\n" + ("purpose paragraph with enough words to pass the rubric. " * 20))
+        with mock.patch.object(lint, "_docs", return_value=[d]):
+            self.assertNotIn("depth.doc", rules(lint.run(self.k, ["depth"])))
+            d.write_text("no title at all, just frontmatter-less text that breaks the rubric check")
+            self.assertIn("depth.doc", rules(lint.run(self.k, ["depth"])))
+
     def test_a_stub_skill_fails_the_depth_rubric(self):
         self.k.skills.new("stub", "operation", "Does a thing")
         self.assertTrue({"depth.trigger", "depth.size", "depth.runnable"} <= rules(lint.run(self.k, ["depth"])))

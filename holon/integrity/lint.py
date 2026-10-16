@@ -454,6 +454,8 @@ def pack_depth(k, f: Findings) -> None:
                 f.add("error", "depth.section", f"{where}/{file}", "a brief needs '## Output'")
     for doc in _docs():
         text = doc.read_text()
+        if text.startswith("---"):   # YAML frontmatter (the corpus convention): the title follows
+            text = re.sub(r"^---.*?---\s*", "", text, count=1, flags=re.S)   # the closing fence
         if not text.startswith("# "):
             f.add("error", "depth.doc", _rel(doc), "starts without a '# Title'")
         first = next((p for p in text.split("\n\n")[1:] if p.strip() and not p.startswith(("#", "|", "```", "-"))),
