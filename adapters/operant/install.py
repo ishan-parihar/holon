@@ -76,7 +76,7 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
     lines += [
         "[client]",
         f'base_url = "{base_url}"',
-        "timeout_secs = 120",
+        "timeout_secs = 300",
         "max_context_length = 128000",
     ]
     if api_key:
@@ -89,6 +89,10 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
         "stream = false",
         "context_window = 128000",
         "show_reasoning = false",
+        # free-route reality (G1 live day): a stage body's turn on a
+        # free route can exceed 120s; the loop's per-request ceiling
+        # must match the client or the body dies at the default
+        "request_timeout_secs = 300",
         "",
         "[tui]",
         "rich_output = false",
