@@ -163,6 +163,7 @@ What that means for every change here:
 | Integration audit, live probe | a database migrated by newer code ran silently under older code (two checkouts, one launcher) | `test_a_database_newer_than_the_code_refuses_to_run` |
 | 2026-10-16 red-team | refused executes could still close with no decision on the refusal: sampling and the fast/script lane skips (a passing rubric judge included) never looked at the blockers the H-03 fold had stored | `test_a_refused_success_is_never_closed_by_sampling` |
 | 2026-10-16 red-team | test processes wrote scratch Chair keys into the operator's real `~/.config/holon/keys` (170+ orphans; conformance had been pinned to its scratch dir, the wider test process had not) | `test_no_test_process_writes_chair_keys_into_the_real_key_dir` |
+| 2026-10-16 red-team | a guard's command was the fixer's own shell, run by the heartbeat as its user — a path from any employee's result to the kernel user's privileges; a guard now names a Chair-authored `[checks.class]` entry | `test_a_guard_naming_an_unknown_check_class_is_refused_at_submit` |
 
 ## Reading order for a new agent
 

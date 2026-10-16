@@ -209,10 +209,13 @@ class BuildRegression(Loops):
 
 
 class GuardLoop(Loops):
-    """K-2: an incident's verified fix registers its `guard` (the fixer's regression check); the
-    heartbeat runs registered guards, and a failure reopens the incident — a fixed defect is
-    re-checked forever, not remembered. A closed incident with neither guard nor waiver is a
-    doctor warning."""
+    """K-2: an incident's verified fix registers its `guard` — which NAMES a [checks.class]
+    entry (the Chair's command; the fixer never supplies shell, because the heartbeat runs guards
+    as its own user). The heartbeat runs registered guards, and a failure reopens the incident —
+    a fixed defect is re-checked forever, not remembered. A closed incident with neither guard
+    nor waiver is a doctor warning."""
+
+    config = Loops.config + '\n[checks.class.disk]\ncommands = ["test -e ."]\n'
 
     def _fixed_incident(self, guard=None):
         w = self.add(dept="ops", task_class="incident")
@@ -224,18 +227,37 @@ class GuardLoop(Loops):
         return w, out
 
     def test_a_verified_incident_fix_registers_its_guard(self):
-        w, out = self._fixed_incident(guard={"name": "disk free", "cmd": "test -e .", "timeout": 5})
+        w, out = self._fixed_incident(guard={"name": "disk free", "check": "disk", "timeout": 5})
         self.assertEqual(self.k.work.get(w["id"])["status"], "done")
-        row = self.k.wconn.execute("SELECT name, cmd FROM guards WHERE work_id=?", (w["id"],)).fetchone()
-        self.assertEqual(tuple(row), ("disk free", "test -e ."), "the guard, with provenance on the incident")
+        row = self.k.wconn.execute("SELECT name, \"check\" FROM guards WHERE work_id=?", (w["id"],)).fetchone()
+        self.assertEqual(tuple(row), ("disk free", "disk"), "the guard, with provenance on the incident")
+
+    def test_a_guard_naming_an_unknown_check_class_is_refused_at_submit(self):
+        w = self.add(dept="ops", task_class="incident")
+        self.plan_and_approve(w, planner=self.maker, assignee=self.maker, writes=[])
+        c = self.k.claim("execute", self.maker)
+        out = self.k.submit(c.run["id"], self.exec_env(guard={"name": "disk free", "check": "no-such"}))
+        self.assertTrue(any("is not a [checks.class] entry" in p for p in out["breach"]),
+                        "the fixer is told, in the breach note")
+        self.assertEqual(self.k.wconn.execute("SELECT count(*) FROM guards").fetchone()[0], 0,
+                         "nothing registered: the heartbeat never runs an employee's command")
+        self.assertNotEqual(self.status(w), "done", "a refused guard does not close its incident")
 
     def test_a_failing_guard_reopens_the_incident_once(self):
-        w, out = self._fixed_incident(guard={"name": "disk free", "cmd": "false"})
+        self.k.config["checks"]["class"]["disk"] = {"commands": ["false"]}
+        w, out = self._fixed_incident(guard={"name": "disk free", "check": "disk"})
         opened = self.k._guard_triggers()
         self.assertEqual(len(opened), 1, "the regression opens incident work")
         inc = self.k.work.get(opened[0]["incident"])
         self.assertIn("fixed and verified once; it is back", inc["intent"], "the provenance is named")
         self.assertEqual(self.k._guard_triggers(), [], "one open incident per guard, not one a sweep")
+
+    def test_a_dead_check_class_fails_its_guard(self):
+        w, out = self._fixed_incident(guard={"name": "disk free", "check": "disk"})
+        del self.k.config["checks"]["class"]["disk"]
+        opened = self.k._guard_triggers()
+        self.assertEqual(len(opened), 1, "a guard whose check class vanished is a failure, not a silent skip")
+        self.assertIn("no longer exists", self.k.work.get(opened[0]["incident"])["intent"])
 
     def test_a_closed_incident_needs_a_guard_or_a_waiver(self):
         w, out = self._fixed_incident()                     # fixed, but registered no guard

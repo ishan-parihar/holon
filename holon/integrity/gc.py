@@ -82,5 +82,6 @@ def apply(k, p: dict, force: bool = False) -> dict:
         cutoff = _iso(datetime.now(timezone.utc) - timedelta(days=p["messages_days"]))
         cur = k.wconn.execute("DELETE FROM messages WHERE ts < ?", (cutoff,))
         msgs = cur.rowcount
+    k.auth._put("gc:last_run", _iso(datetime.now(timezone.utc)))   # doctor nudges when this goes stale
     return {"run_dirs_removed": removed, "run_dirs_trimmed_to_kept_files": kept,
             "messages_deleted": msgs}

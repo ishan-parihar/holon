@@ -1217,9 +1217,9 @@ def cmd_incident_waive(args, k):
          "every heartbeat, and the incident each came from")
 def cmd_guards(args, k):
     rows = [dict(r) for r in k.wconn.execute(
-        "SELECT g.work_id, g.name, g.cmd, g.timeout, g.created_at, t.title AS incident"
+        "SELECT g.work_id, g.name, g.check, g.timeout, g.created_at, t.title AS incident"
         " FROM guards g LEFT JOIN tasks t ON t.id = g.work_id ORDER BY g.created_at")]
-    _out(args, rows, "\n".join(f"{r['name']:<30} {r['cmd']}  ← {r['incident']}" for r in rows)
+    _out(args, rows, "\n".join(f"{r['name']:<30} {r['check']}  ← {r['incident']}" for r in rows)
          or "no guards registered: an incident fix's `guard` field registers one")
 
 

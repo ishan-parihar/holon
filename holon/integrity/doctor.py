@@ -88,6 +88,18 @@ def run(k) -> list[dict]:
                 f"{t['title']}: closed without a guard or a waiver — the fix leaves nothing that "
                 "re-checks it (a `guard` field on the fix's result, or `holon incident waive {t['id']}`)")
 
+    # H-14: collection is the Chair's manual act — say so when configured retention is overdue
+    r = k.config.get("retention", {})
+    windows = [int(r.get(k, 0)) for k in ("runs_days", "messages_days")]
+    if any(w > 0 for w in windows):
+        from datetime import datetime, timedelta, timezone
+        window = min(w for w in windows if w > 0)
+        last = k._setting("gc:last_run")
+        if not last or last < (datetime.now(timezone.utc) - timedelta(days=window)).strftime("%Y-%m-%dT%H:%M:%S.%fZ"):
+            add("warning", "retention.overdue",
+                f"no `holon gc --apply` in over {window} days (last: {last or 'never'}) — run directories and "
+                "messages past [retention] sit uncollected; dry-run `holon gc` first, back up, then apply")
+
     # U1/U3: the genome's synced view must not be older than its source, nor the registry than the sync
     from holon.genome import units as units_mod
     manifests, _ = units_mod.load(k.home)

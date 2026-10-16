@@ -22,6 +22,7 @@ import ast
 import importlib
 import json
 import re
+import stat
 import sys
 import tomllib
 from pathlib import Path
@@ -143,14 +144,27 @@ def pack_schema(k, f: Findings) -> None:
                     if not isinstance(classes, list) or not all(isinstance(c, str) and c for c in classes):
                         f.add("error", "schema.config", "holon.toml", f"[classes] {slug}: must be a list of names")
             elif section in CONFIG_KEYS and isinstance(values, dict):
-                if section in ("budget", "scope"):
+                if section in ("budget", "scope", "secrets"):
                     for slug, sub in (values.get("dept") or {}).items():
                         try:
                             k.org.dept(slug)
                         except LookupError:
                             f.add("warning", "schema.config", "holon.toml", f"[{section}.dept.{slug}]: no such department")
-                        for key in set(sub) - (CONFIG_KEYS[section] - {"dept"}):
-                            f.add("warning", "schema.config", "holon.toml", f"unknown key [{section}.dept.{slug}] {key}")
+                        if section != "secrets":
+                            for key in set(sub) - (CONFIG_KEYS[section] - {"dept"}):
+                                f.add("warning", "schema.config", "holon.toml", f"unknown key [{section}.dept.{slug}] {key}")
+                if section == "secrets":   # G8: the value is a 0600 key-file path, never the secret itself
+                    for slug, sub in (values.get("dept") or {}).items():
+                        for var, path in sorted((sub or {}).items()):
+                            if not isinstance(path, str) or not path.startswith(("/", "~")) or "://" in path:
+                                f.add("error", "secrets.plaintext", f"[secrets.dept.{slug}] {var}",
+                                      "the value must be the path to a 0600 key file — a secret in config is "
+                                      "readable by every process running as this user")
+                                continue
+                            p = Path(path).expanduser()
+                            if p.exists() and stat.S_IMODE(p.stat().st_mode) & 0o077:
+                                f.add("error", "secrets.plaintext", f"[secrets.dept.{slug}] {var}",
+                                      f"{p} is readable by others (chmod 600)")
                 if section == "scope":
                     for where, sub in [("scope", values), *((f"scope.dept.{s}", v) for s, v in (values.get("dept") or {}).items())]:
                         for r in sub.get("roots", []):

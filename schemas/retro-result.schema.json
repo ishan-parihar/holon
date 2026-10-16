@@ -254,7 +254,7 @@
         "name": {
           "type": "string"
         },
-        "cmd": {
+        "check": {
           "type": "string"
         },
         "timeout": {
@@ -262,7 +262,7 @@
           "properties": {}
         }
       },
-      "description": "a fix's regression guard (K-2), on an incident fix's execute result: registered when the fix verifies; the heartbeat runs it forever, and a failure reopens the incident"
+      "description": "a fix's regression guard (K-2), on an incident fix's execute result: `check` names a [checks.class.<name>] entry — the Chair authored the command, the fixer only names it; registered when the fix verifies, the heartbeat runs it forever, and a failure reopens the incident"
     }
   },
   "required": [

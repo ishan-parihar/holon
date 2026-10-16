@@ -474,3 +474,51 @@ class UsageEveryStage(KernelCase):
         self.k.submit(c.run["id"], self.exec_env(usage={"tokens_in": 5}))
         self.assertEqual(self.k.work.get_run(c.run["id"])["harness_build"], "harness-7.1.0",
                          "pass rates group by the driver's build when nothing else names one")
+
+
+class DeptSecrets(KernelCase):
+    """G8: a department's secrets are 0600 key-file references under [secrets.dept.<slug>],
+    resolved into the run's environment at claim. A run sees its own department's secrets and no
+    other's; a key file that cannot be read refuses the run — never an empty string; lint flags
+    a secret whose value is the secret itself."""
+
+    def _configure(self, extra):
+        self.home.config_file.write_text(self.home.config_file.read_text() + "\n" + extra)
+        self.k.close()
+        self.k = Kernel(self.home)
+
+    def test_a_run_sees_its_own_depts_secrets_and_no_other_depts(self):
+        o = self.k.org
+        o.create_dept("ops", "Operations", "Run things")
+        (self.tmp / "eng.key").write_text("eng-imap-secret\n")
+        (self.tmp / "ops.key").write_text("ops-bot-secret\n")
+        (self.tmp / "eng.key").chmod(0o600)
+        self._configure(f'[secrets.dept.eng]\nIMAP_KEY = "{self.tmp / "eng.key"}"\n'
+                        f'[secrets.dept.ops]\nREDDIT_KEY = "{self.tmp / "ops.key"}"\n')
+        w = self.add(dept="eng")
+        self.plan_and_approve(w, writes=[])
+        p = self.k.prepare_dispatch(self.dev1, "execute")
+        self.assertEqual(p["env"]["IMAP_KEY"], "eng-imap-secret", "resolved from the key file at claim")
+        self.assertNotIn("REDDIT_KEY", p["env"], "another department's secret never reaches this run")
+
+    def test_a_push_mode_body_receives_its_departments_secret(self):
+        (self.tmp / "eng.key").write_text("eng-imap-secret\n")
+        self._configure(f'[secrets.dept.eng]\nIMAP_KEY = "{self.tmp / "eng.key"}"\n')
+        self.install_fake_driver("fake", mode="env-probe")
+        w = self.add(dept="eng")
+        self.plan_and_approve(w, writes=[])
+        self.k.dispatch(self.dev1, "execute")
+        doc = self.k.work.last_execute_output(w["id"])["documentation"]
+        self.assertIn("probe: IMAP_KEY='eng-imap-secret'", doc, "the body's environment carried the secret")
+
+    def test_an_unreadable_key_file_refuses_the_run_cleanly(self):
+        self._configure(f'[secrets.dept.eng]\nIMAP_KEY = "{self.tmp / "missing.key"}"\n')
+        w = self.add(dept="eng")
+        self.plan_and_approve(w, writes=[])
+        self.assertIsNone(self.k.dispatch(self.dev1, "execute"),
+                          "refused — the run never starts with an empty secret")
+        self.assertIn(("execute", "ready"), self.pipeline_of(w), "the stage returns to ready")
+        notes = " ".join(r[0] for r in self.k.wconn.execute(
+            "SELECT note FROM events WHERE note LIKE '%secret refused:%'"))
+        self.assertIn("IMAP_KEY", notes, "the refusal names the variable")
+        self.assertIn("missing.key", notes, "and the file")

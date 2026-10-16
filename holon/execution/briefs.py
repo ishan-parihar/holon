@@ -4,7 +4,8 @@ The brief for a stage is rendered from its role skill (`BRIEF_OF_STAGE`), resolv
 layers, so a department's tailored playbook is what its employees receive.
 
     runs/<run_id>/BRIEF.md      stage instructions (any harness can read markdown)
-    runs/<run_id>/brief.json    the same, machine-readable (includes the run token: mode 0600)
+    runs/<run_id>/brief.json    the same, machine-readable (includes the run token and the department's
+                               resolved secrets: mode 0600)
     runs/<run_id>/identity.md   who the employee is (for harnesses that put it in the system prompt)
     runs/<run_id>/context.md    compiled context bundle
     runs/<run_id>/result.json   WRITTEN BY THE AGENT: the result envelope
@@ -46,7 +47,8 @@ def kernel_env(home: Home) -> dict[str, str]:
 
 def build(home: Home, run: dict, node: dict, context_md: str, library: Library | None = None,
           dept: str | None = None, employee: dict | None = None, identity_md: str | None = None,
-          token: str | None = None, scope: dict | None = None, policy: dict | None = None) -> Path:
+          token: str | None = None, scope: dict | None = None, policy: dict | None = None,
+          secrets: dict[str, str] | None = None) -> Path:
     stage = run["kind"]
     d = home.run_dir(run["id"])
     d.mkdir(parents=True, exist_ok=True)
@@ -88,6 +90,7 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
         "workdir": workdir, "holon": holon, "lease_until": run.get("lease_until"), "token": token,
         "envelope": f"schemas/{stage}-result.schema.json", "skill": skill, "scope": scope or {"name": "org"},
         "policy": str(d / "policy.json") if policy else None,
+        "secrets": secrets or {},   # G8: dept key files, resolved at claim; 0600 like the token above
         "created_at": now()}, indent=2))
     bj.chmod(0o600)
     return d

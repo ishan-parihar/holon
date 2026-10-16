@@ -164,6 +164,7 @@ def run_env(home: Home, brief: dict, token: str | None, broker: str | None = Non
         env["HOLON_RUN_TOKEN"] = token
     if broker:  # isolation: the agent's `holon` talks to the broker, not to the databases
         env["HOLON_BROKER"] = broker
+    env.update(brief.get("secrets") or {})   # G8: the department's key files, resolved at claim
     return env
 
 

@@ -57,9 +57,11 @@ COMMON = {
     }, doc="what the run consumed (H4): the kernel records it on the run — budgets and cost per "
            "verified result read it; a usage the driver measured wins over the envelope's claim"),
     "guard": F("object", fields={
-        "name": F("str"), "cmd": F("str"), "timeout": F("num", lo=1),
-    }, doc="a fix's regression guard (K-2), on an incident fix's execute result: registered when the "
-           "fix verifies; the heartbeat runs it forever, and a failure reopens the incident"),
+        "name": F("str"), "check": F("str"), "timeout": F("num", lo=1),
+    }, doc="a fix's regression guard (K-2), on an incident fix's execute result: `check` names a "
+           "[checks.class.<name>] entry — the Chair authored the command, the fixer only names it; "
+           "registered when the fix verifies, the heartbeat runs it forever, and a failure reopens "
+           "the incident"),
 }
 WORK_ITEM = {"title": F("text", required=True), "intent": F("text", required=True), "acceptance": TEXT,
              "dept": F("str"), "task_class": F("str"), "priority": F("int", lo=0, hi=4),

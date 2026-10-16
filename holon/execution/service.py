@@ -53,6 +53,9 @@ DEFAULT_CONFIG = {
                 "build_regression_samples": 10, "build_regression_drop": 0.25},
     "retention": {"runs_days": 0, "messages_days": 0, "backup_max_age_days": 7},
     "pilot": {"depts": []},   # pilot departments: outside-reach floors at G4 — the Chair's call, job by job
+    # department secrets (G8, docs/GENOME.md §6): [secrets.dept.<slug>] VAR = path to a 0600 key file;
+    # resolved into the run's environment at claim — the value never lives in config
+    "secrets": {"dept": {}},
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
     # a department rate past its bound (over min_samples) makes its retro due without proposals;
     # a _min of 0 or a _max of 1 turns that bound off
@@ -347,32 +350,45 @@ class Kernel:
         return {**out, "authority_change": change}
 
     def _register_guard(self, work: dict) -> None:
-        """K-2: an incident's verified fix may register one guard — the fixer's `guard` field on the
-        execute result (a name and a shell command). The heartbeat runs it forever; a failure
-        reopens the incident. A fix that registers nothing is a doctor warning until waived."""
+        """K-2: an incident's verified fix may register one guard — the fixer's `guard` field names a
+        [checks.class] entry (the Chair authored the command; the fixer only names it, because the
+        heartbeat runs guards as its own user). The heartbeat runs it forever; a failure reopens the
+        incident. A fix that registers nothing is a doctor warning until waived."""
         if work.get("task_class") != "incident":
             return
         ex = self.work.latest(work["id"], "execute")
         body = (self.work.output(ex["id"]) or {}).get("body") or {} if ex else {}
         g = body.get("guard")
-        if not isinstance(g, dict) or not g.get("cmd"):
+        if not isinstance(g, dict) or not g.get("check"):
             return
         name = (g.get("name") or work["title"][:60]).strip()
         with write_txn(self.wconn):
             self.wconn.execute("INSERT OR REPLACE INTO guards VALUES (?,?,?,?,?)",
-                               (work["id"], name, g["cmd"], int(g.get("timeout") or 60), now()))
-            self.work._event("work", work["id"], None, None, f"guard registered: {name}")
+                               (work["id"], name, g["check"], int(g.get("timeout") or 60), now()))
+            self.work._event("work", work["id"], None, None, f"guard registered: {name} ({g['check']})")
 
     def _guard_triggers(self) -> list[dict]:
         """K-2: registered guards run on the heartbeat like smoke checks; a failing one reopens its
-        incident — a fixed defect is re-checked forever, not just remembered."""
+        incident — a fixed defect is re-checked forever, not just remembered. A guard names a
+        [checks.class] entry: the heartbeat runs the Chair's command in the fix's workdir, never
+        shell an employee wrote."""
         out = []
         for g in self.wconn.execute("SELECT * FROM guards").fetchall():
-            code, tail = self._exec(g["cmd"], str(self.home.root), {}, g["timeout"] or 60)
+            cmds = ((self.config.get("checks") or {}).get("class") or {}).get(g["check"], {}).get("commands", [])
+            w = self.work.get(g["work_id"])
+            cwd = w.get("workdir") if w and w.get("workdir") and Path(w["workdir"]).is_dir() else str(self.home.root)
+            code, tail = (0, "")
+            if not cmds:
+                code, tail = 1, f"[checks.class.{g['check']}] no longer exists: the guard is dead — " \
+                                "reregister it or waive the incident"
+            for cmd in cmds:
+                c, t = self._exec(cmd, cwd, {}, g["timeout"] or 60)
+                code, tail = (code or c, tail or t)
             if code:
                 r = self._incident(f"Incident: guard '{g['name']}' failed",
-                                   f"The guard registered by the fix of {g['work_id']} (`{g['cmd']}`) "
-                                   f"exited {code}:\n```\n{tail.strip()[-400:]}\n```\n"
+                                   f"The guard registered by the fix of {g['work_id']} "
+                                   f"([checks.class.{g['check']}], run in {cwd}) exited {code}:\n```\n"
+                                   f"{tail.strip()[-400:]}\n```\n"
                                    "This defect was fixed and verified once; it is back. Find what regressed, "
                                    "fix it, and the guard passing again closes this.")
                 if r:
@@ -477,6 +493,12 @@ class Kernel:
             return None
         node, run = got
         work = self.work.work_of(node)
+        try:   # G8: only the acting stage carries a department's secrets — a missing key file
+            # must refuse an execute, never stop an observer from looking
+            secrets_env = self._dept_secrets(self._dept_slug(node["dept_id"])) if node["stage"] == "execute" else {}
+        except ValueError as e:   # a secret that cannot be read refuses the run, never runs it empty
+            self.work.release(run["id"], "failed", f"secret refused: {e}")
+            return None
         pb = self.playbook_of(work) if node["stage"] in ("plan", "execute", "verify") else None
         if pb and node["stage"] == "execute":
             with write_txn(self.wconn):
@@ -518,11 +540,27 @@ class Kernel:
             run_policy.per_run_budget(self.config, slug, emp["id"] if emp else None))
         bdir = briefs.build(self.home, run, node, md, self.skills, slug, emp,
                             self.identity(emp["id"]) if emp else None, token, scope=scope,
-                            policy=policy_doc)
+                            policy=policy_doc, secrets=secrets_env)
         if self.isolation:
             isolation.share_run_dir(bdir, self.isolation["agent_user"])
         self.work.set_run_paths(run["id"], str(bdir), str(bdir / "driver.log"))
         return Claimed(run=self.work.get_run(run["id"]), node=node, brief_dir=bdir, token=token, employee=emp)
+
+    def _dept_secrets(self, slug: str | None) -> dict[str, str]:
+        """G8: a department's secrets, resolved from 0600 key files into the run's environment at
+        claim — the value never lives in config, never in a message, never in Notion. A key file
+        that cannot be read raises: the run is refused with the reason instead of running with an
+        empty string, and the repeated refusal reaches the Chair as a failing stage."""
+        refs = ((self.config.get("secrets") or {}).get("dept") or {}).get(slug) or {} if slug else {}
+        out = {}
+        for var, path in sorted(refs.items()):
+            p = Path(path).expanduser()
+            try:
+                out[var] = p.read_text().strip()
+            except OSError as e:
+                raise ValueError(f"{var} for dept '{slug}': cannot read {p} "
+                                 f"({e.strerror or e}) — fix the file or the config, then claim again") from None
+        return out
 
     def _grade_floor_section(self, work: dict, slug: str | None, author: str | None) -> str:
         """What the kernel will compute for a plan of this work, so a planner never has to derive it."""
@@ -617,6 +655,7 @@ class Kernel:
             self._check_org_refs(env, self.work.work_of(run["task_id"]))
             if stage == "execute":
                 self._check_skill_changes(self.work.work_of(run["task_id"]), env)
+                self._check_guard(self.work.work_of(run["task_id"]), env)
         except EnvelopeError as e:
             return self._contract_breach(run, e.problems, driver_output, exit_code)
         node = self.work.get(run["task_id"])
@@ -854,6 +893,20 @@ class Kernel:
         return self.work.skip_verification(
             work["id"], f"verification sampled out: trusted G0 work ({streak} consecutive verified passes; "
                         f"{pol['verify_sample_rate']:.0%} of such results are verified)")
+
+    def _check_guard(self, work: dict, env: dict) -> None:
+        """K-2: an incident fix's guard names a [checks.class] entry — the Chair authored the
+        command; the fixer only names it. A guard carrying shell of its own is refused here: the
+        heartbeat runs guards as its own user, which an employee's command must never become
+        (2026-10-16 red team)."""
+        g = env.get("guard")
+        if not g or work.get("task_class") != "incident":
+            return
+        known = (self.config.get("checks") or {}).get("class") or {}
+        if g.get("check") not in known:
+            raise EnvelopeError([f"guard.check {g.get('check')!r} is not a [checks.class] entry "
+                                 f"(have: {', '.join(sorted(known)) or 'none'}): a guard names a "
+                                 "Chair-authored check, never a command of its own"])
 
     def _check_skill_changes(self, work: dict, env: dict) -> None:
         """An executor may change only the department skill files its approved plan named."""

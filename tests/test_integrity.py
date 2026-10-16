@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest import mock
 
 from holon import cli as holon_cli
+from holon.core.db import now
 from holon.execution.service import Kernel
 from holon.integrity import doctor, lint
 from tests.helpers import KernelCase
@@ -25,6 +26,27 @@ class Lint(KernelCase):
         findings = lint.run(self.k)
         self.assertEqual([f for f in findings if f["severity"] == "error"], [])
         self.assertEqual([f for f in findings if f["severity"] == "warning"], [])
+
+    def test_a_secret_in_config_is_flagged_a_key_file_reference_is_not(self):
+        """G8: [secrets.dept.<slug>] values are 0600 key-file paths. The secret itself in config,
+        or a key file others can read, is an error — config and its backups must never hold values."""
+        (self.tmp / "eng.key").write_text("eng-imap-secret\n")
+        (self.tmp / "eng.key").chmod(0o600)
+        self.home.config_file.write_text(
+            self.home.config_file.read_text()
+            + f'\n[secrets.dept.eng]\nIMAP_KEY = "{self.tmp / "eng.key"}"\n'
+            + 'PLAINTEXT = "hck_the_secret_itself"\n')
+        self.k.close()
+        self.k = Kernel(self.home)
+        errs = {(f["rule"], f["where"]) for f in lint.run(self.k) if f["severity"] == "error"}
+        self.assertIn(("secrets.plaintext", "[secrets.dept.eng] PLAINTEXT"), errs,
+                      "the secret itself in config is an error")
+        self.assertNotIn(("secrets.plaintext", "[secrets.dept.eng] IMAP_KEY"), errs,
+                          "a key-file reference is how secrets are configured")
+        (self.tmp / "eng.key").chmod(0o644)
+        errs = {(f["rule"], f["where"]) for f in lint.run(self.k) if f["severity"] == "error"}
+        self.assertIn(("secrets.plaintext", "[secrets.dept.eng] IMAP_KEY"), errs,
+                      "a world-readable key file is the same error")
 
     def test_the_regression_ledger_cannot_lose_a_guard(self):
         d = self.tmp / "dist"
@@ -238,6 +260,17 @@ class Retention(KernelCase):
                          "the kept run's directory is trimmed to what the organization still learns from")
         self.assertEqual(self.k.wconn.execute("SELECT count(*) FROM messages").fetchone()[0], 0,
                          "old messages pruned")
+
+    def test_doctor_nags_when_configured_retention_is_overdue(self):
+        """gc is the Chair's manual act (H-14): doctor says so when it has been longer than the
+        configured window — the organization exists nowhere else, and nobody else collects."""
+        self._configure()                          # runs_days = 7
+        rules = lambda: {(f["check"], f["severity"]) for f in doctor.run(self.k)}
+        self.assertIn(("retention.overdue", "warning"), rules(), "never collected: say so")
+        self.k.auth._put("gc:last_run", now())
+        self.assertNotIn(("retention.overdue", "warning"), rules(), "a fresh collection is quiet")
+        self.k.auth._put("gc:last_run", "2020-01-01T00:00:00.000000Z")
+        self.assertIn(("retention.overdue", "warning"), rules(), "stale again: say so again")
 
 
 class KeysList(KernelCase):

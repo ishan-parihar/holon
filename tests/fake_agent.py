@@ -8,6 +8,8 @@
   cron-writes     something else writes data/log.jsonl in the workdir while the agent observes
   linger          self-submits, then keeps running for a long time (a harness writing a closing reply)
   wrapped         prints a harness summary {"text": <reply>, "usage": {...}} (jcode, Claude Code style)
+  env-probe       execute's documentation appends probe: IMAP_KEY=… (G8: prove a dept secret reached
+                  the body's environment, push lane and broker lane)
 """
 
 import json
@@ -66,6 +68,9 @@ elif stage == "verify":
 else:  # retro
     env = {"summary": "a write failed", "cause": "the disk was full", "learnings": ["check disk space first"],
            "actions": [{"title": "Add a disk check", "intent": "fail fast when the disk is full"}]}
+
+if "env-probe" in modes and stage == "execute":   # G8: prove a dept secret reached the body
+    env["documentation"] += f"\n\nprobe: IMAP_KEY={os.environ.get('IMAP_KEY')!r}"
 
 if mode == "wrapped":
     print(json.dumps({"text": "Done.\n" + json.dumps(env), "total_cost_usd": 0.01,

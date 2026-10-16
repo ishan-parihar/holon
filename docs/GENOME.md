@@ -111,6 +111,7 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[retention]` | `messages_days` | 0 (keep) | days before `holon gc` prunes old messages |
 | `[retention]` | `backup_max_age_days` | 7 | `holon gc --apply` refuses without a backup newer than this; `--force` overrides |
 | `[pilot]` | `depts` | [] | pilot departments: anything the grade floor puts at G3 (outside reach) floors at G4 instead — the Chair approves each job, one by one; imported outside-reach routines also start disabled (I1) |
+| `[secrets.dept.<slug>]` | `<ENV VAR>` = path | (none) | a department's secrets (G8): each key names an environment variable and points at a 0600 key file, resolved into the run's environment at claim — the value never lives in config; a key file that cannot be read refuses the run, never runs it with an empty string |
 | `[healing]` | `run_failures_for_incident` | 3 | runs of one stage that ended without a valid result before an incident opens; past it the stage waits 10 min before the next try, doubling per failure (at most a day) |
 | `[cadence]` | `dept_retro_days` | 7 | how often a department retro may run over pending proposals |
 | `[cadence]` | `dept_retro_min_proposals` | 1 | proposals needed before a department retro is due |

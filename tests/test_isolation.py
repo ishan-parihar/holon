@@ -135,6 +135,23 @@ class Isolated(KernelCase):
         self.assertTrue(out["checks"][0]["ok"], out["checks"])
         self.assertIn("via-runner", out["checks"][0]["tail"])
 
+    def test_a_departments_secret_reaches_the_body_through_the_runner(self):
+        """G8 under isolation: the kernel resolves the key file at claim (its own privileges), the
+        runner carries it into the body's environment, and the broker is never involved in the
+        resolution — an agent's `holon` calls cannot read secrets, only run with them."""
+        key = self.tmp / "eng.key"
+        key.write_text("eng-imap-secret\n")
+        key.chmod(0o600)
+        self.reconfigure(f'[isolation]\nagent_user = "{getpass.getuser()}"\nbroker = "{self.broker}"\n'
+                         f'runner = "{self.runner}"\n[secrets.dept.eng]\nIMAP_KEY = "{key}"\n')
+        self.install_fake_driver("fake", mode="env-probe")
+        w = self.add(dept="eng")
+        self.plan_and_approve(w, assignee=self.dev1, writes=[])
+        self.k.dispatch(self.dev1, "execute")
+        res = self.k.work.last_execute_output(w["id"])
+        self.assertIn("probe: IMAP_KEY='eng-imap-secret'", res["documentation"],
+                      "resolved at claim, carried by the runner into the body's environment")
+
     def test_the_runner_and_broker_refuse_other_uids(self):
         a, b = __import__("socket").socketpair()
         with a, b:

@@ -40,6 +40,8 @@ Environment in push mode:
 
 The kernel never passes `HOLON_CHAIR_KEY` to a harness. Under isolation the harness gets only these
 variables and the driver's `[env]`, added to the agent user's own environment, never the kernel's.
+A department's configured secrets (`[secrets.dept.<slug>]`, GENOME §6) also arrive as their named
+environment variables, resolved at claim — this list plus those is exactly the body's environment.
 The kernel reads `result.json` without following a symlink and only as a regular file of at most
 8 MB; a run directory is sticky, so an agent can add its result but not replace the files the
 kernel wrote.
