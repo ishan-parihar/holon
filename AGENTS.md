@@ -34,6 +34,7 @@ agent is at the end.
 | `adapters/notion/` | the Chair's dashboard: a live Notion mirror (not a harness); tested against `tests/fake_notion.py` |
 | `install.py` | cold start or upgrade of a machine: instance (SQLite + Chair key), launcher, Notion databases, user units; `tests/test_install.py` |
 | `docs/` | INTENT, GENOME, CONTRACT: the kernel's reference and law docs |
+| `docs/design/` | scrubbed design records and audits; an audit's work list separates defects fixable now from changes that wait on the Chair |
 
 ## Laws (enforced by `holon lint`, `holon doctor` and the tests)
 
@@ -61,6 +62,13 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 - **The heartbeat runs `holon doctor`** every `[healing] doctor_every_min`; a failing check opens
   an incident and reaches the Chair. Tests turn it off (`tests/helpers.py`) and test it explicitly.
 
+- **Audit a seam by tracing, not by reading claims.** A design record's statement about code is a
+  hypothesis: open the cited line and check its control flow. Follow one value through every
+  consumer (the same field can mean "readable" to one and "writable" to the next), grep the
+  other side of each seam for a reader, ask what an "empty means ungoverned" default does when
+  it becomes non-empty, and read live state only with `mode=ro` and `holon doctor` before you
+  conclude. Label each finding confirmed or plausible. The worked example, with its open work
+  list, is `docs/design/2026-10-16-capability-layer-audit.md`.
 - **Read the dated design records before changing a mechanism they cover.** They live in the
   operator's private overlay (`docs/design/` there; see the section below) — publish a record
   here only when it is scrubbed of operator context. Its universal lessons belong where they
@@ -173,5 +181,7 @@ What that means for every change here:
    contract).
 4. The README of the adapter you touch (`adapters/<name>/README.md`), which records what the
    real harness does.
-5. In the operator's overlay (not public): `docs/STATUS.md` and the dated `docs/design/` records —
+5. Any audit in `docs/design/` whose work list touches what you are changing: its §1 defects are
+   yours to fix (tests first, guard + ledger row); its §2 changes wait on a decision.
+6. In the operator's overlay (not public): `docs/STATUS.md` and the dated `docs/design/` records —
    the deployment, the standing decisions and the design history.
