@@ -175,6 +175,7 @@ What that means for every change here:
 | Capability-layer audit | the pooled-units render was nested inside the execute/verify branch, so plan, research and shape stages never saw what the department pools | `test_pooled_units_join_the_reach_and_render_in_briefs` |
 | Capability-layer audit | pooled roots joined the writable reach: grading passed a write into one, policy.json fenced nothing, isolation granted write, the ZeroClaw sandbox allowed it | `test_pooled_roots_are_read_only_in_policy_grading_and_isolation` |
 | Capability-layer audit | pooled services' entry binaries never reached the terminal fence — and deriving one from an empty commands list would have refused every other command the department runs | `test_a_department_that_pools_but_lists_no_commands_is_never_derived_a_fence` |
+| Capability-layer audit | skills were exported once per shared home, so a department fork of a skill appeared twice: the standard copy in the harness's skill list and the fork in the brief | `test_a_run_carries_its_departments_resolved_skills` |
 
 ## Reading order for a new agent
 

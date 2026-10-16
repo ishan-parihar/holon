@@ -117,6 +117,10 @@ class Isolated(KernelCase):
         self.assertTrue((c.brief_dir / "driver.log").exists(), "the kernel's log exists before the agent runs")
         acl = subprocess.run(["getfacl", "-p", str(c.brief_dir)], capture_output=True, text=True).stdout
         self.assertIn(f"user:{getpass.getuser()}:rwx", acl)
+        acl = subprocess.run(["getfacl", "-p", str(c.brief_dir / "skills")], capture_output=True,
+                             text=True).stdout
+        self.assertIn(f"user:{getpass.getuser()}:r-x", acl,
+                      "the run's exported skills are readable and traversable, never writable")
 
     def test_the_runner_stops_a_harness_whose_result_is_in(self):
         self.install_fake_driver("fake", mode="linger")

@@ -4,6 +4,7 @@ import io
 import json
 import unittest
 from contextlib import redirect_stdout
+from pathlib import Path
 
 from holon import cli
 from holon.execution import autonomy, genome
@@ -186,6 +187,22 @@ class Skills(KernelCase):
         c = self.k.claim("plan", self.hod)
         self.assertIn("ENG HOUSE RULE", (c.brief_dir / "BRIEF.md").read_text())
         self.assertEqual(json.loads((c.brief_dir / "brief.json").read_text())["skill"], "holon-planner")
+
+    def test_a_run_carries_its_departments_resolved_skills(self):
+        """R-09: a body that loads skills from disk must see one resolved library — a department
+        fork is the only version of its skill it is offered, never a standard twin beside it."""
+        self.k.skills.fork("holon-planner", dept="eng")
+        p = self.home.root / "skills" / "@eng" / "holon-planner" / "SKILL.md"
+        p.write_text(p.read_text() + "\nENG FORK: this department's own planner skill.\n")
+        self.add(dept="eng")
+        c = self.k.claim("plan", self.hod)
+        brief = json.loads((c.brief_dir / "brief.json").read_text())
+        self.assertEqual(brief["skills"], str(c.brief_dir / "skills"))
+        exported = Path(brief["skills"])
+        self.assertIn("ENG FORK", (exported / "holon-planner" / "SKILL.md").read_text(),
+                      "the run's copy is the department's fork, not the standard library")
+        self.assertEqual([x.name for x in exported.glob("holon-planner*")], ["holon-planner"],
+                         "one resolved holon-planner per run — no standard twin beside the fork")
 
     def test_invoke_renders_and_records_use(self):
         r = self.k.invoke_skill("holon-employee", employee_id=self.dev1)

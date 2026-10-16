@@ -282,14 +282,25 @@ def run(address: str, cmd: str, cwd: str, env: dict, timeout_s: float, alive=Non
 
 def share_run_dir(path, agent_user: str) -> None:
     """A run directory the agent user may read and add its result to, but where it cannot replace what the
-    kernel wrote: sticky, owned by the kernel, the agent granted rwx by ACL, kernel files readable only.
+    kernel wrote: sticky, owned by the kernel, the agent granted rwx by ACL, kernel files readable only —
+    and a directory the kernel wrote (the run's exported skills) readable recursively, never writable.
     The kernel's log is created now, so the agent cannot plant a symlink where the kernel later writes."""
     path = str(path)
     open(os.path.join(path, "driver.log"), "a").close()
     os.chmod(path, 0o1700)
-    files = [os.path.join(path, f) for f in os.listdir(path) if f != "result.json"]
-    for cmd in (["setfacl", "-m", f"u:{agent_user}:rwx", path],
-                *([["setfacl", "-m", f"u:{agent_user}:r", *files]] if files else [])):
+    cmds = [["setfacl", "-m", f"u:{agent_user}:rwx", path]]
+    files = []
+    for entry in sorted(os.listdir(path)):
+        if entry == "result.json":
+            continue
+        full = os.path.join(path, entry)
+        if os.path.isdir(full) and not os.path.islink(full):
+            cmds.append(["setfacl", "-R", "-m", f"u:{agent_user}:rX", full])
+        else:
+            files.append(full)
+    if files:
+        cmds.append(["setfacl", "-m", f"u:{agent_user}:r", *files])
+    for cmd in cmds:
         p = subprocess.run(cmd, capture_output=True, text=True)
         if p.returncode:
             raise IsolationError(f"{' '.join(cmd[:3])} failed: {p.stderr.strip()}")

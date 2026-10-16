@@ -76,6 +76,11 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
             "Commands granted to your department: " + ", ".join(f"`{c}`" for c in cmds) + ".\n" if cmds else "") + \
             "Anything else is outside your department's scope: say so in your result instead of working around it.\n"
     (d / "BRIEF.md").write_text(md)
+    # R-09: the run carries the department-resolved library, so a body that loads skills from
+    # disk sees one copy of every skill — a department fork is the only version it is offered.
+    # Deliberately not registered with the harness exports: a run's snapshot is written once,
+    # before the body runs, and is never refreshed underneath it.
+    lib.export(d / "skills", variables, dept=dept)
     if policy:
         (d / "policy.json").write_text(json.dumps(policy, indent=2))
         try:
@@ -89,6 +94,7 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
         "employee_id": employee["id"] if employee else None, "employee_name": employee["name"] if employee else None,
         "employee_slug": slug(employee["name"]) if employee else None,
         "brief_md": str(d / "BRIEF.md"), "context_md": str(d / "context.md"),
+        "skills": str(d / "skills"),
         "identity_md": str(d / "identity.md") if identity_md else None, "result_path": str(result_path),
         "workdir": workdir, "holon": holon, "lease_until": run.get("lease_until"), "token": token,
         "envelope": f"schemas/{stage}-result.schema.json", "skill": skill, "scope": scope or {"name": "org"},

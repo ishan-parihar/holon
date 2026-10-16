@@ -17,7 +17,7 @@ For each run the kernel writes `$HOLON_HOME/execution/runtime/runs/<run_id>/`:
 | File | Written by | Content |
 |---|---|---|
 | `BRIEF.md` | kernel | the stage's instructions, rendered from the role skill's `briefs/<stage>.md` |
-| `brief.json` | kernel | run, stage and work ids, role, posture, employee, every path below, the run token (mode 0600) |
+| `brief.json` | kernel | run, stage and work ids, role, posture, employee, every path below, the run's exported skills (`skills`), the run token (mode 0600) |
 | `identity.md` | kernel | the employee's identity card, for harnesses that put it in the system prompt |
 | `context.md` | kernel | the compiled context: role, work, earlier stages' outputs, memory, lineage; for a plan, the kernel-computed grade floor and approver |
 | `result.json` | **agent** | the result envelope (§2) |
@@ -156,7 +156,7 @@ names it. Every adapter has the same five parts:
 |---|---|
 | Driver | `driver.toml` (§3), installed into the instance's `config/drivers/` |
 | Identity | the employee's identity card reaches the agent: `{briefing}`, `{identity}` or `{identity_md}` |
-| Skills | the skills library exported where the harness loads skills (`holon skill export --to …`) |
+| Skills | the skills library exported where the harness loads skills (`holon skill export --to …`); every prepared run also carries its department-resolved copy in `runs/<id>/skills` (named `skills` in `brief.json`) — a body whose harness lists skills points its loader there, so a tailored skill appears once, as the department's version, never beside a standard twin |
 | Posture map | observe stages get a harness setting that cannot write; execute gets the approved plan's reach |
 | Conformance | `holon adapter test <driver>` passes every clause: driver, plan, approve, execute, verify |
 
