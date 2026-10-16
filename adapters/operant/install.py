@@ -76,7 +76,7 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
     lines += [
         "[client]",
         f'base_url = "{base_url}"',
-        "timeout_secs = 300",
+        "timeout_secs = 600",
         "max_context_length = 128000",
     ]
     if api_key:
@@ -90,9 +90,12 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
         "context_window = 128000",
         "show_reasoning = false",
         # free-route reality (G1 live day): a stage body's turn on a
-        # free route can exceed 120s; the loop's per-request ceiling
-        # must match the client or the body dies at the default
-        "request_timeout_secs = 300",
+        # free route under pressure can exceed 300s (three live bodies
+        # died on the ceiling: 120s twice, then 300s); the loop's
+        # per-request ceiling must match the client or the body dies at
+        # the default. The kernel's own hermes driver allowed 3600s
+        # wall-clock — 600s per request is conservative for a body.
+        "request_timeout_secs = 600",
         "",
         "[tui]",
         "rich_output = false",
