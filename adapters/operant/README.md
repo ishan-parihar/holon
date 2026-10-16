@@ -9,7 +9,7 @@ directory is the only place that knows operant exists. It implements the adapter
 | Driver | `driver.toml`: `operant run -c …/adapters/operant/{posture}.toml --max-iterations 40 --no-stream -q {briefing}` (identity card + stage brief) |
 | Identity | carried in the query (`{briefing}`), so it reaches the system prompt whatever operant does with workspace identity files |
 | Skills | `holon skill export` → `$HOLON_HOME/adapters/operant/home/skills`, set as `[skills] root_dir` |
-| Native tools | the Holon MCP server (`bin/holon mcp`, stdio) in both posture configs: `holon_whoami`, `holon_submit`, `holon_memory_search`, … authenticated by the run token operant's child inherits |
+| Native tools | the Holon MCP server (`bin/holon mcp`, stdio) in both posture configs — unless the pinned binary registers the `holon_*` native tools (probed at install): those builds get no MCP mount, the native tools are the organization's read/submit surface. Authenticated by the run token operant's child inherits |
 | Posture map | `observe.toml`: write/mutation/notification tools disabled (the kernel's workdir fingerprint is the read-only check). `act.toml`: `command_allowlist = ["*"]` so an approved plan never stalls on a prompt an unattended harness cannot answer |
 | Conformance | `holon adapter test operant` |
 
@@ -41,12 +41,20 @@ Everything operant writes — config, sessions, memory, approval allowlist, `.en
 `HERMES_HOME=$HOLON_HOME/adapters/operant/home` (operant honors `HERMES_HOME`), so Holon's
 employees never share the user's own operant state, and the Chair key never reaches a run. The
 endpoint key is read from `--api-key-file` into that home's `.env` (mode 0600), never a command
-line. The posture configs also pin `[memory] provider = "builtin"` inside the isolated home and
-switch operant's own org surfaces (`[genome]`, `[context_injection]`, `[socialization]`, `[cron]`,
-`[kanban]`) to lockdown/off: in a Holon run the organization's records are Holon's (boundary S1/S3).
+line. The posture configs also pin operant's own org surfaces off (`[genome]` lockdown,
+`[context_injection]` and `[socialization]` disabled, `[kernel]` — the continual-harness lane —
+off) and keep `[memory]` on inside the isolated home: the body's own working memory, while the
+organization's memory is Holon's (boundary S1/S3). The `cron`/`kanban` TOOLS are disabled through
+`tools.disabled_tools` (they are tools, not config sections). Operant's only memory engine today
+is memory-wire — there is no `[memory] provider` pin, and a personal memory provider in a Holon
+run is the runtime's own isolation work (operant's R-08); until it lands, this README claims no
+provider-level isolation.
 
-A planned phase replaces both posture configs' `command_allowlist` bypass with real
-`policy.json` enforcement per tool call (declared in Holon, enforced in operant).
+Operant enforces `policy.json` per tool call (roots, commands, budget, deny — and `read_roots`
+for the pooled units a run may only read): a call outside the policy is refused and reported in
+`refusals`. `command_allowlist = ["*"]` in act.toml remains: the policy is the fence, and the
+allowlist only keeps an unattended approved plan from stalling on a permission prompt no one can
+answer.
 
 ## Result hand-in
 

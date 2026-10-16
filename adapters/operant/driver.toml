@@ -5,9 +5,11 @@
 # One command per posture: observe stages run with every write tool disabled (the
 # kernel's working-directory fingerprint is the read-only check), execute additionally
 # allowlists every tool so an approved plan never stalls on a permission prompt an
-# unattended harness cannot answer (hermes --yolo parity). Both mount the Holon MCP
-# server, so the agent hands its result in with holon_submit, authenticated by the
-# run token the kernel passes in the environment.
+# unattended harness cannot answer (hermes --yolo parity). A binary without the native
+# holon_* tools mounts the Holon MCP server (probed at install; a binary that registers
+# them drops the mount), so the agent hands its result in with holon_submit or ends its
+# reply with the envelope JSON, authenticated by the run token the kernel passes in the
+# environment.
 #
 # The posture configs live in the install home (adapters/operant/home) and the driver
 # pins that absolute path — the same pattern as the jcode adapter — so `holon adapter

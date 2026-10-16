@@ -13,9 +13,11 @@
      act.toml      the execute stage: the same core config plus command_allowlist = ["*"], so an
                    approved plan never stalls on a permission prompt an unattended harness cannot
                    answer (hermes --yolo parity; the hardline command floor still applies)
-   Both disable operant's own org/cron surfaces ([genome], [context_injection], [socialization],
-   [cron], [kanban]) and point [memory] at the builtin provider within the isolated home — in a
-   Holon run the organization's memory is Holon's (boundary doc S1/S3).
+    Both disable operant's own org/cron surfaces ([genome], [context_injection], [socialization]
+    and the [kernel] continual-harness lane) and keep [memory] on inside the isolated home: the
+    body's own working memory, while the organization's memory is Holon's (boundary doc S1/S3).
+    Operant's only memory engine today is memory-wire, so there is no provider pin to write;
+    provider-level isolation is the runtime's job (its R-08), not a config the adapter can set.
 3. mounts the Holon MCP server (stdio, one process per run, so each run's token stays its own)
    in both postures — UNLESS the pinned operant binary registers the holon_* native tools under
    the run env (probed at install; operant iter-854+): those builds get no MCP mount, the native
@@ -115,9 +117,15 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
         "[socialization]",
         "enabled = false",
         "",
-        "# Isolated, file-backed memory inside this home; the organization's memory is Holon's.",
+        "# The continual-harness lane is off in a Holon run: the organization's scheduling and",
+        "# supervision are Holon's, not the body's (KernelSettings: only `enabled` exists).",
+        "[kernel]",
+        "enabled = false",
+        "",
+        "# The body's own working memory, inside this isolated home. Operant's only memory engine",
+        "# today is memory-wire — there is no provider pin to write (R-08/R-10); organization-level",
+        "# memory is Holon's, reached through holon_memory_search (boundary doc S1/S3).",
         "[memory]",
-        'provider = "builtin"',
         "enabled = true",
         "",
         "[skills]",
