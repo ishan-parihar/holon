@@ -27,15 +27,17 @@ def compile_policy(node: dict, work: dict | None, scope: dict | None, plan: dict
     """Build the policy document for one run.
 
     `node` is the claimed stage (grade, stage, lane); `work` its work (workdir);
-    `scope` the department's effective reach (`Kernel.scope(slug)`); `plan` the
-    approved plan output body for an execute stage (its `writes` are what the
-    approver saw); `budget` the per-run caps (`tokens`/`cost`, None = uncapped).
+    `scope` the department's effective reach (`Kernel.scope(slug)`) — its `roots` are writable,
+    its `read_roots` (pooled units, U2) are reads only; `plan` the approved plan output body for
+    an execute stage (its `writes` are what the approver saw); `budget` the per-run caps
+    (`tokens`/`cost`, None = uncapped).
     """
     stage = node["stage"]
     posture = "act" if stage == "execute" else "observe"
     workdir = (work or {}).get("workdir") or None
     roots = [workdir] if workdir else []
     roots += (scope or {}).get("roots", [])
+    read_roots = (scope or {}).get("read_roots", []) or []
     commands = (scope or {}).get("commands", []) or []
     if posture == "act":
         commands += (scope or {}).get("act_commands", []) or []
@@ -46,6 +48,7 @@ def compile_policy(node: dict, work: dict | None, scope: dict | None, plan: dict
         "stage": stage,
         "posture": posture,
         "roots": sorted({r for r in roots if r}),
+        "read_roots": sorted({r for r in read_roots if r}),
         "writes": writes,
         "commands": sorted(set(commands)),
         "deny": [],

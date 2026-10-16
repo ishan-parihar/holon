@@ -321,14 +321,15 @@ def _chain(path: Path, top: Path) -> list[Path]:
 
 def reach(k) -> dict:
     """What the agent user needs: trees it writes (the departments' reach, `[isolation] grants`, harness
-    homes named in driver environments), trees it only reads (`[isolation] reads`, the kernel distribution,
-    harness binaries) and the run directories."""
+    homes named in driver environments), trees it only reads (`[isolation] reads`, the pooled units'
+    read-only roots, the kernel distribution, harness binaries) and the run directories."""
     from holon.execution import drivers
     c = k.config["isolation"]
     writes = {Path(r).expanduser() for r in c.get("grants") or []}
+    reads = {Path(r).expanduser() for r in c.get("reads") or []} | {Path(__file__).resolve().parents[2]}
     for s in k.scopes():
         writes |= {Path(r) for r in s["roots"]}
-    reads = {Path(r).expanduser() for r in c.get("reads") or []} | {Path(__file__).resolve().parents[2]}
+        reads |= {Path(r) for r in s.get("read_roots") or []}   # U2: pooled roots are reads, never the pen
     for d in drivers.available(k.home).values():
         writes |= {Path(v) for v in d.env.values() if v.startswith("/") and Path(v).is_dir()}
         exe = d.command.split()[0] if d.command.split() else ""

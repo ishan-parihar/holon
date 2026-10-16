@@ -35,7 +35,9 @@ aliases with risk and runtime profiles, and channel sends. ZeroClaw cron jobs ru
   `sh` and interpreters, so its command list is not a fence: what bounds execution is the approved
   plan (graded against the department's reach) and the roots.
 - **Roots.** Agents reach only the run directories, the `--allow` paths and their department's
-  `[scope]` roots. The instance's
+  `[scope]` roots. Pooled units' roots (`read_roots` in `holon scope`) are **not** granted:
+  ZeroClaw has no read-only root, so a body on it cannot reach a pooled unit's files — it asks
+  through `msg request` instead (the installer prints what it withheld). The instance's
   databases, `holon.toml`, drivers, skills and genome, and `~/.config` (where the Chair key lives),
   are forbidden paths. Agents change the organization only through `holon` with their run token.
 

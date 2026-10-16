@@ -218,8 +218,9 @@ class KernelRules(Rules):
         (low risk, a task class with a verified track record); whoever asked for the lane."""
         if not self.k.config["lanes"]["fast"]:
             return "[lanes] fast is off"
+        s = self.k.scope(self.k._dept_slug(work.get("dept_id")))
         g = grading.grade_plan(self.k.wconn, work, {"grade": "G0"}, self.k.config,
-                               reach=self.k.scope(self.k._dept_slug(work.get("dept_id")))["roots"])
+                               reach=s["roots"], read_only_reach=s["read_roots"])
         return None if g["floor"] == 0 else f"its grade floor is G{g['floor']} ({'; '.join(g['reasons'])})"
 
 
@@ -564,10 +565,12 @@ class Kernel:
 
     def _grade_floor_section(self, work: dict, slug: str | None, author: str | None) -> str:
         """What the kernel will compute for a plan of this work, so a planner never has to derive it."""
-        reach = self.scope(slug)["roots"]
-        g = grading.grade_plan(self.wconn, work, {"grade": "G0"}, self.config, reach=reach)
+        reach = self.scope(slug)
+        g = grading.grade_plan(self.wconn, work, {"grade": "G0"}, self.config, reach=reach["roots"],
+                              read_only_reach=reach["read_roots"])
         approver = self.org.resolve_approver(work, g["floor"], author)
-        inside = ", ".join(f"`{p}`" for p in ([work["workdir"]] if work.get("workdir") else []) + reach) or "none"
+        inside = ", ".join(f"`{p}`" for p in ([work["workdir"]] if work.get("workdir") else [])
+                             + reach["roots"]) or "none"
         return ("\n\n## Grade floor (computed by the kernel)\n\n"
                 f"Before your plan's own effects, the floor is **G{g['floor']}**:\n"
                 + "".join(f"- {r}\n" for r in g["reasons"] if "planner proposed" not in r)
@@ -677,8 +680,9 @@ class Kernel:
                 out = self.work.submit_plan(run_id, env, exit_code=exit_code)
             else:
                 env = self._canonical_writes(env, work)
+                s = self.scope(self._dept_slug(work["dept_id"]))
                 g = grading.grade_plan(self.wconn, work, env, self.config,
-                                       reach=self.scope(self._dept_slug(work["dept_id"]))["roots"])
+                                       reach=s["roots"], read_only_reach=s["read_roots"])
                 approver = self.org.resolve_approver(work, g["grade"], run["employee_id"])
                 out = self.work.submit_plan(run_id, env, g, approver, exit_code)
         elif stage == "approve":
@@ -1368,9 +1372,10 @@ class Kernel:
                 or env.get("blockers"):
             return None
         approved = self.work.approved_plan(work["id"])
+        s = self.scope(self._dept_slug(work["dept_id"]))
         g = grading.grade_plan(self.wconn, work, {"writes": env.get("writes") or [], "grade": "G0",
                                                   "external_effects": env.get("external_effects") or []},
-                               self.config, reach=self.scope(self._dept_slug(work["dept_id"]))["roots"])
+                               self.config, reach=s["roots"], read_only_reach=s["read_roots"])
         if approved and g["floor"] > approved["grade"]:
             with write_txn(self.wconn):
                 self.work._event("task", work["id"], None, None, f"lane breach: a {work['lane']} result graded "
@@ -1675,15 +1680,24 @@ class Kernel:
 
     # ── scope: what a department's employees may reach beyond their work's workdir ──
     def scope(self, dept_slug: str | None) -> dict:
-        """The effective reach for a department: [scope] plus [scope.dept.<slug>], plus the roots of
-        every unit the department pools (U2). `name` is the slug when the department has its own
+        """The effective reach for a department: [scope] plus [scope.dept.<slug>], plus what every
+        pooled unit grants (U2). A pooled unit's roots join `read_roots` — presence and reads, never
+        the pen (GENOME §14) — and, when the department already has a terminal fence, its services'
+        entry-point binaries join `commands`. `name` is the slug when the department has its own
         section, else "org"; harness adapters build one sandbox per name."""
         base = self.config.get("scope", {})
         own = (base.get("dept") or {}).get(dept_slug) if dept_slug else None
         merged = {k: [*base.get(k, []), *((own or {}).get(k, []))] for k in ("roots", "commands", "act_commands")}
-        if dept_slug:   # pooled units' roots join the reach (synced rows; presence and writes are msg request)
-            merged["roots"] += [r for u in units.pooled_by(self.wconn, dept_slug) for r in u["roots"]]
+        pooled = units.pooled_by(self.wconn, dept_slug) if dept_slug else []
+        merged["read_roots"] = [r for u in pooled for r in u["roots"]]
+        if merged["commands"] and pooled:
+            # only a fence that exists: an empty commands list means ungoverned, and deriving one
+            # out of pooling would refuse every other command the department runs (R-05)
+            merged["commands"] = list(dict.fromkeys(
+                merged["commands"] + [s["command"].split()[0] for u in pooled for s in u["services"]
+                                     if s.get("command")]))
         merged["roots"] = [str(Path(r).expanduser()) for r in merged["roots"]]
+        merged["read_roots"] = [str(Path(r).expanduser()) for r in merged["read_roots"]]
         return {"name": dept_slug if own is not None else "org", **merged}
 
     def scopes(self) -> list[dict]:
@@ -1719,6 +1733,9 @@ class Kernel:
         department's first scope root (else the instance), and remember the results for the gate."""
         results = []
         for c in self.smoke_checks(dept):
+            # writable scope roots only: a department whose only reach is pooled has no root it may
+            # write smoke artifacts into, so its checks run in the instance root (the explicit
+            # decision R-06 asks for — a pooled root is read-only, never a smoke cwd)
             roots = self.scope(c["dept"])["roots"] if c["dept"] else []
             cwd = next((r for r in roots if Path(r).is_dir()), str(self.home.root))
             started = datetime.now(timezone.utc)

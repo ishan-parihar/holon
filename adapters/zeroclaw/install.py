@@ -165,6 +165,7 @@ def main() -> int:
     sc = scopes(home)
     aliases = [f"holon-{s['name']}-{p}" for s in sc["scopes"] for p in ("observe", "act")]
     per_scope = "".join(scope_block(s, roots, SYSTEM_FORBIDDEN + instance_state) for s in sc["scopes"])
+    read_only = sorted({r for s in sc["scopes"] for r in s.get("read_roots") or []})
     block = (HERE / "config.snippet.toml").read_text() \
         .replace("@PROVIDER_BLOCK@", provider_block).replace("@SCOPES@", per_scope) \
         .replace("@MODEL_PROVIDER@", provider) \
@@ -182,6 +183,9 @@ def main() -> int:
     print(f"zeroclaw: {zc}")
     print(f"config: {cfg_path} provider={provider}\n  allowed_roots={roots} (+ each scope's roots)\n"
           f"  scopes={[s['name'] for s in sc['scopes']]} fingerprint={sc['fingerprint']}\n  skills={skills_dir}")
+    if read_only:
+        print(f"read_roots not granted (ZeroClaw has no read-only root): {read_only}\n"
+              "  pooled units are unreachable for bodies on this harness; they ask through msg request")
     if a.dry_run:
         shown = re.sub(r'^((?:api_key|token|secret)\s*=\s*)".*"$', r'\1"<redacted>"', block, flags=re.M)
         print("dry run: no changes written\n" + (shown if new_text else ""))

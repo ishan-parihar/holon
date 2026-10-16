@@ -172,6 +172,9 @@ What that means for every change here:
 | 2026-10-16 red-team | refused executes could still close with no decision on the refusal: sampling and the fast/script lane skips (a passing rubric judge included) never looked at the blockers the H-03 fold had stored | `test_a_refused_success_is_never_closed_by_sampling` |
 | 2026-10-16 red-team | test processes wrote scratch Chair keys into the operator's real `~/.config/holon/keys` (170+ orphans; conformance had been pinned to its scratch dir, the wider test process had not) | `test_no_test_process_writes_chair_keys_into_the_real_key_dir` |
 | 2026-10-16 red-team | a guard's command was the fixer's own shell, run by the heartbeat as its user — a path from any employee's result to the kernel user's privileges; a guard now names a Chair-authored `[checks.class]` entry | `test_a_guard_naming_an_unknown_check_class_is_refused_at_submit` |
+| Capability-layer audit | the pooled-units render was nested inside the execute/verify branch, so plan, research and shape stages never saw what the department pools | `test_pooled_units_join_the_reach_and_render_in_briefs` |
+| Capability-layer audit | pooled roots joined the writable reach: grading passed a write into one, policy.json fenced nothing, isolation granted write, the ZeroClaw sandbox allowed it | `test_pooled_roots_are_read_only_in_policy_grading_and_isolation` |
+| Capability-layer audit | pooled services' entry binaries never reached the terminal fence — and deriving one from an empty commands list would have refused every other command the department runs | `test_a_department_that_pools_but_lists_no_commands_is_never_derived_a_fence` |
 
 ## Reading order for a new agent
 

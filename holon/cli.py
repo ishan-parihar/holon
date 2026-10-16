@@ -1094,8 +1094,8 @@ def cmd_drivers(args, k):
          arg("--dept"), mutates=False)
 def cmd_scope(args, k):
     out = [k.scope(args.dept)] if args.dept else k.scopes()
-    lines = [f"{s['name']:<12} roots={s['roots'] or '-'} commands={s['commands'] or '-'} "
-             f"act_commands={s['act_commands'] or '-'}" for s in out]
+    lines = [f"{s['name']:<12} roots={s['roots'] or '-'} read_roots={s.get('read_roots') or '-'} "
+             f"commands={s['commands'] or '-'} act_commands={s['act_commands'] or '-'}" for s in out]
     _out(args, {"fingerprint": k.scope_fingerprint(), "scopes": out},
          "\n".join(lines) + f"\nfingerprint {k.scope_fingerprint()} (harness sandboxes built from it must match: "
                             "re-run the adapter installer after changing [scope])")

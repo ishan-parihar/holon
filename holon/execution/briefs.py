@@ -62,14 +62,17 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
     skill, file = BRIEF_OF_STAGE[stage]
     lib = library or Library(home)
     holon = holon_command(home)
-    md = lib.render(lib.read(skill, file, dept), dict(
+    variables = dict(
         run_id=run["id"], task_id=node["id"], work_id=node["parent_id"] or node["id"], stage=stage,
-        context_md=str(d / "context.md"), result_path=str(result_path), workdir=workdir, holon=holon))
-    if scope and (scope["roots"] or scope["commands"] or scope["act_commands"]):
+        context_md=str(d / "context.md"), result_path=str(result_path), workdir=workdir, holon=holon)
+    md = lib.render(lib.read(skill, file, dept), variables)
+    if scope and (scope["roots"] or scope.get("read_roots") or scope["commands"] or scope["act_commands"]):
         cmds = scope["commands"] + (scope["act_commands"] if vocab.POSTURE[stage] == "act" else [])
         md = md.rstrip() + "\n\n## Your reach\n\n" + (
             f"Beyond `{workdir}` and this run's directory, you may work in: "
             + ", ".join(f"`{r}`" for r in scope["roots"]) + ".\n" if scope["roots"] else "") + (
+            "You may read (never write): " + ", ".join(f"`{r}`" for r in scope.get("read_roots") or [])
+            + " — pooled units are their owners' work; ask through `msg request`.\n" if scope.get("read_roots") else "") + (
             "Commands granted to your department: " + ", ".join(f"`{c}`" for c in cmds) + ".\n" if cmds else "") + \
             "Anything else is outside your department's scope: say so in your result instead of working around it.\n"
     (d / "BRIEF.md").write_text(md)

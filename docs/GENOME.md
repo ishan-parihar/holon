@@ -180,6 +180,17 @@ The kernel uses scope three ways, so it holds on any harness:
 - **drivers**: `{scope}` is the department's slug if it has a section, else `org`. A harness that
   sandboxes builds one sandbox per scope (ZeroClaw: agents `holon-<scope>-observe|act`).
 
+**Pooled units widen scope with reads only** (§14): a pooled unit's roots join `read_roots`, never
+the writable `roots`. The brief lists them under "You may read (never write)", `policy.json`
+carries them beside `roots` (a runtime that fences writes by `roots` refuses them), grading floors
+a plan that writes into one at G3, and isolation grants the agent user read-only. ZeroClaw has no
+read-only root, so its installer grants them nothing and says so. When a department lists `[scope]`
+commands, the pooled services' entry-point binaries join that fence — only a fence that exists:
+an empty `commands` list stays ungoverned, and `holon lint` warns about a department that pools
+units with no commands. A pooled root owns no route (`holon route` names the writable reach only)
+and hosts no smoke-check cwd (a department whose only reach is pooled runs its smoke checks in the
+instance root).
+
 An installer that builds sandboxes records `scope_fingerprint` (`holon scope` prints it) in the
 driver. `holon doctor` errors with `scope.drift` when `[scope]` changed after the install: re-run
 the installer, or new scopes have no sandbox and narrowed ones keep their old reach.
@@ -383,10 +394,15 @@ synced by `holon genome sync` (the only writer), checked by `holon lint`
 names a real department), and derived into `genome/registry.md` by `holon genome emit`.
 
 **Pooling** (`pool_of = ["<dept>"]`) grants three things and nothing else: the unit's charter
-and services render in that department's briefs (presence), its `roots` join the department's
-reach (reads), and requests for it go through `msg request --service <unit>:<service>` —
-validated against the registry (K-5), and never the pen: writing to a unit is work for its
-own owner.
+and services render in that department's briefs (presence — at every stage that can use them:
+plan, research, shape, execute, verify), its `roots` join the department's reach as **reads only**
+(`read_roots` in `holon scope`, `brief.json` and `policy.json`; never the writable `roots`, so a
+runtime that fences writes by `roots` refuses them, isolation grants read-only, and grading floors
+a plan that writes into one at G3), and requests for it go through `msg request --service
+<unit>:<service>` — validated against the registry (K-5), and never the pen: writing to a unit is
+work for its own owner. When the department lists `[scope]` commands, the pooled services'
+entry-point binaries join that terminal fence; an empty commands list stays ungoverned (never
+derived from pooling), and lint warns when a pooling department lists none.
 
 Nothing about a unit is implicit: no inherited scope, no hidden authority — the manifest is
 the whole contract, the tables and registry are views of it.

@@ -544,11 +544,22 @@ def harness_names() -> set[str]:
 
 def pack_genome(k, f: Findings) -> None:
     """The genome layer (U1): unit manifests parse, every consumed service is offered by some unit
-    (bind.service), every pooled unit names a real department (bind.pool), and the sync is not
-    stale. The manifests are the source; the tables are a view of them."""
+    (bind.service), every pooled unit names a real department (bind.pool), the sync is not stale,
+    and a department that pools units names shell commands (a fence that exists — an empty commands
+    list means ungoverned, and pooling must not switch one on). The manifests are the source;
+    the tables are a view of them."""
     from holon.genome import units as units_mod
     for p in units_mod.validate(k):
         f.add("error", "genome.manifest", "genome/units", p)
+    manifests, _ = units_mod.load(k.home)
+    base = k.config.get("scope", {})
+    known = {d["slug"] for d in k.org.depts()}
+    for slug in sorted({d for u in manifests.values() for d in u["pool_of"] if d in known}):
+        if not [*base.get("commands", []), *(((base.get("dept") or {}).get(slug) or {}).get("commands", []))]:
+            f.add("warning", "genome.fence", f"dept:{slug}",
+                  "pools units but lists no [scope] commands — its terminal fence is open (an empty "
+                  "commands list means ungoverned; list the commands its stages use, and the pooled "
+                  "services' entry points join the fence)")
 
 
 def pack_api(k, f: Findings) -> None:

@@ -27,9 +27,11 @@ def verified_in_class(conn: sqlite3.Connection, task_class: str | None) -> int:
 
 
 def grade_plan(conn: sqlite3.Connection, task: dict, env: dict, cfg: dict | None = None,
-                reach: list[str] | None = None) -> dict:
-    """`reach`: the department's scope roots ([scope] in holon.toml). Writes there count as in bounds;
-    writes beyond the workdir and the reach of a department that has one go to the Chair (G3).
+                 reach: list[str] | None = None, read_only_reach: list[str] | None = None) -> dict:
+    """`reach`: the department's writable scope roots ([scope] in holon.toml). Writes there count as
+    in bounds; writes beyond the workdir and the reach of a department that has one go to the Chair (G3).
+    `read_only_reach`: roots the department may only read (pooled units, U2) — a write into one is
+    work for the unit's owner (msg request), floored at G3 with that reason.
     In a `[pilot]` department, anything the floor puts at G3 (outside reach) is the Chair's call:
     floor G4 — the standing rule "pilot work never sends outreach" as a grade floor, not a hope."""
     full = cfg or {}
@@ -49,6 +51,7 @@ def grade_plan(conn: sqlite3.Connection, task: dict, env: dict, cfg: dict | None
         bump(2, f"external effects {env['external_effects'][:3]}: floor G2")
     workdir = Path(task["workdir"]).expanduser().resolve() if task.get("workdir") else None
     roots = [Path(r).expanduser().resolve() for r in reach or []]
+    read_roots = [Path(r).expanduser().resolve() for r in read_only_reach or []]
     for w in env.get("writes") or []:
         if isinstance(w, str) and w.startswith("skill:"):
             bump(2, f"changes how the department works ({w}): floor G2")
@@ -56,6 +59,8 @@ def grade_plan(conn: sqlite3.Connection, task: dict, env: dict, cfg: dict | None
         if not isinstance(w, str) or "://" in w:
             continue
         p = Path(w).expanduser()
+        if p.is_absolute() and any(p.resolve().is_relative_to(r) for r in read_roots):
+            bump(3, f"writes a pooled unit ({w}: work for its owner — msg request): floor G3")
         inside = p.is_absolute() and any(p.resolve().is_relative_to(r) for r in ([workdir] if workdir else []) + roots)
         if p.is_absolute() and not inside:
             if roots:
