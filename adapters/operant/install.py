@@ -96,6 +96,10 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
         # the default. The kernel's own hermes driver allowed 3600s
         # wall-clock — 600s per request is conservative for a body.
         "request_timeout_secs = 600",
+        # same live day: the 30s default killed aft_read twice (the AFT
+        # bridge cold-start downloads its binary); a body's tool calls
+        # (AFT, web fetches) legitimately run longer than interactive use
+        "tool_timeout_secs = 120",
         "",
         "[tui]",
         "rich_output = false",

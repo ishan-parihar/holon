@@ -25,3 +25,8 @@ read_only_enforced = false
 
 [env]
 HERMES_HOME = "{ohome}"
+# a stage turn is not an interactive one (G1 live day): a research body
+# ran 23 tool calls over ~23 minutes of real work and died on the
+# 20-minute per-TURN default (the grace call came back empty). Bodies
+# get an hour per turn, matching the kernel's own patience for drivers.
+HERMES_TURN_TIMEOUT = "3600"
