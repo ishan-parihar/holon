@@ -1682,20 +1682,21 @@ class Kernel:
     def scope(self, dept_slug: str | None) -> dict:
         """The effective reach for a department: [scope] plus [scope.dept.<slug>], plus what every
         pooled unit grants (U2). A pooled unit's roots join `read_roots` — presence and reads, never
-        the pen (GENOME §14) — and, when the department already has a terminal fence, its services'
-        entry-point binaries join `commands`. `name` is the slug when the department has its own
+        the pen (GENOME §14) — and, when the department already has a terminal fence (`commands` or
+        `act_commands`, whichever exists), its services' entry-point binaries join that fence. `name` is the slug when the department has its own
         section, else "org"; harness adapters build one sandbox per name."""
         base = self.config.get("scope", {})
         own = (base.get("dept") or {}).get(dept_slug) if dept_slug else None
         merged = {k: [*base.get(k, []), *((own or {}).get(k, []))] for k in ("roots", "commands", "act_commands")}
         pooled = units.pooled_by(self.wconn, dept_slug) if dept_slug else []
         merged["read_roots"] = [r for u in pooled for r in u["roots"]]
-        if merged["commands"] and pooled:
-            # only a fence that exists: an empty commands list means ungoverned, and deriving one
-            # out of pooling would refuse every other command the department runs (R-05)
-            merged["commands"] = list(dict.fromkeys(
-                merged["commands"] + [s["command"].split()[0] for u in pooled for s in u["services"]
-                                     if s.get("command")]))
+        binaries = [s["command"].split()[0] for u in pooled for s in u["services"] if s.get("command")]
+        for key in ("commands", "act_commands"):
+            # only a fence that exists: an empty list means ungoverned, and deriving one out of
+            # pooling would refuse every other command the department runs (R-05) — and the act
+            # fence is a fence too, so an act_commands-only department gets the binaries (red-team)
+            if merged[key]:
+                merged[key] = list(dict.fromkeys(merged[key] + binaries))
         merged["roots"] = [str(Path(r).expanduser()) for r in merged["roots"]]
         merged["read_roots"] = [str(Path(r).expanduser()) for r in merged["read_roots"]]
         return {"name": dept_slug if own is not None else "org", **merged}

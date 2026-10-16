@@ -142,6 +142,31 @@ class Genome(KernelCase):
         self.assertTrue(any("ops" in f["where"] for f in warned), found)
         self.assertTrue(any("fence is open" in f["message"] for f in warned), found)
 
+    def test_a_fence_that_exists_only_in_act_commands_still_names_the_pooled_services(self):
+        """R-05's other half, found by red-team: an act fence is a fence. A department fenced
+        only by act_commands ran its execute stages refusing the pooled services' entry points —
+        the brief advertised `kosmos --query` and the policy denied it. Only a fence that exists
+        is extended; no observe fence is derived from pooling."""
+        self.configure('[scope.dept.ops]\nact_commands = ["git"]\n')
+        self._sync()
+        s = self.k.scope("ops")
+        self.assertEqual(s["commands"], [], "no observe fence is derived out of pooling (R-05)")
+        self.assertEqual(s["act_commands"], ["git", "kosmos"],
+                         "the act fence names the pooled services' entry points")
+
+    def test_route_names_only_writable_reach_a_pooled_root_belongs_to_its_owner(self):
+        """The R-06 pitfall, decided and pinned: `holon route` answers for the writable reach only —
+        a pooled root is its unit owner's work, never a pooling department's, so writes to it go
+        through msg request, not to the department `route` would name."""
+        self._sync()
+        from holon import cli
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cli.main(["--home", str(self.home.root), "--json", "route",
+                           str(self.tmp / "data" / "vault" / "x")])
+        self.assertEqual(rc, cli.NOTHING)
+        self.assertIsNone(json.loads(buf.getvalue())["scope"])
+
     def test_a_typed_request_names_the_entry_point(self):
         self._sync()
         from holon import cli

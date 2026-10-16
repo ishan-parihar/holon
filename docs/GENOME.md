@@ -400,9 +400,10 @@ plan, research, shape, execute, verify), its `roots` join the department's reach
 runtime that fences writes by `roots` refuses them, isolation grants read-only, and grading floors
 a plan that writes into one at G3), and requests for it go through `msg request --service
 <unit>:<service>` — validated against the registry (K-5), and never the pen: writing to a unit is
-work for its own owner. When the department lists `[scope]` commands, the pooled services'
-entry-point binaries join that terminal fence; an empty commands list stays ungoverned (never
-derived from pooling), and lint warns when a pooling department lists none.
+work for its own owner. When the department lists `[scope]` commands — or `act_commands`, whichever
+fence exists — the pooled services' entry-point binaries join that fence; an empty list stays
+ungoverned (never derived from pooling), and lint warns when a pooling department lists no
+commands.
 
 Nothing about a unit is implicit: no inherited scope, no hidden authority — the manifest is
 the whole contract, the tables and registry are views of it.

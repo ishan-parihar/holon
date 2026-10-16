@@ -1104,6 +1104,8 @@ def cmd_scope(args, k):
 @command("route", "any", "which department's reach owns a path ([scope] roots; the deepest root wins)", arg("path"),
          mutates=False)
 def cmd_route(args, k):
+    # the writable reach only: a pooled root is its unit owner's work (R-06), so no pooling
+    # department "owns" it — writes there are a msg request, never a routed department's
     target = Path(args.path).expanduser().resolve()
     best = None
     for s in k.scopes():

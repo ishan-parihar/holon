@@ -53,6 +53,15 @@ class Shipped(KernelCase):
         zc.mkdir()
         with open(self.home.config_file, "a") as fh:
             fh.write('\n[scope.dept.eng]\nroots = ["/srv/shared"]\ncommands = ["arch"]\nact_commands = ["systemctl"]\n')
+        # eng pools a unit: its roots are read-only reach, and ZeroClaw has no read-only root —
+        # the installer must withhold them and say so (R-06)
+        self.home.genome_units_dir.mkdir(parents=True)
+        (self.home.genome_units_dir / "vault.toml").write_text(
+            f'charter = "the research substrate"\ncategory = "service"\ntier = "foundation"\n'
+            f'roots = ["{self.tmp / "data" / "vault"}"]\npool_of = ["eng"]\nconsumed = []\n\n'
+            f'[[services]]\nid = "kosmos"\ncommand = "kosmos --query"\naccepts = "q"\nreturns = "r"\n')
+        from holon.genome import units
+        units.sync(self.k)
         (zc / "config.toml").write_text('[providers.models.openai.main]\nuri = "http://x"\nmodel = "m"\napi_key = "sk-secret"\n\n'
                                         '[agents.assistant]\nmodel_provider = "openai.main"\n')
         p = subprocess.run([sys.executable, str(ADAPTERS / "zeroclaw" / "install.py"), "--holon-home",
@@ -76,6 +85,10 @@ class Shipped(KernelCase):
         self.assertIn("arch", eng_obs["allowed_commands"])
         self.assertNotIn("systemctl", eng_obs["allowed_commands"], "act_commands only reach the worker")
         self.assertIn("systemctl", eng_work["allowed_commands"])
+        self.assertIn("read_roots not granted", p.stdout,
+                      "the installer says it cannot grant a read-only root instead of granting it")
+        self.assertFalse(any("vault" in r for r in eng_obs["allowed_roots"] + eng_work["allowed_roots"]),
+                         "a pooled unit's roots never reach a ZeroClaw sandbox (read-only, and ZeroClaw has no read-only root)")
         self.assertEqual(cfg["agents"]["holon-eng-act"]["risk_profile"], "holon-eng-worker")
         self.assertIn('scope_fingerprint = ""', (ADAPTERS / "zeroclaw" / "driver.toml").read_text(),
                       "install.py stamps the fingerprint by replacing this exact line")

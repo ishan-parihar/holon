@@ -172,5 +172,23 @@ unknown version turns org mode off. Therefore:
    Fix the doc in the same commit as the code it describes.
 8. **Label every finding CONFIRMED or PLAUSIBLE, and say what you did not trace.** A plausible
    item is a test to write, not a fix to ship.
+
+**Execution status (2026-10-17, after a red-team re-audit of this list).** §1 is executed and
+verified — every fix traced to its consumer, every guard reverted once to watch it fail: R-01
+(`test_pooled_units_join_the_reach_and_render_in_briefs`, plan covered; three pooled units at
+plan cost 2014 of 24000 chars, no Context gaps), R-06
+(`test_pooled_roots_are_read_only_in_policy_grading_and_isolation`; `holon route` names only
+the writable reach — a pooled root belongs to its unit's owner — and a department whose only
+reach is pooled runs its smoke checks in the instance root), R-05
+(`test_a_department_that_pools_but_lists_no_commands_is_never_derived_a_fence`; the re-audit
+found the fix had covered only `commands` — a department fenced solely by `act_commands` got its
+act fence without the pooled binaries; fixed in
+`test_a_fence_that_exists_only_in_act_commands_still_names_the_pooled_services`), R-08/R-10
+(`test_operant_installer_isolates_and_writes_both_postures`; operant iters 880/881 hold the
+runtime side), R-09 (`test_a_run_carries_its_departments_resolved_skills`; operant iter 882
+reads the run's skills directory), R-11 and R-20 (the adapter READMEs). §3 steps 1–2: operant
+accepts `api_version 4` (iter 885, `a_v4_kernel_is_read_and_an_unknown_still_refuses`) while
+the kernel still publishes v3 — the v4 migration waits on the Chair with C1. §2 is untouched,
+waiting on the Chair.
 9. **A defect fixed is a guard test plus a ledger row** (AGENTS.md). Without both, the next
    refactor reintroduces it.
