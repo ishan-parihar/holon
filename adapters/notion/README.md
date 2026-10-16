@@ -83,6 +83,19 @@ A gateway may host the webhook route itself instead (H8): feed each event to
 same verification, handled in line. A box that does this does not need `holon-notion.service`;
 the poll stays the fallback.
 
+Two deployment laws hold whichever way the webhook is hosted:
+
+- **`push`/`reconcile` must run somewhere.** The outbound mirror — pages, values, relations —
+  lives only in the sync process (`serve`, or `push`/`reconcile` by hand). Retiring
+  `holon-notion.service` in favour of a gateway-hosted webhook keeps the *inbound* path but
+  stops the *outbound* one, and Notion would silently hold Holon's state as it was at the last
+  push. A box without `serve` must run the outbound side on a clock: a runtime's timer running
+  `holon_notion.py push` on an interval (plus a periodic `reconcile` for the full pass).
+- **One box, one webhook receiver.** Webhook events are answered exactly once per box: `serve`'s
+  receiver or the gateway's `apply`, never both — the subscription points at one URL, and its
+  verification token lives in one place. A second receiver is double-handling and a token split
+  across two stores, each silently invalidating the other.
+
 does steps 3, 4 and 6 below along with the SQLite instance: the four databases, a dedicated
 Cloudflare tunnel (`holon-notion`, needs `cloudflared tunnel login` once) routing only
 `/notion/…` to the receiver, and the `holon-notion` and `cloudflared-holon-notion` user units. It
