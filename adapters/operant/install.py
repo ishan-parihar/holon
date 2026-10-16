@@ -155,6 +155,10 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
     lines += [
         "",
         "[tools]",
+        # the registry's default tool timeout is [tools] registry_timeout_secs
+        # (default 30) — NOT [agent] tool_timeout_secs; a cold-starting AFT
+        # bridge (binary download) blew the 30s default twice on the live day
+        "registry_timeout_secs = 120",
         f"disabled_tools = {json.dumps(tools)}",
     ]
     if not observe:
