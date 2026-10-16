@@ -107,6 +107,24 @@ class VerifySampling(KernelCase):
         c = self.k.claim("execute", self.dev1)
         self.assertFalse(self.k.submit(c.run["id"], self.exec_env())["verification_skipped"])
 
+    def test_a_refused_success_is_never_closed_by_sampling(self):
+        """H-03, back half: the fold puts refusals in the stored result's blockers, and a result
+        with blockers keeps its verifier — sampling may close trusted work, never a decision."""
+        self.k.config["autonomy"] = {"trusted_after": 1, "verify_sample_rate": 0.0}
+        t, _, out = self._g0(1)                       # build trust: one verified pass
+        self.assertFalse(out["verification_skipped"])
+        self.k.verify(t["id"], "pass", "ok")
+        t2, _, out2 = self._g0(2)
+        self.assertTrue(out2["verification_skipped"], "control: a clean trusted success closes unverified")
+        t3 = self.add("routine refused", dept="eng", task_class="routine", risk="low")
+        self.plan_and_approve(t3, assignee=self.dev1, writes=[], grade="G0")
+        c3 = self.k.claim("execute", self.dev1)
+        out3 = self.k.submit(c3.run["id"], self.exec_env(
+            refusals=[{"tool": "terminal", "reason": "rm -rf denied by policy", "rule": "writes"}]))
+        self.assertFalse(out3.get("verification_skipped"), "a refused success keeps its verifier")
+        self.assertEqual(self.status(t3), "open")
+        self.assertEqual(self.pipeline_of(t3)[-1], ("verify", "ready"))
+
 
 class Genome(KernelCase):
     def test_profiles_validate(self):

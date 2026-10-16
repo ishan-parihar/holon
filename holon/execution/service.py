@@ -838,8 +838,11 @@ class Kernel:
 
     def _sample_verification(self, work: dict, run: dict, env: dict) -> dict | None:
         """Trusted G0 work is verified on a sample (autonomy.verify_sample_rate); the rest closes unverified.
-        Trusted = the executor's last `trusted_after` verified results in this task class all passed."""
-        if work["status"] != "open" or env["outcome"] != "success" or not run["employee_id"]:
+        Trusted = the executor's last `trusted_after` verified results in this task class all passed.
+        A result carrying blockers never closes unverified (H-03): nobody may sample away the
+        decision on what it refused or shrank from."""
+        if work["status"] != "open" or env["outcome"] != "success" or not run["employee_id"] \
+                or env.get("blockers"):
             return None
         plan = self.work.approved_plan(work["id"])
         if not plan or plan["grade"] != 0:
@@ -1306,8 +1309,10 @@ class Kernel:
     def _lane_verification(self, work: dict, run: dict, env: dict) -> dict | None:
         """Script and fast work skip the verifier when nothing calls for one: graded again on what it did
         (beyond its approved grade: a lane breach, which the Chair is told about), then judged against its
-        rubric. Unsure, failing, sampled or breaching results keep their verify stage."""
-        if work["status"] != "open" or env["outcome"] != "success" or not self.work.latest(work["id"], "verify", "ready"):
+        rubric. Unsure, failing, sampled or breaching results keep their verify stage — and so does a
+        result with blockers (H-03): the skips never decide what it refused."""
+        if work["status"] != "open" or env["outcome"] != "success" or not self.work.latest(work["id"], "verify", "ready") \
+                or env.get("blockers"):
             return None
         approved = self.work.approved_plan(work["id"])
         g = grading.grade_plan(self.wconn, work, {"writes": env.get("writes") or [], "grade": "G0",

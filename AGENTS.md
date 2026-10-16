@@ -161,6 +161,8 @@ What that means for every change here:
 | Integration audit, live probe | the kernel and the body's runtime disagreed on the run directory's variable name, so no real run ever saw enforcement, trajectory or usage | `test_prepare_writes_the_run_without_spawning` |
 | Integration audit, live probe | the operant driver shipped a literal template in its `[env]`, so every body used a false state home — a silent read-only breach | `test_operant_driver_env_is_absolute_after_install` |
 | Integration audit, live probe | a database migrated by newer code ran silently under older code (two checkouts, one launcher) | `test_a_database_newer_than_the_code_refuses_to_run` |
+| 2026-10-16 red-team | refused executes could still close with no decision on the refusal: sampling and the fast/script lane skips (a passing rubric judge included) never looked at the blockers the H-03 fold had stored | `test_a_refused_success_is_never_closed_by_sampling` |
+| 2026-10-16 red-team | test processes wrote scratch Chair keys into the operator's real `~/.config/holon/keys` (170+ orphans; conformance had been pinned to its scratch dir, the wider test process had not) | `test_no_test_process_writes_chair_keys_into_the_real_key_dir` |
 
 ## Reading order for a new agent
 

@@ -12,6 +12,12 @@ from holon.execution.service import Kernel
 FAKE_AGENT = Path(__file__).with_name("fake_agent.py")
 REPO = Path(__file__).resolve().parents[1]
 JD = "Responsibilities: do the work well. KPIs: verified results."
+# Every scratch instance this process boots writes its Chair key inside the test sandbox —
+# never the operator's real ~/.config/holon/keys, which `holon keys list --orphans` otherwise
+# has to clean out by hand (the integration audit's I-10 found that dir littered). KernelCase
+# narrows this per test; this floor also covers any subprocess a test spawns between cases.
+TEST_KEY_FILE = Path(tempfile.mkdtemp(prefix="holon-test-keys-")) / "chair.key"
+os.environ["HOLON_CHAIR_KEY_FILE"] = str(TEST_KEY_FILE)
 # the minimal pipeline (plan -> approve -> execute -> verify) unless a test turns stages on; no doctor on
 # the heartbeat (test instances run in open mode, which doctor reports) unless a test turns it on
 MINIMAL = '[pipeline]\nresearch = "never"\nshape = "never"\nretro = "never"\n[healing]\ndoctor_every_min = 0\nbackup_every_h = 0\n'

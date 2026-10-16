@@ -3,7 +3,9 @@
 import contextlib
 import io
 import json
+import os
 import types
+import unittest
 from pathlib import Path
 from unittest import mock
 
@@ -255,3 +257,18 @@ class KeysList(KernelCase):
         rows = json.loads(buf.getvalue())
         self.assertTrue(all(not r["this_instance"] for r in rows))
         self.assertIn("conformance-scratch-123.chair", {r["file"] for r in rows})
+
+
+class KeyHygiene(unittest.TestCase):
+    """The suite's own footprint (found by the 2026-10-16 red-team pass: 170+ orphan keys):
+    no process running these tests may write a Chair key into the operator's real key dir.
+    tests.helpers pins HOLON_CHAIR_KEY_FILE for the whole process; KernelCase narrows it
+    per test — this holds the floor itself."""
+
+    def test_no_test_process_writes_chair_keys_into_the_real_key_dir(self):
+        from tests import helpers
+        default = Path("~/.config/holon/keys").expanduser()
+        self.assertFalse(helpers.TEST_KEY_FILE.is_relative_to(default),
+                         "the suite's key file lives outside the operator's key dir")
+        self.assertEqual(os.environ.get("HOLON_CHAIR_KEY_FILE"), str(helpers.TEST_KEY_FILE),
+                         "the process floor holds whenever no test has narrowed it")
