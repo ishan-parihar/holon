@@ -78,6 +78,17 @@ class Lint(KernelCase):
         self.k.skills.new("stub", "operation", "Does a thing")
         self.assertTrue({"depth.trigger", "depth.size", "depth.runnable"} <= rules(lint.run(self.k, ["depth"])))
 
+    def test_a_law_copy_drifting_from_the_vocabulary_is_caught(self):
+        """KB-4: a distilled copy that drops a role, stage, scope or memory kind is an error,
+        not silence — agents operate from these copies."""
+        self.assertNotIn("kb.drift", rules(lint.run(self.k, ["drift"])), "the shipped copies are clean")
+        self.k.skills.fork("holon-memory")
+        layer, path = self.k.skills.resolve("holon-memory", "SKILL.md")
+        self.assertEqual(layer, "instance")
+        path.write_text(path.read_text().replace("| glossary | a term the organization uses with a specific meaning |\n", ""))
+        msgs = [f["message"] for f in lint.run(self.k, ["drift"]) if f["rule"] == "kb.drift"]
+        self.assertTrue(any("glossary" in m for m in msgs), msgs)
+
     def test_broken_command_references_are_caught(self):
         self.k.skills.new("legacy", "operation", "Use when testing. Old habits")
         p = self.home.root / "skills" / "legacy" / "SKILL.md"

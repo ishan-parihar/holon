@@ -31,3 +31,10 @@ Memory is how the organization outlives every session. It is scoped from you out
 | preference | how the Chair or a head wants things done |
 | lesson | what went wrong or right, and what to do next time |
 | open_question | an unknown that blocks or risks work |
+| glossary | a term the organization uses with a specific meaning |
+| artifact | a pointer to something outside memory (a file, a run, an entry) |
+
+**Two stores, one routing rule:** your runtime's own memory bank is working memory,
+private to this instance's bodies — not part of the organization's memory and never
+searched by the kernel. Everything the organization must retain, deduplicate, promote
+and audit lives here, and is written through these commands or your result.

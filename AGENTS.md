@@ -35,6 +35,9 @@ agent is at the end.
 | `install.py` | cold start or upgrade of a machine: instance (SQLite + Chair key), launcher, Notion databases, user units; `tests/test_install.py` |
 | `docs/` | INTENT, GENOME, CONTRACT: the kernel's reference and law docs |
 | `docs/design/` | scrubbed design records and audits; an audit's work list separates defects fixable now from changes that wait on the Chair |
+| `TODO.md` | the register: open work items with their status and verdicts, seeded from the audit work lists (`scripts/kb status` is the supervised transition) |
+| `docs/decisions/` | immutable decision records (AD-NNN), minted when the Chair ratifies a direction change; superseded only by a newer AD |
+| `docs/archive/` | superseded docs, with a tombstone at the original path and a row in its `INDEX.md` |
 
 ## Laws (enforced by `holon lint`, `holon doctor` and the tests)
 
@@ -69,10 +72,12 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
   it becomes non-empty, and read live state only with `mode=ro` and `holon doctor` before you
   conclude. Label each finding confirmed or plausible. The worked example, with its open work
   list, is `docs/design/2026-10-16-capability-layer-audit.md`.
-- **Read the dated design records before changing a mechanism they cover.** They live in the
-  operator's private overlay (`docs/design/` there; see the section below) — publish a record
-  here only when it is scrubbed of operator context. Its universal lessons belong where they
-  are enforced: the ledger below, the adapter READMEs, GENOME and CONTRACT.
+- **Read the dated design records before changing a mechanism they cover.** They live in
+  the operator's private overlay (`docs/design/` there; see the section below) — publish a record
+  here only when it is scrubbed of operator context. Its universal lessons belong where they are
+  enforced: the ledger below, the adapter READMEs, GENOME and CONTRACT. A design record superseded
+  by a later one is moved to `docs/archive/` with a tombstone at its original path — never edited
+  past its status line.
 - **A defect found by a real run gets a guard test and a ledger row in the same commit.** The
   ledger below is checked by `holon lint` (`ref.guard`): every row names a test, and every test
   it names must exist, so a guard cannot be deleted silently.
@@ -190,5 +195,7 @@ What that means for every change here:
    real harness does.
 5. Any audit in `docs/design/` whose work list touches what you are changing: its §1 defects are
    yours to fix (tests first, guard + ledger row); its §2 changes wait on a decision.
-6. In the operator's overlay (not public): `docs/STATUS.md` and the dated `docs/design/` records —
-   the deployment, the standing decisions and the design history.
+6. In the operator's overlay (not public): `docs/STATUS.md` and the dated `docs/design/` records — the
+   deployment, the standing decisions and the design history.
+7. `TODO.md` (the register: what is open, what was decided, evidence for each verdict) and
+   `docs/decisions/` (AD-NNN records of the Chair's ratified direction changes).

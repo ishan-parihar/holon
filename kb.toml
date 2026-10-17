@@ -1,0 +1,31 @@
+# kb.toml — holon's role→path map (the project-kb documentation genome, mapped in place)
+#
+# Pointer forms: `overlay:<path>` — the role lives in the operator's private
+# overlay repo (AGENTS.md, "The universal repo and the personal overlay");
+# `native:<note>` — a holon-native mechanism owns it and this tooling defers
+# to it, never shadows it. Both are reported by `scripts/kb doctor` as
+# legitimately-elsewhere, never as missing.
+[paths]
+agents = "AGENTS.md"
+entry = "AGENTS.md"            # the reading order at the end of AGENTS.md
+register = "TODO.md"
+plans = "docs/design"          # dated records serve both roles; the date is the freeze stamp
+audits = "docs/design"
+decisions = "docs/decisions"   # AD-NNN, minted on the Chair's ratification
+archive = "docs/archive"       # tombstones at the original path, INDEX.md here
+ledger = "native:the regression-ledger table in AGENTS.md, guard-checked by holon lint (ref.guard)"
+closed = "native:the regression ledger — a defect fixed is a guard test plus a ledger row in the same commit"
+regressions = "native:the regression ledger's rows (a bite plus the law that prevents it)"
+workflows = "native:the organization's own board — `holon task list` / api_board / [budget] caps"
+state = "overlay:docs/STATUS.md"
+worklog = "overlay:docs/design — the operator's dated records"
+feed = "overlay:the operator's overlay messages"
+runbook = "native:adapter READMEs (adapters/<name>/README.md) and the AGENTS.md verify section"
+
+# References in AGENTS.md prose that are legitimate non-repo paths (per-line,
+# path-shaped backticked tokens are existence-checked by `kb lint`):
+# the per-run brief and the instance config live in $HOLON_HOME, never here
+# (law: instance state stays out of the distribution); STATUS and PERSONAL
+# live in the operator's private overlay by design; INDEX.md is referenced by
+# bare name inside its own archive row.
+pointer_ignore = "BRIEF.md holon.toml docs/STATUS.md PERSONAL.md INDEX.md"

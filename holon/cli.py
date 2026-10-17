@@ -887,7 +887,19 @@ def cmd_memory_add(args, k):
          arg("--limit", type=int, default=10), mutates=False)
 def cmd_memory_search(args, k):
     items = k.memory.search(args.query, scopes=[args.scope] if args.scope else None, limit=args.limit)
-    _out(args, items, "\n".join(f"{i['id']}  [{i['scope']}/{i['kind']}] {i['content']}" for i in items) or "no matches")
+    _out(args, items, "\n".join(
+        f"{i['id']}  [{i['scope']}/{i['kind']}] {i['content']} (confidence: {i['confidence']}"
+        + (f"; provenance: {i['provenance']}" if i.get("provenance") else "") + ")"
+        for i in items) or "no matches")
+
+
+@command("memory episodes", "any", "search past run digests for problems like this", arg("query"),
+          arg("--scope"), arg("--limit", type=int, default=10), mutates=False)
+def cmd_memory_episodes(args, k):
+    eps = k.memory.search_episodes(args.query, scopes=[args.scope] if args.scope else None, limit=args.limit)
+    _out(args, eps, "\n".join(
+        f"{e['ts'][:16]}  [{e['scope']}] {e['outcome'] or e['scope']} — {e['digest']}"
+        + (f" (task:{e['task_id']})" if e.get("task_id") else "") for e in eps) or "no matches")
 
 
 @command("memory pin", "chair", "pin an item (every run in its scope sees it)", arg("item_id"))
@@ -913,6 +925,9 @@ def cmd_memory_retire(args, k):
 def cmd_memory_promote(args, k):
     it = k.memory.get_item(args.item_id)
     up = k.memory.add_item(args.to, it["kind"], it["content"], f"promoted:{it['id']}", confidence="high")
+    if up["action"] == "created":
+        # a promoted item carries its provenance edge on every path, not only consolidation (KB-6)
+        k.memory.link(f"mem:{up['id']}", f"mem:{it['id']}", "derived_from")
     _out(args, up, f"{up['id']} {up['action']} in {args.to}")
 
 
@@ -932,7 +947,9 @@ def cmd_memory_context(args, k):
     from holon.capabilities.context import compile_context
     emp = k.org.employee(args.as_) if args.as_ else None
     md, meta = compile_context(k.home, k.work, k.memory, args.task_id,
-                               budget=args.budget or int(k.config["context"]["budget_chars"]), employee=emp,
+                               budget=args.budget or int(k.config["context"]["budget_chars"]),
+                               recall_floor=int(k.config["context"]["recall_floor_chars"]),
+                               employee=emp,
                                predecessors=k.org.predecessors(emp["id"]) if emp else None)
     _out(args, {"markdown": md, **meta}, md)
 

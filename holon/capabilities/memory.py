@@ -130,6 +130,11 @@ class Memory:
             self.conn.execute("UPDATE items SET superseded_by='retired' WHERE id=? AND superseded_by IS NULL", (item_id,))
         return self.get_item(item_id)
 
+    def link(self, from_id: str, to_id: str, rel: str) -> None:
+        """A provenance edge between items (supersedes | derived_from | depends_on | contradicts | about)."""
+        with write_txn(self.conn):
+            self.conn.execute("INSERT OR IGNORE INTO links VALUES (?,?,?)", (from_id, to_id, rel))
+
     def live_items(self, scopes: Iterable[str], kinds: Iterable[str] | None = None, pinned_only: bool = False,
                    limit: int = 50) -> list[dict]:
         scopes = list(scopes)

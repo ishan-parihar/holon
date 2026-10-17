@@ -25,6 +25,12 @@ class Protocol(KernelCase):
         self.assertEqual(search["inputSchema"]["required"], ["query"])
         self.assertNotIn("as_", json.dumps(mcp.tools()), "identity comes from the token, never an argument")
 
+    def test_the_agent_fence_carries_the_knowledge_join_commands(self):
+        names = {t["name"] for t in mcp.tools()}
+        self.assertTrue({"holon_memory_episodes", "holon_playbook_list", "holon_playbook_show",
+                         "holon_events", "holon_skill_path"} <= names,
+                        "the kernel's synthesis commands belong in the agent fence (KB-2, KB-3)")
+
     def test_handshake_and_unknown_methods(self):
         init = mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                            "params": {"protocolVersion": "2024-11-05"}})

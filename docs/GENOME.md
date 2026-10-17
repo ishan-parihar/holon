@@ -93,6 +93,7 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | Section | Key | Default | Meaning |
 |---|---|---|---|
 | `[context]` | `budget_chars` | 24000 | size of a stage's context bundle |
+| `[context]` | `recall_floor_chars` | 3600 | chars of the bundle budget reserved for cross-scope recall (KB-1): sections render in priority order and the recall family is not crowded out by large stage material |
 | `[planner]` | `enforce_read_only` | true | fail observe-stage runs that change the working directory |
 | `[planner]` | `trust_harness_read_only` | false | skip that check for drivers declaring `read_only_enforced` |
 | `[planner]` | `guard_ignore` | [] | paths (globs relative to the workdir, `dir/**` for a tree) that other processes write, which the read-only check skips; commits by another process never count |

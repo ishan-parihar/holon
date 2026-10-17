@@ -24,8 +24,9 @@ from holon import __version__
 PROTOCOL = "2025-06-18"
 # the commands an employee needs while working; chair-only and kernel commands are never exposed
 AGENT_COMMANDS = ("emp card", "org", "dept roles", "task show", "task tree", "plan show", "memory search",
-                  "memory add", "memory context", "msg send", "msg inbox", "msg request", "skill list", "skill show",
-                  "skill invoke", "run show", "run heartbeat", "metrics", "claim", "classify", "routine list")
+                   "memory add", "memory context", "memory episodes", "msg send", "msg inbox", "msg request",
+                   "skill list", "skill show", "skill path", "skill invoke", "playbook list", "playbook show",
+                   "events", "run show", "run heartbeat", "metrics", "claim", "classify", "routine list")
 
 
 def _tool_name(path: tuple[str, ...]) -> str:

@@ -42,7 +42,7 @@ from holon.execution import staleness
 from holon.execution.work import CHECKING, HELD, Claimant, Rules, TransitionError, Work
 
 DEFAULT_CONFIG = {
-    "context": {"budget_chars": DEFAULT_BUDGET_CHARS},
+    "context": {"budget_chars": DEFAULT_BUDGET_CHARS, "recall_floor_chars": 3600},
     "planner": {"enforce_read_only": True, "trust_harness_read_only": False, "guard_ignore": []},
     "grading": {},
     "autonomy": {},
@@ -523,6 +523,7 @@ class Kernel:
                       "`$holon msg request <dept> …`; its head shapes it."))
         md, _ = compile_context(self.home, self.work, self.memory, node["id"],
                                 budget=int(self.config["context"]["budget_chars"]), run_id=run["id"],
+                                recall_floor=int(self.config["context"]["recall_floor_chars"]),
                                 employee=emp, predecessors=self.org.predecessors(emp["id"]) if emp else None,
                                 extra=extra)
         slug = self._dept_slug(node["dept_id"])

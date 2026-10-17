@@ -2,6 +2,8 @@
 memory, context, grading, and the agnosticism guarantees."""
 
 import ast
+import contextlib
+import io
 import json
 import sqlite3
 import sys
@@ -226,6 +228,56 @@ class MemoryBehaviour(KernelCase):
         self.assertIn("Context gaps", md)
         row = self.k.mconn.execute("SELECT degraded FROM context_log WHERE run_id='run_x'").fetchone()
         self.assertIn("trajectory", row[0])
+
+    def test_recall_floor_keeps_cross_scope_recall_and_the_gaps_lead(self):
+        t = self.add("Floor discipline task", intent="The recall floor must survive a crowded bundle",
+                    project_ref="traj:missing")
+        self.k.memory.add_item("org", "constraint", "Crowded bundle honesty binds future runs", "chair")
+        self.k.memory.add_item("org", "lesson", "Floor discipline task crowded bundles recall honesty", "agent")
+        stage = self.k.work.stages(t["id"])[0]
+        md, meta = compile_context(self.home, self.k.work, self.k.memory, stage["id"], budget=2000,
+                                   recall_floor=900,
+                                   extra=[("Playbook: a long protocol", "x" * 1200),
+                                          ("Playbook: a second protocol", "y" * 400)])
+        self.assertIn("Relevant memory", md, "the recall family survives the crowded stage material")
+        self.assertIn("Crowded bundle honesty", md, "the floor never sacrifices the steering section")
+        self.assertLess(md.index("Context gaps"), md.index("Relevant memory"), "gaps lead, they do not trail")
+        self.assertTrue(any(d.startswith("reserved for recall") for d in meta["degraded"]), meta["degraded"])
+
+    def test_episodes_are_searchable_across_scopes(self):
+        m = self.k.memory
+        m.add_episode("dept:eng", "rerun the atlas projection nightly and reconcile the deltas")
+        eps = m.search_episodes("atlas projection deltas")
+        self.assertEqual(len(eps), 1)
+        self.assertTrue(eps[0]["digest"].startswith("rerun the atlas"))
+
+    def test_memory_episodes_command_reaches_agents(self):
+        from holon import cli
+        self.k.memory.add_episode("org", "rerun the atlas projection nightly and reconcile")
+        with contextlib.redirect_stdout(buf := io.StringIO()):
+            rc = cli.main(["--home", str(self.home.root), "--json", "memory", "episodes", "atlas projection"])
+        self.assertEqual(rc, 0)
+        self.assertIn("atlas", buf.getvalue())
+
+    def test_search_renders_source_weight(self):
+        from holon import cli
+        self.k.memory.add_item("org", "fact", "The API base URL is https://api.example.com/v2",
+                               "human:spec", confidence="high")
+        with contextlib.redirect_stdout(buf := io.StringIO()):
+            rc = cli.main(["--home", str(self.home.root), "memory", "search", "API base URL"])
+        self.assertEqual(rc, 0)
+        self.assertIn("confidence: high", buf.getvalue())
+        self.assertIn("provenance: human:spec", buf.getvalue())
+
+    def test_chair_promote_writes_the_derived_from_edge(self):
+        from holon import cli
+        a = self.k.memory.add_item("emp:x", "lesson", "Project the receipts before you ship", "work:r1")
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = cli.main(["--home", str(self.home.root), "memory", "promote", a["id"], "--to", "org"])
+        self.assertEqual(rc, 0)
+        row = self.k.mconn.execute("SELECT 1 FROM links WHERE to_ref=? AND rel='derived_from'",
+                                   (f"mem:{a['id']}",)).fetchone()
+        self.assertIsNotNone(row, "a promoted item carries its provenance edge on every path")
 
 
 class Grading(KernelCase):

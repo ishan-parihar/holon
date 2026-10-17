@@ -14,6 +14,8 @@ Six packs. Each finding is {severity: error | warning, rule, where, message}; er
   DRY       nothing is said twice: near-duplicate paragraphs across skills/briefs/docs, and copies of
             vocabulary lists in code
   AGNOSTIC  stdlib-only imports; no harness named anywhere in the kernel distribution
+  DRIFT     the distilled law copies (skills, docs) name every role, stage, scope and memory kind
+            that exists; a copy that drops one is an error, not silence
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from pathlib import Path
 from holon.core import contract, vocab
 from holon.core.db import checksum, migration_files
 
-PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "genome")
+PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "genome", "drift")
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
@@ -609,6 +611,34 @@ def pack_api(k, f: Findings) -> None:
                   f"{name} columns {have} do not match api_version {row[0]} {cols}; a view changes only with a version bump")
     for extra in sorted(n for n in present if n.startswith("api_") and n not in expected):
         f.add("warning", "api.views", "work.db", f"{extra} is not part of api_version {row[0]}; rename or bump")
+
+
+def pack_drift(k, f: Findings) -> None:
+    """The distilled law copies must not drift from the vocabulary they summarize (KB-4): a
+    convention carried in a skill names every role, stage, scope and memory kind that exists,
+    so an agent operating from the copy cannot miss a mechanism the kernel enforces."""
+    checks = {
+        ("holon-employee", "references/organization.md"):
+            [(r, f"role {r!r} is in the vocabulary but not named in the distilled organization reference")
+             for r in vocab.ROLES]
+            + [(s, f"stage {s!r} is in the vocabulary but not named in the distilled organization reference")
+               for s in vocab.STAGES]
+            + [(t, f"scope family {t!r} is not named in the distilled organization reference")
+               for t in ("emp:", "dept:", "org")],
+        ("holon-memory", "SKILL.md"):
+            [(kind, f"memory kind {kind!r} is in the vocabulary but not named in the memory skill's table")
+             for kind in vocab.MEMORY_KINDS],
+    }
+    found = {(name, rel) for name, rel, _ in _skill_files(k)}
+    for (skill, rel), items in checks.items():
+        if (skill, rel) not in found:
+            f.add("error", "kb.drift", f"{skill}/{rel}", "distilled law copy missing; its convention would travel untracked")
+            continue
+        path = next(p for n, r, p in _skill_files(k) if (n, r) == (skill, rel))
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for token, message in items:
+            if token not in text:
+                f.add("error", "kb.drift", f"{skill}/{rel}", message)
 
 
 def run(k, packs: list[str] | None = None) -> list[dict]:
