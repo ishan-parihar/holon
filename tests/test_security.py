@@ -66,6 +66,35 @@ class Security(KernelCase):
         self.cli("hr", "key", self.hod, "--revoke")
         self.assertEqual(self.cli("claim", **as_bo)[0], 4, "a revoked key stops working")
 
+    def test_shared_scopes_are_fenced_for_employees(self):
+        """R-0: an employee contributes non-steering knowledge to a class scope their department
+        performs, and to project scopes of their own department's work; steering kinds in shared
+        scopes are consolidation-or-Chair-only; reads stay open."""
+        self.cli("init")
+        _, data, _ = self.cli("hr", "key", self.hod)
+        as_bo = {"HOLON_KEY": data["key"], "HOLON_CHAIR_KEY_FILE": str(self.tmp / "missing.key")}
+        t = self.add(dept="eng", task_class="ops")
+        # class: the department performs -> allowed for a non-steering kind
+        self.assertEqual(self.cli("memory", "add", "--scope", "class:ops", "--kind", "fact", "--content",
+                                  "the atlas route needs a token", **as_bo)[0], 0)
+        # steering into a shared scope -> refused on every path
+        self.assertEqual(self.cli("memory", "add", "--scope", "class:ops", "--kind", "constraint", "--content",
+                                  "c", **as_bo)[0], 4, "steering kinds are consolidation-or-Chair-only")
+        self.assertEqual(self.cli("memory", "add", "--scope", "class:ops", "--kind", "decision", "--content",
+                                  "c", **as_bo)[0], 4)
+        # a class the department does not perform -> refused even for a fact
+        self.assertEqual(self.cli("memory", "add", "--scope", "class:nothing", "--kind", "fact", "--content",
+                                  "c", **as_bo)[0], 4)
+        # the department's own project scope -> allowed; a foreign project's -> refused
+        self.k.wconn.execute("UPDATE tasks SET project_ref='proj:mine' WHERE id=?", (t["id"],))
+        self.k.wconn.commit()
+        self.assertEqual(self.cli("memory", "add", "--scope", "proj:mine", "--kind", "fact", "--content",
+                                  "c", **as_bo)[0], 0)
+        self.assertEqual(self.cli("memory", "add", "--scope", "proj:foreign", "--kind", "fact", "--content",
+                                  "c", **as_bo)[0], 4)
+        # reads stay open: the employee searches every scope without a fence
+        self.assertEqual(self.cli("memory", "search", "atlas", **as_bo)[0], 0)
+
     def test_run_token_authenticates_one_run(self):
         self.cli("init")
         t = self.add(dept="eng")

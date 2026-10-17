@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -878,6 +879,26 @@ def cmd_memory_add(args, k):
             raise PermissionError("employees write only their own department's scope")
         if args.scope == "org" or args.pin:
             raise PermissionError("org-scope and pinned memory are the Chair's (promotion does the rest)")
+        # R-0, the shared-scope fence: cross-cutting scopes reach work the writer does not own, and
+        # steering kinds there read as binding law for every covering run — so an employee may
+        # contribute non-steering knowledge only to a class their department performs, and steering
+        # kinds (constraint/decision/preference) reach shared scopes only through consolidation,
+        # a plan review, or the Chair. (emp:/dept:/org were decided above.)
+        shared = args.scope.startswith("class:") or (":" in args.scope and not args.scope.startswith(("emp:", "dept:")))
+        if shared and args.kind in vocab.STEERING_KINDS:
+            raise PermissionError("steering kinds reach shared scopes only through consolidation or the Chair")
+        if shared and args.scope.startswith("class:"):
+            classes = {r[0] for r in k.wconn.execute(
+                "SELECT DISTINCT task_class FROM tasks WHERE dept_id=(SELECT id FROM departments WHERE slug=?)"
+                " AND task_class IS NOT NULL", (me["dept"],))}
+            if args.scope[len("class:"):] not in classes:
+                raise PermissionError("employees contribute to a class scope only for classes their department performs")
+        if shared and not args.scope.startswith("class:"):
+            # a project ref: only the scope of work in the writer's own department
+            own = k.wconn.execute("SELECT 1 FROM tasks WHERE project_ref=? AND dept_id=(SELECT id FROM departments"
+                                  " WHERE slug=?)", (args.scope, me["dept"])).fetchone()
+            if not own:
+                raise PermissionError("employees write project scopes only for work their department owns")
     it = k.memory.add_item(args.scope, args.kind, args.content if args.literal else _text_arg(args.content),
                            args.provenance or p.actor, confidence=args.confidence, pinned=args.pin)
     _out(args, it, f"{it['id']} {it['action']}")
@@ -939,6 +960,94 @@ def cmd_memory_state(args, k):
     else:
         st = k.memory.get_state(args.scope)
     _out(args, st)
+
+
+@command("memory show", "any", "an item: its content, weight, and its provenance graph", arg("item_id"),
+         mutates=False)
+def cmd_memory_show(args, k):
+    it = k.memory.get_item(args.item_id)
+    links = {r["rel"]: [] for r in k.mconn.execute(
+        "SELECT rel FROM links WHERE from_ref=? OR to_ref=?", (f"mem:{it['id']}",) * 2)}
+    for r in k.mconn.execute(
+            "SELECT from_ref, to_ref, rel FROM links WHERE from_ref=? OR to_ref=?",
+            (f"mem:{it['id']}",) * 2):
+        end = r["to_ref"] if r["from_ref"] == f"mem:{it['id']}" else r["from_ref"]
+        links.setdefault(r["rel"], []).append(end)
+    lineage = [(r[0], r[1], r[2]) for r in k.mconn.execute(
+        "WITH RECURSIVE back(id, content, rel) AS ("
+        " SELECT superseded_by, content, 'supersedes' FROM items WHERE id=?"
+        " UNION ALL SELECT i.superseded_by, i.content, 'supersedes' FROM items i JOIN back b ON i.id=b.id"
+        " WHERE i.superseded_by IS NOT NULL) SELECT id, substr(content,1,120), rel FROM back",
+        (it["id"],))]
+    _out(args, {**it, "links": links, "superseded_chain": lineage},
+         f"{it['id']} [{it['scope']}/{it['kind']}] (confidence: {it['confidence']}; uses: {it['uses']}"
+         + ("; pinned" if it["pinned"] else "") + ")\n"
+         + (it["content"] or "")
+         + "\n" + "\n".join(f"{rel}: {', '.join(refs)}" for rel, refs in links.items()))
+
+
+@command("recall", "any", "one joined answer from the organization's knowledge: memory, episodes, skills, playbooks",
+         arg("question"), arg("--limit", type=int, default=6), mutates=False)
+def cmd_recall(args, k):
+    """R-1, the join surface: the pull-mode counterpart of the context bundle. Deterministic and
+    budgeted; every source is a read the kernel already owns."""
+    q, out = args.question, []
+    items = k.memory.search(q, limit=args.limit)
+    if items:
+        out.append("## Memory\n\n" + "\n".join(
+            f"- [{i['scope']}/{i['kind']}] {i['content']} (mem:{i['id']}; confidence: {i['confidence']}"
+            + (f"; provenance: {i['provenance']}" if i.get("provenance") else "") + ")" for i in items))
+    eps = k.memory.search_episodes(q, limit=max(3, args.limit // 2))
+    if eps:
+        out.append("## Past work\n\n" + "\n".join(
+            f"- {e['ts'][:10]} [{e['scope']}] {e['digest']}" + (f" (task:{e['task_id']})" if e.get("task_id") else "")
+            for e in eps))
+    hits = k.skills.search(q, limit=args.limit)
+    if hits:
+        out.append("## Skills (protocol)\n\n" + "\n".join(f"- {h}" for h in hits))
+    try:
+        from holon.capabilities.memory import fts_query
+        terms = [w.strip('"') for w in fts_query(q).split(" OR ")]
+        pbs = [n for n in k.skills.names() if n.startswith("playbook-") and any(t in n.lower() for t in terms)]
+    except Exception:
+        pbs = []
+    if pbs:
+        out.append("## Playbooks (protocol + rubric: `holon playbook show <name> --dept <dept>`)\n\n"
+                   + "\n".join(f"- {p}" for p in pbs))
+    gold = []
+    try:
+        from holon.capabilities.memory import fts_query
+        terms = [w.strip('"') for w in fts_query(q).split(" OR ")]
+        for r in k.wconn.execute(
+                "SELECT w.id AS work_id, o.summary FROM outputs o JOIN tasks w ON w.id=o.task_id"
+                " WHERE o.stage='execute' AND o.outcome='pass' AND o.summary IS NOT NULL"
+                " ORDER BY o.created_at DESC LIMIT 200"):
+            if any(t in (r["summary"] or "").lower() for t in terms):
+                gold.append(dict(r))
+            if len(gold) >= 3:
+                break
+    except sqlite3.Error:
+        gold = []
+    if gold:
+        out.append("## Verified results (gold standards)\n\n" + "\n".join(
+            f"- {g['work_id']}: {(g['summary'] or '')[:200]}" for g in gold))
+    if not out:
+        _out(args, [], "no matches in memory, episodes, skills, playbooks or gold standards")
+        return
+    text = f"# Recall: {q}\n\n" + "\n\n".join(out)
+    _out(args, {"markdown": text}, text)
+
+
+@command("law show", "any", "the distribution's law docs (read-only): intent, genome, contract", arg("doc", choices=("intent", "genome", "contract")),
+         mutates=False)
+def cmd_law_show(args, k):
+    """R-5: agents stop depending on possibly-stale distilled copies for constitutional questions;
+    the served file is the distribution's own doc, so no second copy exists to drift."""
+    path = {"intent": "docs/INTENT.md", "genome": "docs/GENOME.md", "contract": "docs/CONTRACT.md"}[args.doc]
+    p = Path(__file__).resolve().parents[1] / path
+    if not p.exists():
+        raise LookupError(f"the distribution ships no {path}")
+    _out(args, {"path": path, "markdown": p.read_text()}, p.read_text())
 
 
 @command("memory context", "any", "preview the context bundle a stage would receive", AS, arg("task_id"),

@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sqlite3
 import types
 import unittest
@@ -199,6 +200,19 @@ class Operations(KernelCase):
         titles = {t["title"]: t["status"] for t in self.k.work.list()}
         self.assertEqual(titles, {"keep me": "open"})
         self.assertNotIn("audit.chain", {f["check"] for f in doctor.run(self.k)}, "the restored trail is intact")
+
+    def test_the_backup_covers_the_adapter_homes(self):
+        """KB-7: a body's harness home (its isolated operant state and working memory) is
+        instance state — an instance migrated by backup/restore does not lose it."""
+        from holon.integrity import backup
+        body_store = self.home.root / "adapters" / "operant" / "home" / "memory"
+        body_store.mkdir(parents=True)
+        (body_store / "memory_wire.sqlite").write_text("body bank")
+        out = backup.backup(self.k, str(self.tmp / "bk"))
+        shutil.rmtree(self.home.root / "adapters")
+        backup.restore(self.k, out["path"])
+        self.assertTrue((body_store / "memory_wire.sqlite").exists(),
+                        "the body's memory store rides backup/restore")
         (Path(out["path"]) / "work.db").write_bytes(b"tampered")
         self.assertIn("work.db", backup.verify(out["path"])["corrupt"])
 

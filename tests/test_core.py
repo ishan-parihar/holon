@@ -279,6 +279,46 @@ class MemoryBehaviour(KernelCase):
                                    (f"mem:{a['id']}",)).fetchone()
         self.assertIsNotNone(row, "a promoted item carries its provenance edge on every path")
 
+    def test_memory_show_renders_the_provenance_graph(self):
+        """R-4: the lineage reader — supersedes chain and derived-from edges are explorable."""
+        from holon import cli
+        m = self.k.memory
+        old = m.add_item("org", "fact", "The API base URL is https://api.example.com/v1", "human:spec")
+        new = m.add_item("org", "fact", "Note: the API base URL is https://api.example.com/v1", "human:spec")
+        self.assertEqual(new["action"], "superseded")
+        with contextlib.redirect_stdout(buf := io.StringIO()):
+            rc = cli.main(["--home", str(self.home.root), "memory", "show", new["id"]])
+        self.assertEqual(rc, 0)
+        self.assertIn("supersedes", buf.getvalue())
+        self.assertIn(old["id"], buf.getvalue(), "the superseded source is reachable from the live item")
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = cli.main(["--home", str(self.home.root), "--json", "memory", "show", new["id"]])
+        self.assertEqual(rc, 0)
+
+    def test_recall_joins_memory_skills_and_verified_results(self):
+        """R-1: one question, one joined answer — the pull-mode counterpart of the bundle."""
+        from holon import cli
+        self.k.memory.add_item("org", "lesson", "Atlas projection needs the nightly token refresh", "work:r1")
+        self.k.memory.add_episode("org", "reran the atlas projection after the token refresh")
+        with contextlib.redirect_stdout(buf := io.StringIO()):
+            rc = cli.main(["--home", str(self.home.root), "recall", "atlas projection token"])
+        self.assertEqual(rc, 0)
+        text = buf.getvalue()
+        self.assertIn("## Memory", text)
+        self.assertIn("## Past work", text)
+        self.assertIn("atlas projection needs the nightly token refresh".split("needs")[0].strip().lower(),
+                      text.lower(), "the memory item surfaced")
+        self.assertNotIn("holon_", text, "a recall answer is text, not tool plumbing")
+
+    def test_law_show_serves_the_distributions_own_docs(self):
+        """R-5: the law layer is reachable at runtime; the file served is the distribution's own."""
+        from holon import cli
+        with contextlib.redirect_stdout(buf := io.StringIO()):
+            rc = cli.main(["--home", str(self.home.root), "law", "show", "intent"])
+        self.assertEqual(rc, 0)
+        self.assertIn("Every word is a mechanism", buf.getvalue())
+        self.assertIn("The feedback loops", buf.getvalue())
+
 
 class Grading(KernelCase):
     config = '[grading]\nnovelty_min_verified = 0\nsensitive_paths = ["*/billing/*"]\n'

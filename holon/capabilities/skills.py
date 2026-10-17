@@ -102,6 +102,41 @@ class Library:
         out = [self.meta(n, dept) for n in self.names(dept)]
         return [m for m in out if not role or role in (m.get("roles") or [])]
 
+    def search(self, query: str, dept: str | None = None, limit: int = 6) -> list[str]:
+        """A lexical scan of the resolved skill corpus for `recall` (R-1): the corpus is small,
+        so the scan is in-memory with no index and no new store. Returns "skill/file: matched
+        heading or line" strings."""
+        from holon.capabilities.memory import fts_query
+        q = fts_query(query)
+        if not q:
+            return []
+        terms = [t.strip('"') for t in q.split(" OR ")]
+        hits: list[tuple[int, str]] = []
+        for name in self.names(dept):
+            m = self.meta(name, dept)
+            for f in ["SKILL.md"] + m["files"]:
+                try:
+                    layer, path = self.resolve(name, f, dept)
+                except SkillError:
+                    continue
+                for line in path.read_text(errors="replace").splitlines():
+                    low = line.lower()
+                    score = sum(1 for t in terms if t in low)
+                    if score:
+                        hits.append((score, f"{name}/{f}: {line.strip()[:160]}"))
+        hits.sort(key=lambda h: -h[0])
+        seen: set[str] = set()
+        out = []
+        for _, line in hits:
+            key = line.split(":", 1)[0]
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(line)
+            if len(out) >= limit:
+                break
+        return out
+
     @staticmethod
     def render(text: str, variables: dict) -> str:
         return Template(text).safe_substitute({k: v for k, v in variables.items() if v is not None})

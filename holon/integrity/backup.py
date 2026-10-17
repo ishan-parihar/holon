@@ -1,8 +1,9 @@
 """`holon backup` / `holon restore`: a consistent copy of an instance, and putting it back.
 
 Databases are copied with SQLite's online backup API, so a backup taken while employees work is
-still consistent. The copy holds work.db, memory.db, holon.toml, drivers, tailored skills and
-genome profiles, and a manifest with checksums; run directories only with --with-runs. Secrets
+still consistent. The copy holds work.db, memory.db, holon.toml, drivers, tailored skills,
+genome profiles, the adapter homes (each body's isolated harness state and working memory),
+and a manifest with checksums; run directories only with --with-runs. Secrets
 are never included: the Chair key lives outside the instance, and employee keys are hashes.
 """
 
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from holon.core.db import now
 
-TREES = ("config", "skills", "genome")
+TREES = ("config", "skills", "genome", "adapters")
 
 
 def _sha(p: Path) -> str:
