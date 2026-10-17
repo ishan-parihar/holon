@@ -167,7 +167,7 @@ def capabilities_for(conn, dept_slug: str | None) -> list[dict]:
             " WHERE e.kind='pool' AND (e.other=? OR e.other='*') ORDER BY (u.category<>'surface'), u.slug",
             (dept_slug,)).fetchall():
         services = conn.execute(
-            "SELECT service, command, accepts, returns, effect, note, health"
+            "SELECT service, command, accepts, returns, effect, note, health, args, output"
             " FROM unit_services WHERE slug=? ORDER BY service", (u["slug"],)).fetchall()
         out.append({"slug": u["slug"], "charter": u["charter"], "owner": u["owner"],
                     "category": u["category"], "services": [dict(s) for s in services]})

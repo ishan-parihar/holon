@@ -280,8 +280,12 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
                     if posture == "observe" and s["effect"] == "write":
                         continue   # R-03: an observe stage runs no write route — do not offer it
                     route = f"{u['slug']}:{s['service']}"
-                    lines.append(f"- `{route}` — `{s['command']}`"
-                                 f" (accepts: {s['accepts'] or '?'}; returns: {s['returns'] or '?'})"
+                    # a surface declares its contract as args/output (v4); a foundation as accepts/returns
+                    if s["args"] or s["output"]:
+                        shape = f" (args: {s['args']}; output: {s['output'] or '?'})"
+                    else:
+                        shape = f" (accepts: {s['accepts'] or '?'}; returns: {s['returns'] or '?'})"
+                    lines.append(f"- `{route}` — `{s['command']}`{shape}"
                                  + (f" — prefer: {s['note']}" if s["note"] else "")
                                  + (" **(down — route around it)**" if route in unhealthy else ""))
                 if len(lines) > 1:

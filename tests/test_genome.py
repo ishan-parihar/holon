@@ -38,8 +38,8 @@ owner = "platform-ops"
 [[services]]
 id = "sourcehound"
 command = "sourcehound $GROUP"
-accepts = "a search, fetch or scrape goal"
-returns = "text or json"
+args = "sourcehound <search|read|news|papers|social> <query|url> [--json]"
+output = "json"
 effect = "read"
 note = "prefer for any body: the native web_* tools are always loaded; CLI harnesses run the sourcehound CLI"
 health = "cloakctl doctor --json"
@@ -259,6 +259,8 @@ class Genome(KernelCase):
         ctx = (pc.brief_dir / "context.md").read_text()
         self.assertIn("Capabilities", ctx)
         self.assertIn("browser:sourcehound", ctx)
+        self.assertIn("args: sourcehound <search|read|news|papers|social>", ctx,
+                      "a surface's contract renders from its v4 fields, not accepts/returns")
         self.assertNotIn("browser:browseros-neo", ctx, "an observe stage runs no write route")
         self.assertIn("prefer:", ctx)
         # an execute (act) sees both, and a failed health probe marks the route (down)
