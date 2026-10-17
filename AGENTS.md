@@ -178,6 +178,7 @@ What that means for every change here:
 | Capability-layer audit | skills were exported once per shared home, so a department fork of a skill appeared twice: the standard copy in the harness's skill list and the fork in the brief | `test_a_run_carries_its_departments_resolved_skills` |
 | Capability-layer audit | the operant installer pinned a `[memory]` provider the runtime ignores and left the continual-harness lane unpinned, promising memory isolation that did not exist | `test_operant_installer_isolates_and_writes_both_postures` |
 | Capability-layer red-team | the pooled entry binaries joined only `commands`: a department fenced solely by `act_commands` ran its act posture refusing the pooled services its brief advertised | `test_a_fence_that_exists_only_in_act_commands_still_names_the_pooled_services` |
+| Live instance, 2026-10-17 | the `api_memory` view was created out-of-tree selecting `created_at`, a column no migration defines, so `holon lint --strict` died with "no such column" instead of checking the read API | `test_a_drifted_api_memory_view_is_repaired_by_migration` |
 
 ## Reading order for a new agent
 

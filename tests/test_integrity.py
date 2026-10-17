@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import sqlite3
 import types
 import unittest
 from pathlib import Path
@@ -316,3 +317,33 @@ class KeyHygiene(unittest.TestCase):
                          "the suite's key file lives outside the operator's key dir")
         self.assertEqual(os.environ.get("HOLON_CHAIR_KEY_FILE"), str(helpers.TEST_KEY_FILE),
                          "the process floor holds whenever no test has narrowed it")
+
+class ApiMemoryDrift(KernelCase):
+    """Found on the live instance, 2026-10-17: `api_memory` had been created out-of-tree
+    selecting `created_at`, a column no migration defines, so `holon lint --strict` died with
+    "no such column: created_at" instead of checking the read API. Migration 0004 re-asserts
+    the shipped definition; this reproduces the drift and proves migrate repairs it."""
+
+    def test_a_drifted_api_memory_view_is_repaired_by_migration(self):
+        from holon.core.db import connect, migrate
+        conn = self.k.mconn
+        # simulate the live instance: the view drifted after its migration was already
+        # recorded (an out-of-tree writer), so a fresh migrate must still repair it
+        conn.execute("DELETE FROM schema_migrations WHERE name='0004_api_memory_view_repair.sql'")
+        conn.execute("DROP VIEW api_memory")
+        conn.execute("CREATE VIEW api_memory AS SELECT id, scope, created_at FROM items")
+        with self.assertRaises(sqlite3.OperationalError):
+            conn.execute("PRAGMA table_info(api_memory)").fetchall()
+        applied = migrate(conn, "memory")
+        self.assertIn("0004_api_memory_view_repair.sql", applied)
+        self.assertEqual([r[1] for r in conn.execute("PRAGMA table_info(api_memory)")],
+                         ["id", "scope", "kind", "content", "provenance", "confidence",
+                          "pinned", "valid_from"])
+        self.assertEqual(lint.run(self.k, ["api"]), [], "lint survives a repaired view")
+
+    def test_a_correct_api_memory_view_is_untouched(self):
+        from holon.core.db import migrate
+        applied = migrate(self.k.mconn, "memory")
+        self.assertNotIn("0004_api_memory_view_repair.sql", applied,
+                         "a fresh instance already carries the right view: no churn")
+        self.assertEqual(lint.run(self.k, ["api"]), [])
