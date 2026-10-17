@@ -12,8 +12,8 @@ that is still open or only recently closed at the item level.
 
 | id | status | item / verdict | notes |
 |---|---|---|---|
-| H1 | blocked | C1 surface units (manifests with `category = "surface"`, per-service `effect`/`note`/`args`/`output`/`health`) and the `api_version 4` migration that rides with it | waits on the Chair (audit §2); operant already accepts v4 (`a_v4_kernel_is_read_and_an_unknown_still_refuses`, iter 885) |
-| H2 | blocked | R-04 the runtime indexes the registry (`api_pool` view, C1's columns on `api_services`) | after the kernel publishes v4 — i.e. after H1; audit §3 step 3 |
+| H1 | done | C1 surface units (manifests with `category = "surface"`, per-service `effect`/`note`/`args`/`output`/`health`) and the `api_version 4` migration that rides with it → [2026-10-17] shipped: `4208c29` (C1–C3: owner, per-service contract, per-posture Capabilities block, `(down)` marks, `doctor surface.down`, `api_pool`, `pack_api` v4) + `3bf99f3` docs + `d55b591`/`ab3792b`/`bbfc601`/`107ef9d` the KB follow-ons — verdict: fresh instance lands at api_version 4, 15 migrations, `api_pool` live; gates 352 tests / lint 0-0; the Chair's D6 ratification is the open formality | operant already accepts v4 (`a_v4_kernel_is_read_and_an_unknown_still_refuses`, iter 885) |
+| H2 | ready | R-04 the runtime indexes the registry (`api_pool` view, C1's columns on `api_services`) → the kernel half is shipped (H1), so the operant half is unblocked | after the kernel publishes v4 — it has; audit §3 step 3 |
 | H3 | blocked | R-13 holarchic config (additive inheritance down the department tree; `owner` departments for units) | waits on the Chair; audit §2 |
 | H4 | blocked | R-14 a document knowledge base (markdown-with-frontmatter source, derived `kb.db`, `holon kb` commands, a "Knowledge base" bundle section) | waits on the Chair; audit §2. Note: overlaps this register's own tooling — if adopted, it may take over the in-repo roles `kb.toml` maps, and this file's machinery becomes `native:` |
 | H5 | blocked | R-16 the complete system-design skill (references for units/pooling, reach, routines, playbooks; two lint warnings) | waits on the Chair; audit §2 |
