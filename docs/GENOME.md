@@ -393,6 +393,17 @@ synced by `holon genome sync` (the only writer), checked by `holon lint`
 (`bind.service`: every consumed `unit:service` is offered; `bind.pool`: every pooled unit
 names a real department), and derived into `genome/registry.md` by `holon genome emit`.
 
+**A surface** (`category = "surface"`) is a harness-level capability — the browser, the
+channels an MCP mount, a tunnel — rather than a foundation service. A surface declares
+`owner` (the department that keeps it true — platform-ops, C4) and per-service
+**the contract** — `effect` (`read` | `write`: which posture may take the route),
+`note` (when to prefer this route), `args` (the call shape), `output` (`toon` | `json` |
+`text`) and `health` (a command probing the route's liveness). Lint requires `effect` and
+`note` on every surface service. `pool_of = ["*"]` pools a surface **org-wide**: every
+entitled brief, including department-less work (C-G4). `holon genome sync` publishes all of
+this as read API v4 (`api_units` gains `owner`; `api_services` gains the contract; the new
+`api_pool` view lists the pool edges — `"*"` among them — for a runtime to index, R-04).
+
 **Pooling** (`pool_of = ["<dept>"]`) grants three things and nothing else: the unit's charter
 and services render in that department's briefs (presence — at every stage that can use them:
 plan, research, shape, execute, verify), its `roots` join the department's reach as **reads only**

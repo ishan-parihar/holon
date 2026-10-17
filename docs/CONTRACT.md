@@ -174,9 +174,9 @@ write), and the employee commands of the registry (`holon_memory_search`, `holon
 `holon_run_heartbeat`, …). The server inherits the harness's environment, so `HOLON_RUN_TOKEN` or
 `HOLON_KEY` authenticates every call exactly as on the CLI; chair-only commands are never exposed.
 
-## 9. The read API (api_version 3)
+## 9. The read API (api_version 4)
 
-Migrations `work/0008` and `work/0013` publish SQL views over `work.db` that outside surfaces
+Migrations `work/0008`, `work/0013` and `work/0015` publish SQL views over `work.db` that outside surfaces
 may `SELECT` from, opened **read-only** (`mode=ro`, law 3). Holon is the only writer. One view
 lives on `memory.db` — SQLite views cannot reach across attached databases, so `api_memory`
 is published there (migration `memory/0003`); open or attach `memory.db` read-only for it.
@@ -192,11 +192,18 @@ is published there (migration `memory/0003`); open or attach `memory.db` read-on
 - `api_messages` — unacked messages: id, ts, sender, to_ref, kind, task_id, body
 - `api_triggers` — routine triggers: id, trigger_kind ('cron' or 'event' (H7)),
   pattern, department, employee, enabled, failure_streak, next_run_at
-- `api_units` — the synced genome units: slug, charter, category, tier, synced_at (§14)
+- `api_units` — the synced genome units: slug, charter, category, tier, owner, synced_at (§14)
 - `api_services` — the services units offer: unit, service, command (the entry point), accepts,
-  returns — the registry `msg request --service` validates against
+  returns, effect (read | write), args, output, note (prefer-this-route), health
+- `api_pool` — the pool edges: unit, dept (`"*"` for an org-wide surface) — what a runtime
+  indexes so a department's pooled services become its deferred tools (R-04)
 - `api_memory` (on `memory.db`) — the organization's live knowledge: id, scope, kind, content,
   provenance, confidence, pinned, valid_from
+
+v4 (migration `0015`, C1–C3) is **additive**: no column is reshaped or removed, so a v3-era
+consumer reading by name sees the same rows; `owner`, the service contract and `api_pool`
+are new. A consumer refuses an api_version it does not know (`holon lint` pack `api` proves both
+sides), so a v3 consumer keeps working unchanged on a v4 database.
 
 The memory capability stays reachable through its own FTS (`items_fts`), same law.
 
