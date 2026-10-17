@@ -22,6 +22,8 @@ DEFAULT_BUDGET_CHARS = 24_000  # ~6k tokens
 # the cross-domain recall family renders last in priority order; this floor keeps it from being
 # crowded out by large stage material on exactly the tasks that need it most (KB-1)
 RECALL_TITLES = ("Relevant memory", "Possibly relevant", "Related past work", "Related logbook entries")
+# authoritative and small: the floor never sacrifices these, only large stage material does
+PROTECTED_TITLES = ("Your role", "Task", "Constraints, decisions, preferences", "Project state")
 
 
 @dataclass
@@ -373,7 +375,7 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
         if remaining <= 200:
             b.degraded.append(f"budget exhausted before '{title}'")
             continue
-        if floor and remaining <= floor and not title.startswith(RECALL_TITLES):
+        if floor and remaining <= floor and not title.startswith(RECALL_TITLES + PROTECTED_TITLES):
             b.degraded.append(f"reserved for recall before '{title}'")
             continue
         if len(block) > remaining:
