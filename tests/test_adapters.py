@@ -222,10 +222,32 @@ class Operant(KernelCase):
         d = Driver.from_toml(installed.read_text(), "operant")
         self.assertTrue(d.env, "the installed driver carries its environment")
         for k, v in d.env.items():
+            if k == "OPERANT_MEMORY_DIR":
+                # KB-8: this one is intentionally a run-time placeholder — the kernel formats it
+                # per run (drivers.driver_env); per-run body memory, one bank per run
+                self.assertEqual(v, "{run_memory}", "per-run body memory is a run-time placeholder")
+                continue
             self.assertNotIn("{", v, f"{k} still carries a template")
             self.assertNotIn("}", v, f"{k} still carries a template")
         self.assertEqual(d.env["HERMES_HOME"], str(self.home.root / "adapters" / "operant" / "home"),
                          "an isolated operant home per instance")
+
+    def test_the_kernel_formats_the_per_run_memory_placeholder(self):
+        """KB-8: a driver's [env] may name {run_memory}; at spawn it becomes the run's own bank
+        dir under the run's directory — one run's body memory never bleeds into another's."""
+        from holon.execution.drivers import driver_env
+        d = Driver.from_toml((ADAPTERS / "operant" / "driver.toml").read_text().replace(
+            "{ohome}", str(self.home.root / "adapters" / "operant" / "home")), "operant")
+        brief = {"run_id": "run_1", "task_id": "t1", "stage": "execute", "brief_md":
+                 str(self.home.root / "execution" / "runtime" / "runs" / "run_1" / "BRIEF.md"),
+                 "workdir": "/tmp", "holon": "holon"}
+        env = driver_env(d, brief)
+        self.assertEqual(env["OPERANT_MEMORY_DIR"],
+                         str(self.home.root / "execution" / "runtime" / "runs" / "run_1" / "memory"),
+                         "the bank is the run's own memory/ dir")
+        with self.assertRaises(Exception):
+            bad = Driver(name="x", command="x", env={"NOPE": "{unknown_var}"})
+            driver_env(bad, brief)
 
     def test_operant_dry_run_never_prints_a_key(self):
         import tempfile

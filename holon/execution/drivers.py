@@ -152,7 +152,10 @@ def render(driver: Driver, brief: dict) -> tuple[str, str]:
 
 
 def run_env(home: Home, brief: dict, token: str | None, broker: str | None = None) -> dict[str, str]:
-    """The environment every push-mode run gets (docs/CONTRACT.md §1 lists it; `holon lint` checks that)."""
+    """The environment every push-mode run gets (docs/CONTRACT.md §1 lists it; `holon lint` checks that).
+    Driver [env] values are formatted with the run's placeholders, so a driver can declare per-run
+    paths like {run_memory} (the harness's own working-memory dir under the instance's adapter home).
+    Unknown placeholders are an error, as in command rendering."""
     stage = brief["stage"]
     env = {**kernel_env(home), "HOLON_RUN_ID": brief["run_id"], "HOLON_TASK_ID": brief["task_id"],
            "HOLON_STAGE": stage, "HOLON_ROLE": vocab.STAGE_ROLE[stage], "HOLON_POSTURE": vocab.POSTURE[stage],
@@ -166,6 +169,25 @@ def run_env(home: Home, brief: dict, token: str | None, broker: str | None = Non
         env["HOLON_BROKER"] = broker
     env.update(brief.get("secrets") or {})   # G8: the department's key files, resolved at claim
     return env
+
+
+def driver_env(driver: "Driver", brief: dict) -> dict[str, str]:
+    """The driver's own [env], with every value formatted against the run's values (KB-8): a
+    value may name {run_memory} — the run dir's own memory/ — so a push-mode harness's working
+    memory is one bank per run, inside the run's files, never one shared bank. Unknown
+    placeholders are an error, as in command rendering."""
+    if not driver.env:
+        return {}
+    run_dir = Path(brief["brief_md"]).parent
+    values = {
+        "run_id": brief["run_id"], "task_id": brief["task_id"], "stage": brief["stage"],
+        "employee_id": brief.get("employee_id") or "",
+        "run_memory": str(run_dir / "memory"),
+    }
+    try:
+        return {k: v.format(**values) for k, v in driver.env.items()}
+    except KeyError as e:
+        raise DriverError(f"driver {driver.name}: unknown [env] placeholder {e}") from None
 
 
 def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive=None,
@@ -185,11 +207,11 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive
     log_path = Path(brief["brief_md"]).parent / "driver.log"
     if isolation:
         from holon.execution import isolation as iso
-        env = {**run_env(home, brief, token, isolation["broker"]), **driver.env}
+        env = {**run_env(home, brief, token, isolation["broker"]), **driver_env(driver, brief)}
         exit_code, stdout, stderr = iso.run(isolation["runner"], cmd, cwd, env, driver.timeout_s, alive, alive_every_s)
     else:
         clean = {k: v for k, v in os.environ.items() if k not in ("HOLON_CHAIR_KEY", "HOLON_KEY")}
-        env = {**clean, **run_env(home, brief, token), **driver.env}
+        env = {**clean, **run_env(home, brief, token), **driver_env(driver, brief)}
         exit_code, stdout, stderr = execute(cmd, cwd, env, driver.timeout_s, alive, alive_every_s)
     log_path.write_text(f"$ {cmd}\n[cwd] {cwd}\n[exit] {exit_code}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n")
     envelope = None

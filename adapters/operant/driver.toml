@@ -27,6 +27,10 @@ read_only_enforced = false
 
 [env]
 HERMES_HOME = "{ohome}"
+# KB-8: the body's working memory is per-run — the kernel formats this at spawn time to the
+# run's own directory (<run>/memory), so each run's memory-wire bank is isolated from every
+# other run's, dies with the run's retention policy, and never leaves one shared bank behind.
+OPERANT_MEMORY_DIR = "{run_memory}"
 # a stage turn is not an interactive one (G1 live day): a research body
 # ran 23 tool calls over ~23 minutes of real work and died on the
 # 20-minute per-TURN default (the grace call came back empty). Bodies
