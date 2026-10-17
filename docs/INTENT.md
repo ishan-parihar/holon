@@ -54,6 +54,10 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
 | Smoke check | a command proving the infrastructure a department runs on works; a critical failure stops its agents | `holon smoke`, `execution.service.Kernel.smoke_blocked` |
 | Trust boundary | agents run as their own Unix user and reach the organization only through the broker | `execution.isolation.serve_broker`, `holon isolation plan` |
 | Decision model | a fast classifier with calibrated probabilities for lane choice, judging, triage and routing | `capabilities.decisions.Decider`, `holon classify` |
+| Scope fence | which memory scopes an employee writes directly: own emp:/dept:, a class their department performs, their own project scopes; steering kinds in shared scopes are consolidation-or-Chair-only | `holon memory add` (employee fence), `capabilities.memory.Memory.promote_recurring` |
+| Joined recall | one deterministic answer fusing memory, episodes, skills, playbooks and verified results — the pull-mode counterpart of the context bundle | `holon recall`, `capabilities.skills.Library.search` |
+| Lineage | an item's provenance graph: supersedes chain, derived-from sources, links | `holon memory show` |
+| Law surface | the distribution's own law docs, served read-only to every agent (distilled copies stay checked by lint) | `holon law show`, `integrity.lint.pack_drift` |
 
 ## The feedback loops
 
