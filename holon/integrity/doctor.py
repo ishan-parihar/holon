@@ -118,6 +118,22 @@ def run(k) -> list[dict]:
                 add("warning", "genome.registry",
                     "genome/registry.md is older than the last sync: `holon genome emit` regenerates it")
 
+    # C3: a surface whose health probe fails is down for everyone who pools it — name the
+    # departments, so a planner routes around the dead tier before spending anything. The
+    # convention: a surface's health runs as a smoke check named "<unit>:<service>"
+    # ([smoke.dept.platform-ops] runs each surface's health on the fleet's interval).
+    failed = {r["name"]: r for r in k.smoke_results() if not r["ok"]}
+    for slug, u in units_mod.load(k.home)[0].items():
+        if u["category"] != "surface":
+            continue
+        for s in u["services"]:
+            r = failed.get(f"{slug}:{s['id']}")
+            if r:
+                who = "every department" if "*" in u["pool_of"] else ", ".join(u["pool_of"] or ["nobody"])
+                add("warning", "surface.down",
+                    f"{slug}:{s['id']}: its health probe failed (exit {r['exit_code']}) — pooled by: {who}"
+                    " — briefs mark the route (down); route around it")
+
     # databases
     for name, conn in (("work.db", k.wconn), ("memory.db", k.mconn)):
         r = conn.execute("PRAGMA integrity_check").fetchone()[0]

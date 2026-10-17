@@ -580,17 +580,24 @@ def pack_api(k, f: Findings) -> None:
     if row is None:
         f.add("error", "api.version", "work.db", "no api_version row; the read-API migration did not run")
         return
-    if row[0] not in ("1", "2", "3"):
-        f.add("error", "api.version", "work.db", f"api_version {row[0]!r} is not one this Holon knows (1, 2, 3)")
-    if row[0] == "3":
-        expected = {**expected,
-                    "api_units": ("slug", "charter", "category", "tier", "synced_at"),
-                    "api_services": ("unit", "service", "command", "accepts", "returns")}
+    if row[0] not in ("1", "2", "3", "4"):
+        f.add("error", "api.version", "work.db", f"api_version {row[0]!r} is not one this Holon knows (1, 2, 3, 4)")
+    if row[0] in ("3", "4"):
+        if row[0] == "4":
+            expected = {**expected,
+                        "api_units": ("slug", "charter", "category", "tier", "owner", "synced_at"),
+                        "api_services": ("unit", "service", "command", "accepts", "returns",
+                                         "effect", "args", "output", "note", "health"),
+                        "api_pool": ("unit", "dept")}
+        else:
+            expected = {**expected,
+                        "api_units": ("slug", "charter", "category", "tier", "synced_at"),
+                        "api_services": ("unit", "service", "command", "accepts", "returns")}
         # api_memory lives on memory.db (a view cannot reach across attached databases)
         have = tuple(r[1] for r in k.mconn.execute("PRAGMA table_info(api_memory)"))
         if have != ("id", "scope", "kind", "content", "provenance", "confidence", "pinned", "valid_from"):
             f.add("error", "api.views", "memory.db",
-                  f"api_memory columns {have} do not match api_version 3; a view changes only with a version bump")
+                  f"api_memory columns {have} do not match api_version {row[0]}; a view changes only with a version bump")
     present = {r[0] for r in k.wconn.execute("SELECT name FROM sqlite_master WHERE type='view'")}
     for name, cols in expected.items():
         if name not in present:

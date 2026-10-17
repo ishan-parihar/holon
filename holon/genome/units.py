@@ -5,11 +5,13 @@ departments consume or pool (a foundation in the legacy organism's terms), or a 
 own declared genome. One manifest per unit, `$HOLON_HOME/genome/units/<slug>.toml`:
 
     charter  = "what this unit is for"
-    category = "service"          # free-form documentation
+    category = "service"          # "surface" = a harness-level capability (browser, channels)
     tier     = "foundation"       # free-form documentation today
     roots    = ["~/data/vault"]   # read scope granted to departments that pool this unit
+    owner    = "platform-ops"     # the department that keeps a surface true (C4)
     pool_of  = ["career"]         # departments that pool it (charter+services render in their
-                                 # briefs; roots join their reach; writes go through msg request)
+                                  # briefs; roots join their reach; writes go through msg request);
+                                  # ["*"] = every brief, org-wide
     consumed = ["vault:kosmos"]   # services this unit's work calls (bind.service checks them)
 
     [[services]]
@@ -17,6 +19,11 @@ own declared genome. One manifest per unit, `$HOLON_HOME/genome/units/<slug>.tom
     command = "kosmos --query"    # the executable entry point, verbatim
     accepts = "a research query"
     returns = "sources and notes"
+    effect  = "read"              # read | write: a write route is offered to act stages only
+    note    = "beats ad-hoc web search"   # when to prefer this route (rendered in briefs)
+    args    = "--query <text>"    # the call shape, for a runtime's tool index
+    output  = "text"              # toon | json | text
+    health  = "kosmos --version"  # a command probing this route's liveness ([smoke])
 
 `holon genome sync` (chair) regenerates the database rows from the manifests and is the only
 writer; `holon lint` (bind.service, bind.pool) checks references; `holon genome emit` derives
@@ -61,6 +68,7 @@ def load(home) -> tuple[dict[str, dict], list[str]]:
                 problems.append(f"{f.name}: a service needs an id and a command (its entry point)")
         units[slug] = {"charter": m.get("charter", ""), "category": m.get("category", ""),
                        "tier": m.get("tier", ""), "roots": m.get("roots") or [],
+                       "owner": m.get("owner", ""),
                        "pool_of": m.get("pool_of") or [], "consumed": m.get("consumed") or [],
                        "services": services, "mtime": _mtime(f), "file": f.name}
     return units, problems
@@ -78,11 +86,16 @@ def sync(k) -> dict:
         k.wconn.execute("DELETE FROM unit_services")
         k.wconn.execute("DELETE FROM unit_edges")
         for slug, u in units.items():
-            k.wconn.execute("INSERT INTO units VALUES (?,?,?,?,?,?)",
-                            (slug, u["charter"], u["category"], u["tier"], json.dumps(u["roots"]), now()))
+            k.wconn.execute("INSERT INTO units (slug, charter, category, tier, roots, owner, synced_at)"
+                            " VALUES (?,?,?,?,?,?,?)",
+                            (slug, u["charter"], u["category"], u["tier"], json.dumps(u["roots"]),
+                             u.get("owner"), now()))
             for s in u["services"]:
-                k.wconn.execute("INSERT OR REPLACE INTO unit_services VALUES (?,?,?,?,?)",
-                                (slug, s["id"], s.get("command"), s.get("accepts"), s.get("returns")))
+                k.wconn.execute("INSERT OR REPLACE INTO unit_services (slug, service, command, accepts,"
+                                " returns, effect, args, output, note, health) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                                (slug, s["id"], s.get("command"), s.get("accepts"), s.get("returns"),
+                                 s.get("effect"), s.get("args"), s.get("output"),
+                                 s.get("note"), s.get("health")))
             for d in u["pool_of"]:
                 k.wconn.execute("INSERT OR REPLACE INTO unit_edges VALUES (?,?,?)", (slug, "pool", d))
             for c in u["consumed"]:
@@ -100,8 +113,13 @@ def validate(k) -> list[str]:
     known_depts = {d["slug"] for d in k.org.depts()}
     slugs = set(units)
     for slug, u in units.items():
+        if u["category"] == "surface":
+            for s in u["services"]:
+                if not s.get("effect") or not s.get("note"):
+                    problems.append(f"{u['file']}: a surface service needs effect (read|write) and note "
+                                    "(when to prefer this route) — lint's surface rule (C1)")
         for d in u["pool_of"]:
-            if d not in known_depts:
+            if d != "*" and d not in known_depts:
                 problems.append(f"{u['file']}: pools '{d}', which is not a department (bind.pool)")
         for c in u["consumed"]:
             other, _, service = c.rpartition(":")
@@ -138,6 +156,24 @@ def pooled_by(conn, dept_slug: str) -> list[dict]:
     return out
 
 
+def capabilities_for(conn, dept_slug: str | None) -> list[dict]:
+    """What a run may use (C2): the department's pooled units plus every org-wide surface
+    (`pool_of = ["*"]` — the browser, comms — so department-less work still sees them, C-G4),
+    surfaces first. Each service carries its route `note` (which to prefer) and its `health`
+    command (which is down), and its `effect` — a write route is offered to act stages only."""
+    out = []
+    for u in conn.execute(
+            "SELECT u.slug, u.charter, u.owner, u.category FROM unit_edges e JOIN units u ON u.slug=e.slug"
+            " WHERE e.kind='pool' AND (e.other=? OR e.other='*') ORDER BY (u.category<>'surface'), u.slug",
+            (dept_slug,)).fetchall():
+        services = conn.execute(
+            "SELECT service, command, accepts, returns, effect, note, health"
+            " FROM unit_services WHERE slug=? ORDER BY service", (u["slug"],)).fetchall()
+        out.append({"slug": u["slug"], "charter": u["charter"], "owner": u["owner"],
+                    "category": u["category"], "services": [dict(s) for s in services]})
+    return out
+
+
 def emit(k) -> Path:
     """U3: derive the registry (registry.md) from the synced tables — the living architecture's
     role in the Holon grain: the unit tree, the services each offers, and the consumption graph.
@@ -151,10 +187,14 @@ def emit(k) -> Path:
             "SELECT other FROM unit_edges WHERE slug=? AND kind='consumes'", (u["slug"],))]
         lines.append(f"## {u['slug']} ({u['tier'] or 'unit'})\n")
         lines.append(f"{u['charter']}\n")
-        lines.append(f"pooled by: {', '.join(pool) or 'nobody'} · consumes: {', '.join(consumed) or 'nothing'}\n")
+        lines.append((f"owner: {u['owner']} · " if u["owner"] else "")
+                     + f"pooled by: {', '.join(pool) or 'nobody'} · consumes: {', '.join(consumed) or 'nothing'}\n")
         for s in k.wconn.execute("SELECT * FROM unit_services WHERE slug=?", (u["slug"],)):
             lines.append(f"- **{u['slug']}:{s['service']}** — `{s['command']}`"
-                         f" (accepts: {s['accepts'] or '?'}; returns: {s['returns'] or '?'})")
+                         f" (accepts: {s['accepts'] or '?'}; returns: {s['returns'] or '?'}"
+                         + (f"; effect {s['effect']}" if s["effect"] else "")
+                         + (f"; prefer: {s['note']}" if s["note"] else "")
+                         + (f"; health `{s['health']}`" if s["health"] else "") + ")")
         lines.append("")
     out = k.home.genome_registry
     out.parent.mkdir(parents=True, exist_ok=True)

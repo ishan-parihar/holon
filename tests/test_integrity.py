@@ -109,12 +109,12 @@ class Lint(KernelCase):
 
     def test_the_read_api_is_versioned_and_complete(self):
         """H2 (boundary doc 4.1): every api_* view exists with the columns its api_version
-        promises (3: v2 plus the genome views api_units/api_services — U1 — and api_memory on
-        memory.db — K-4), and the api pack catches a dropped, reshaped or unknown-version read
+        promises (4: v3 plus api_pool, units.owner and the service contract — C1), and the api
+        pack catches a dropped, reshaped or unknown-version read
         API — a consumer that opened the database read-only must never see a view drift under it
         silently."""
         conn = self.k.wconn
-        self.assertEqual(conn.execute("SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "3")
+        self.assertEqual(conn.execute("SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "4")
         self.assertEqual(lint.run(self.k, ["api"]), [])
         conn.execute("DROP VIEW api_board")
         conn.execute("DROP VIEW api_messages")
@@ -122,7 +122,7 @@ class Lint(KernelCase):
         found = lint.run(self.k, ["api"])
         self.assertEqual({f["rule"] for f in found}, {"api.views"})
         self.assertTrue(any("api_board missing" in f["message"] for f in found))
-        self.assertTrue(any("api_messages columns ('id', 'ts') do not match api_version 3" in f["message"]
+        self.assertTrue(any("api_messages columns ('id', 'ts') do not match api_version 4" in f["message"]
                             for f in found))
         self.k.mconn.execute("DROP VIEW api_memory")
         self.assertTrue(any("api_memory columns" in f["message"] for f in lint.run(self.k, ["api"])),

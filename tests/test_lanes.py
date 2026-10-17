@@ -298,7 +298,7 @@ class EventTriggers(LaneCase):
         row = next(dict(r) for r in self.k.wconn.execute("SELECT * FROM api_triggers WHERE id=?", (s["id"],)))
         self.assertEqual((row["trigger_kind"], row["pattern"]), ("event", "event:webhook:invoice.*"))
         self.assertEqual(self.k.wconn.execute(
-            "SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "3")
+            "SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "4")
 
     def test_a_routine_needs_a_cron_or_an_event(self):
         with self.assertRaises(ValueError):

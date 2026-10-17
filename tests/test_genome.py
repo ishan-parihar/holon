@@ -9,6 +9,7 @@ import types
 from contextlib import redirect_stdout
 
 from holon.execution.service import Kernel
+from holon.core.db import now
 from holon.genome import units
 from holon.integrity import doctor, lint
 from tests.helpers import JD, KernelCase
@@ -26,6 +27,43 @@ id = "kosmos"
 command = "kosmos --query"
 accepts = "a research query"
 returns = "sources and notes"
+"""
+
+BROWSER = """
+charter = "the web and browser surface"
+category = "surface"
+pool_of = ["*"]
+owner = "platform-ops"
+
+[[services]]
+id = "sourcehound"
+command = "sourcehound $GROUP"
+accepts = "a search, fetch or scrape goal"
+returns = "text or json"
+effect = "read"
+note = "prefer for any body: the native web_* tools are always loaded; CLI harnesses run the sourcehound CLI"
+health = "cloakctl doctor --json"
+
+[[services]]
+id = "browseros-neo"
+command = "/usr/bin/browseros-neo"
+accepts = "a page that needs a real local browser"
+returns = "text"
+effect = "write"
+note = "the apply engine's tier: anti-bot pages, at BROWSER_CDP_URL"
+health = "browseros-neo --version"
+"""
+
+SURFACE_INCOMPLETE = """
+charter = "a surface nobody can use"
+category = "surface"
+pool_of = ["*"]
+
+[[services]]
+id = "thing"
+command = "thing"
+accepts = "x"
+returns = "y"
 """
 
 
@@ -56,11 +94,11 @@ class Genome(KernelCase):
         self.k.close()
         self.k = Kernel(self.home)
 
-    def test_sync_publishes_units_and_services_as_read_api_v3(self):
+    def test_sync_publishes_units_and_services_as_read_api_v4(self):
         out = self._sync()
         self.assertEqual((out["units"], out["services"]), (1, 1))
         self.assertEqual(self.k.wconn.execute(
-            "SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "3")
+            "SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "4")
         self.assertEqual([r["slug"] for r in self.k.wconn.execute("SELECT * FROM api_units")], ["vault"])
         self.assertEqual([r["unit"] for r in self.k.wconn.execute("SELECT * FROM api_services")], ["vault"])
         self.assertEqual(self.k.wconn.execute(
@@ -99,14 +137,14 @@ class Genome(KernelCase):
         self.plan_and_approve(w, planner=self.maker, assignee=self.maker, writes=[])
         c = self.k.claim("execute", self.maker)
         ctx = (c.brief_dir / "context.md").read_text()
-        self.assertIn("Pooled units", ctx, "presence: the executor sees what it can call (U2)")
+        self.assertIn("Capabilities", ctx, "presence: the executor sees what it can call (U2)")
         self.assertIn("vault:kosmos", ctx)
         self.assertIn("msg request", ctx, "writes to a pooled unit go through a request, never the pen")
         self.assertIn("You may read (never write)", (c.brief_dir / "BRIEF.md").read_text(),
                       "the brief lists a pooled root as a read, not a place to work")
         w2 = self.add("fresh plan", dept="ops", task_class="demo")
         pc = self.k.claim("plan", self.maker, task_id=w2["id"])
-        self.assertIn("Pooled units", (pc.brief_dir / "context.md").read_text(),
+        self.assertIn("Capabilities", (pc.brief_dir / "context.md").read_text(),
                       "the planner chooses tools and grades knowing what its department pools (R-01)")
 
     def test_pooled_roots_are_read_only_in_policy_grading_and_isolation(self):
@@ -197,3 +235,60 @@ class Genome(KernelCase):
         os.utime(self.home.genome_units_dir / "vault.toml", (time.time() + 5, time.time() + 5))
         checks = {f["check"] for f in doctor.run(self.k)}
         self.assertIn("genome.stale", checks, "a manifest newer than the sync is a warning")
+
+    def test_org_wide_surfaces_render_in_every_brief_with_prefer_notes_and_down_marks(self):
+        """C1–C3: a surface unit (category="surface", pool_of=["*"]) publishes the v4 views,
+        renders in every entitled brief — including department-less work (C-G4) — says which
+        route to prefer, offers write routes to act stages only (R-03), and marks a route whose
+        health probe failed as (down) so a planner routes around it before spending."""
+        (self.home.genome_units_dir / "browser.toml").write_text(BROWSER)
+        self._sync()
+        self.assertEqual(self.k.wconn.execute(
+            "SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "4")
+        rows = {r["service"]: r for r in self.k.wconn.execute(
+            "SELECT * FROM api_services WHERE unit='browser'")}
+        self.assertEqual(rows["sourcehound"]["effect"], "read")
+        self.assertTrue(rows["browseros-neo"]["note"].startswith("prefer") or
+                        rows["sourcehound"]["note"].startswith("prefer"))
+        self.assertEqual(rows["sourcehound"]["health"], "cloakctl doctor --json")
+        self.assertEqual(self.k.wconn.execute("SELECT dept FROM api_pool").fetchone()[0], "*")
+        self.assertEqual(lint.run(self.k, ["api", "genome"]), [])
+        # a plan (observe) sees the read route named to prefer, never the write one (R-03)
+        w = self.add("choose a tool", dept="ops", task_class="demo")
+        pc = self.k.claim("plan", self.maker, task_id=w["id"])
+        ctx = (pc.brief_dir / "context.md").read_text()
+        self.assertIn("Capabilities", ctx)
+        self.assertIn("browser:sourcehound", ctx)
+        self.assertNotIn("browser:browseros-neo", ctx, "an observe stage runs no write route")
+        self.assertIn("prefer:", ctx)
+        # an execute (act) sees both, and a failed health probe marks the route (down)
+        approval = self.k.submit(pc.run["id"], self.plan_env(writes=[]))["approval"]
+        self.k.approve(approval["id"])
+        # department-less work sees the org-wide surface too (C-G4) — claimed through the
+        # executive seat: org-level work is the Chair's own (a dept-less task has no dept claim)
+        w2 = self.add("org-level research", dept=None, task_class="demo")
+        pc2 = self.k.claim("plan", self.ceo, task_id=w2["id"])
+        self.assertIsNotNone(pc2, "a plan run is claimable now that the maker is free")
+        self.assertIn("browser:sourcehound", (pc2.brief_dir / "context.md").read_text())
+        self.k.submit(pc2.run["id"], self.plan_env(writes=[]))
+        self.k.auth._put("smoke", json.dumps({"ts": now(), "results": [
+            {"dept": "platform-ops", "name": "browser:browseros-neo", "ok": False, "exit_code": 1,
+             "critical": False, "seconds": 1, "reason": "probe", "cmd": "browseros-neo --version",
+             "tail": ""}]}))
+        c = self.k.claim("execute", self.maker)
+        ex = (c.brief_dir / "context.md").read_text()
+        self.assertIn("browser:browseros-neo", ex)
+        self.assertIn("(down", ex, "a dead tier is marked, never silently offered")
+        # doctor names the dead surface and who pools it (C3)
+        found = [f for f in doctor.run(self.k) if f["check"] == "surface.down"]
+        self.assertTrue(any("browser:browseros-neo" in f["message"] and "every department" in f["message"]
+                            for f in found), found)
+
+    def test_a_surface_service_without_effect_and_note_is_refused(self):
+        """C1's lint rule: a surface service declares effect (which posture may take the route)
+        and note (which route to prefer) — the two fields that make a surface usable, not just
+        declared."""
+        (self.home.genome_units_dir / "browser.toml").write_text(SURFACE_INCOMPLETE)
+        self._sync()
+        found = [f for f in lint.run(self.k, ["genome"]) if f["severity"] == "error"]
+        self.assertTrue(any("effect" in f["message"] and "note" in f["message"] for f in found), found)

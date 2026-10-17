@@ -16,8 +16,12 @@ from holon.core.db import connect
 from holon.core.paths import Home
 from holon.execution.work import Work
 from holon.genome import units
+from holon.core import vocab
 
 DEFAULT_BUDGET_CHARS = 24_000  # ~6k tokens
+# the cross-domain recall family renders last in priority order; this floor keeps it from being
+# crowded out by large stage material on exactly the tasks that need it most (KB-1)
+RECALL_TITLES = ("Relevant memory", "Possibly relevant", "Related past work", "Related logbook entries")
 
 
 @dataclass
@@ -32,7 +36,13 @@ class Bundle:
 
 
 def _fmt_items(items: list[dict]) -> str:
-    return "\n".join(f"- [{i['kind']}{', pinned' if i['pinned'] else ''}] {i['content']} (mem:{i['id']})" for i in items)
+    # confidence and provenance render so an agent can weigh a pinned Chair constraint against a
+    # low-confidence guess and follow the source run (KB-5)
+    return "\n".join(
+        f"- [{i['kind']}{', pinned' if i['pinned'] else ''}] {i['content']} "
+        f"(mem:{i['id']}; confidence: {i['confidence']}"
+        + (f"; provenance: {i['provenance']}" if i.get("provenance") else "") + ")"
+        for i in items)
 
 
 def _lineage(home: Home, project_ref: str | None, bundle: Bundle) -> None:
@@ -113,7 +123,8 @@ def _history(work: Work, work_id: str) -> str:
         o = work.output(s["id"])
         summary = (o or {}).get("summary") or ""
         lines.append(f"- {s['created_at'][:16]} {s['stage']} [{s['status']}{'/' + s['outcome'] if s['outcome'] else ''}]"
-                     + (f" by {s['decided_by']}" if s["decided_by"] else "") + (f": {summary[:300]}" if summary else "")
+                     + (f" by {s['decided_by']}" if s["decided_by"] else "")
+                     + (f": {summary[:300]}" if summary else "")
                      + (f" — note: {s['decision_note']}" if s["decision_note"] else ""))
     return "\n".join(lines)
 
@@ -167,9 +178,12 @@ ROUTINE_RUN = ("This is one run of an approved routine: no separate plan or appr
 def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
                     budget: int = DEFAULT_BUDGET_CHARS, run_id: str | None = None,
                     employee: dict | None = None, predecessors: list[str] | None = None,
-                    extra: list[tuple[str, str]] | None = None) -> tuple[str, dict]:
+                    extra: list[tuple[str, str]] | None = None,
+                    recall_floor: int = 0) -> tuple[str, dict]:
     """`extra`: sections the kernel adds for this stage (a playbook, an objective's dashboard), placed right
-    after the work itself."""
+    after the work itself. `recall_floor`: chars of the budget reserved for the cross-scope recall family
+    (KB-1) — non-recall sections stop once that much remains; clamped to a third of the budget so a
+    misconfigured floor cannot gut the work material."""
     node = work.get(node_id)
     stage = node["stage"] or "work"
     task = work.work_of(node)
@@ -243,18 +257,37 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
                   f"{gold['summary'] or ''}\n\n{(gold['documentation'] or '')[:4000]}")
             if gold.get("trajectory_text"):
                 b.add("Gold standard trajectory (how it got there, compacted)", gold["trajectory_text"])
-    if task_dept and stage in ("plan", "execute", "research", "shape", "verify"):
+    if stage in ("plan", "execute", "research", "shape", "verify"):
         # stage-material level, not the execute/verify branch: the planner chooses the tools and
-        # the grade, so it must know what its department pools before it plans (R-01)
-        pooled = units.pooled_by(work.conn, task_dept)
-        if pooled:
-            body = "\n\n".join(
-                f"**{u['slug']}** — {u['charter']}\n"
-                + "\n".join(f"- `{u['slug']}:{s['service']}` — `{s['command']}`"
-                             f" (accepts: {s['accepts'] or '?'}; returns: {s['returns'] or '?'})"
-                             for s in u["services"])
-                for u in pooled)
-            b.add("Pooled units (declared capabilities: read them; writes go through msg request)", body)
+        # the grade, so it must know what it may use before it plans (R-01, C2)
+        caps = units.capabilities_for(work.conn, task_dept)
+        if caps:
+            posture = vocab.POSTURE[stage]
+            unhealthy: set[str] = set()
+            row = work.conn.execute("SELECT value FROM settings WHERE key='smoke'").fetchone()
+            if row:
+                try:
+                    unhealthy = {r["name"] for r in (json.loads(row[0]).get("results") or []) if not r["ok"]}
+                except ValueError:
+                    unhealthy = set()
+            blocks = []
+            for u in caps:
+                lines = [f"**{u['slug']}**" + (f" (kept true by {u['owner']})" if u["owner"] else "")
+                         + f" — {u['charter']}"]
+                for s in u["services"]:
+                    if posture == "observe" and s["effect"] == "write":
+                        continue   # R-03: an observe stage runs no write route — do not offer it
+                    route = f"{u['slug']}:{s['service']}"
+                    lines.append(f"- `{route}` — `{s['command']}`"
+                                 f" (accepts: {s['accepts'] or '?'}; returns: {s['returns'] or '?'})"
+                                 + (f" — prefer: {s['note']}" if s["note"] else "")
+                                 + (" **(down — route around it)**" if route in unhealthy else ""))
+                if len(lines) > 1:
+                    blocks.append("\n".join(lines))
+            if blocks:
+                blocks.append("Writes to a unit go through `msg request --service <unit>:<service>`"
+                              " — pooling grants presence and reads, never the pen.")
+                b.add("Capabilities (what this run may use — prefer the named route)", "\n\n".join(blocks))
     if stage == "retro":
         b.add("History of this work", _history(work, task_id))
         if task.get("task_class") == "retro" and task_dept:
@@ -329,23 +362,31 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
         b.add("Related past work", "\n".join(f"- {e['ts'][:10]} {e['digest']}" for e in eps))
     _logbook(home, text, b)
 
-    # render within budget, in priority order
-    out, used, kept = [f"# Context for the {stage} stage of {task_id}\n"], 0, []
+    # render within budget, in priority order (two passes so the gap block can lead); the recall
+    # family is reserved the floor: non-recall sections stop being added once that much remains,
+    # so large stage material cannot crowd out cross-scope recall (KB-1)
+    floor = min(recall_floor, budget // 3)
+    blocks, used, kept = [], 0, []
     for title, body in b.sections:
         block = f"\n## {title}\n\n{body}\n"
         remaining = budget - used
         if remaining <= 200:
             b.degraded.append(f"budget exhausted before '{title}'")
             continue
+        if floor and remaining <= floor and not title.startswith(RECALL_TITLES):
+            b.degraded.append(f"reserved for recall before '{title}'")
+            continue
         if len(block) > remaining:
             block = block[: remaining - 40] + "\n…[truncated to fit budget]\n"
             b.degraded.append(f"truncated '{title}'")
-        out.append(block)
+        blocks.append(block)
         used += len(block)
         kept.append(title)
+    out = [f"# Context for the {stage} stage of {task_id}\n"]
     if b.degraded:
+        # gaps lead: an agent must see what it never got before it reads what it did (KB-1)
         out.append("\n## Context gaps\n\n" + "\n".join(f"- {d}" for d in b.degraded) + "\n")
-    md = "".join(out)
+    md = "".join(out + blocks)
     memory.mark_used(b.used_items)
     if run_id:
         memory.log_context(run_id, len(md), budget, kept, b.degraded)
