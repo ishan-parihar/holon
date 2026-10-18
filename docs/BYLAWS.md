@@ -1,6 +1,6 @@
-# Genome: roles, stages, profiles, skills, autonomy
+# Bylaws: roles, stages, profiles, skills, autonomy
 
-The genome is what makes every department the same kind of holon while letting each one be
+The bylaws is what makes every department the same kind of holon while letting each one be
 configured for its purpose. It has five parts, each defined once in code and checked by
 `holon lint`: the roles and their stages, the department profiles, the pipeline rules, the skills
 library, and the autonomy policy. This page is the reference for all five and for `holon.toml`.
@@ -22,7 +22,7 @@ only by their approver, and verify stages never by the employee who executed the
 ## 2. Profiles
 
 A profile names a department's slots; a slot is the set of roles one employee fills. Profiles
-ship in `holon/genome/` and an instance adds or overrides them in `$HOLON_HOME/genome/`.
+ship in `holon/bylaws/` and an instance adds or overrides them in `$HOLON_HOME/bylaws/`.
 
 | Profile | Slots | For |
 |---|---|---|
@@ -384,15 +384,15 @@ absolute paths they name should; a department with its own reach or scripts but 
 reported (`ref.smoke`).
 
 
-## 14. Units and the genome layer
+## 14. Units and the bylaws layer
 
 A **unit** is a thing with an identity the organization works through — a service its
-departments consume or pool (a "foundation"), or a department's own declared genome. Units
-are **declared, never registered**: one manifest per unit, `$HOLON_HOME/genome/units/<slug>.toml`
+departments consume or pool (a "foundation"), or a department's own declared bylaws. Units
+are **declared, never registered**: one manifest per unit, `$HOLON_HOME/bylaws/units/<slug>.toml`
 (charter, category, tier, `roots`, `pool_of`, `consumed`, `[[services]]` with entry points),
-synced by `holon genome sync` (the only writer), checked by `holon lint`
+synced by `holon bylaws sync` (the only writer), checked by `holon lint`
 (`bind.service`: every consumed `unit:service` is offered; `bind.pool`: every pooled unit
-names a real department), and derived into `genome/registry.md` by `holon genome emit`.
+names a real department), and derived into `bylaws/registry.md` by `holon bylaws emit`.
 
 **A surface** (`category = "surface"`) is a harness-level capability — the browser, the
 channels an MCP mount, a tunnel — rather than a foundation service. A surface declares
@@ -401,7 +401,7 @@ channels an MCP mount, a tunnel — rather than a foundation service. A surface 
 `note` (when to prefer this route), `args` (the call shape), `output` (`toon` | `json` |
 `text`) and `health` (a command probing the route's liveness). Lint requires `effect` and
 `note` on every surface service. `pool_of = ["*"]` pools a surface **org-wide**: every
-entitled brief, including department-less work (C-G4). `holon genome sync` publishes all of
+entitled brief, including department-less work (C-G4). `holon bylaws sync` publishes all of
 this as read API v4 (`api_units` gains `owner`; `api_services` gains the contract; the new
 `api_pool` view lists the pool edges — `"*"` among them — for a runtime to index, R-04).
 

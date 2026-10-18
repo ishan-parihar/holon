@@ -1,4 +1,4 @@
-"""Lanes, routines, the rubric judge and the decision model (docs/GENOME.md §10)."""
+"""Lanes, routines, the rubric judge and the decision model (docs/BYLAWS.md §10)."""
 
 import contextlib
 import io

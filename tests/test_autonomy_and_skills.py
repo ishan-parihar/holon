@@ -1,4 +1,4 @@
-"""Autonomy policy, the department genome (roles, profiles, slots), and the skills library."""
+"""Autonomy policy, the department bylaws (roles, profiles, slots), and the skills library."""
 
 import io
 import json
@@ -7,7 +7,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 
 from holon import cli
-from holon.execution import autonomy, genome
+from holon.execution import autonomy, bylaws
 from holon.execution.org import OrgError
 from tests.helpers import JD, KernelCase
 
@@ -127,17 +127,17 @@ class VerifySampling(KernelCase):
         self.assertEqual(self.pipeline_of(t3)[-1], ("verify", "ready"))
 
 
-class Genome(KernelCase):
+class Bylaws(KernelCase):
     def test_profiles_validate(self):
         for name in ("light", "standard", "executive"):
-            genome.load_profile(name)
-        with self.assertRaises(genome.GenomeError):
-            genome.validate({"name": "x", "slots": [{"name": "a", "roles": ["executor", "verifier"]}]})
-        with self.assertRaises(genome.GenomeError):
-            genome.validate({"name": "x", "slots": [{"name": "a", "roles": ["head"]}]})
+            bylaws.load_profile(name)
+        with self.assertRaises(bylaws.BylawsError):
+            bylaws.validate({"name": "x", "slots": [{"name": "a", "roles": ["executor", "verifier"]}]})
+        with self.assertRaises(bylaws.BylawsError):
+            bylaws.validate({"name": "x", "slots": [{"name": "a", "roles": ["head"]}]})
 
     def test_light_department_hires_into_slots(self):
-        self.k.org.create_dept("ops", "Operations", "Run things", profile=genome.load_profile("light"))
+        self.k.org.create_dept("ops", "Operations", "Run things", profile=bylaws.load_profile("light"))
         st = self.k.org.staffing("ops")
         self.assertEqual([s["slot"] for s in st["slots"]], ["lead", "maker", "checker"])
         self.assertFalse(st["complete"])
@@ -159,20 +159,20 @@ class Genome(KernelCase):
                             slot="nope")
 
     def test_profiles_keep_only_their_own_pipeline_keys(self):
-        g = genome.validate({"name": "x", "pipeline": {"research": "always"}, "slots": [
+        g = bylaws.validate({"name": "x", "pipeline": {"research": "always"}, "slots": [
             {"name": "a", "roles": ["head", "steward", "researcher"]}, {"name": "b", "roles": ["planner", "executor"]},
             {"name": "c", "roles": ["verifier"]}]})
         self.assertEqual(g["pipeline"], {"research": "always"})
-        with self.assertRaises(genome.GenomeError):
-            genome.validate({**g, "pipeline": {"research": "sometimes"}})
+        with self.assertRaises(bylaws.BylawsError):
+            bylaws.validate({**g, "pipeline": {"research": "sometimes"}})
         self.assertEqual(self.k.org.dept("executive")["profile"], "executive")
 
 
 class Skills(KernelCase):
     def test_stdlib_is_valid_and_covers_every_role(self):
         lib = self.k.skills
-        self.assertEqual(lib.check(roles=list(genome.ROLES)), [])
-        for role, spec in genome.ROLES.items():
+        self.assertEqual(lib.check(roles=list(bylaws.ROLES)), [])
+        for role, spec in bylaws.ROLES.items():
             self.assertIn(spec["skill"], lib.names(), role)
             self.assertIn(role, lib.meta(spec["skill"])["roles"])
 
@@ -218,7 +218,7 @@ class Skills(KernelCase):
         self.assertNotIn("ops-runbook", lib.names())
         (self.home.root / "skills" / "@eng" / "ops-runbook" / "SKILL.md").write_text(
             "---\nname: ops-runbook\ndescription: d\nkind: operation\nroles: [wizard]\n---\nsee `references/x.md`\n")
-        problems = lib.check("eng", list(genome.ROLES))
+        problems = lib.check("eng", list(bylaws.ROLES))
         self.assertTrue(any("wizard" in p for p in problems) and any("references/x.md" in p for p in problems))
         out = lib.export(self.tmp / "exported", {"holon": "holon --home X"}, ["holon-executor"])
         self.assertIn("holon --home X", (out[0] / "SKILL.md").read_text())

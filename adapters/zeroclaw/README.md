@@ -38,7 +38,7 @@ aliases with risk and runtime profiles, and channel sends. ZeroClaw cron jobs ru
   `[scope]` roots. Pooled units' roots (`read_roots` in `holon scope`) are **not** granted:
   ZeroClaw has no read-only root, so a body on it cannot reach a pooled unit's files — it asks
   through `msg request` instead (the installer prints what it withheld). The instance's
-  databases, `holon.toml`, drivers, skills and genome, and `~/.config` (where the Chair key lives),
+  databases, `holon.toml`, drivers, skills and bylaws, and `~/.config` (where the Chair key lives),
   are forbidden paths. Agents change the organization only through `holon` with their run token.
 
 ## Install

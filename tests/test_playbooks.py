@@ -1,5 +1,5 @@
 """Playbooks that improve from their own evidence, objectives that steer a pool of work and routines, and the
-smoke gate (docs/GENOME.md §12–13)."""
+smoke gate (docs/BYLAWS.md §12–13)."""
 
 from holon.capabilities import playbooks
 from holon.capabilities.decisions import Decider

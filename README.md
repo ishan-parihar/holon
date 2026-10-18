@@ -79,7 +79,7 @@ holon help                        # every command, and who may run it
 
 ```text
 work ─► research? ─► shape? ─► plan ─► approve ─► execute ─► verify ─► done
-             (genome rules decide)      (graded G0–G4, routed to the lowest approver whose
+             (bylaws rules decide)      (graded G0–G4, routed to the lowest approver whose
                                          earned authority covers it: head → CEO → Chair)
 ```
 
@@ -121,9 +121,9 @@ State lives in the instance, never in this repo:
 
 ```text
 $HOLON_HOME/
-  holon.toml                            configuration (docs/GENOME.md §6)
+  holon.toml                            configuration (docs/BYLAWS.md §6)
   skills/[@<dept>/]<skill>/             skills tailored for the organization or one department
-  genome/<profile>.toml                 instance genome profiles
+  bylaws/<profile>.toml                 instance bylaws profiles
   config/drivers/*.toml                 harness drivers (adapters install them)
   execution/runtime/work.db             organization, work graph, runs, outputs, messages, audit trail
   execution/runtime/runs/<run>/         BRIEF.md, brief.json, identity.md, context.md, result.json, driver.log
@@ -132,7 +132,7 @@ $HOLON_HOME/
   capabilities/logbook/logbook.db       the Chair's logbook (read-only to the kernel)
 ```
 
-Docs: [INTENT](docs/INTENT.md) · [GENOME](docs/GENOME.md) (departments, roles, every config key)
+Docs: [INTENT](docs/INTENT.md) · [BYLAWS](docs/BYLAWS.md) (departments, roles, every config key)
 · [CONTRACT](docs/CONTRACT.md) (for harness authors) · [the skills library](holon/skills) ·
 [adapter READMEs](adapters/), which record what each real harness does.
 

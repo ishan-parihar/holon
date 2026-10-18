@@ -1,4 +1,4 @@
-"""The genome layer (U1–U3, K-4/K-5): units declared in manifests, synced into the database,
+"""The bylaws layer (U1–U3, K-4/K-5): units declared in manifests, synced into the database,
 published as read API v3, pooled into briefs and reach, consumed through typed requests."""
 
 import io
@@ -10,7 +10,7 @@ from contextlib import redirect_stdout
 
 from holon.execution.service import Kernel
 from holon.core.db import now
-from holon.genome import units
+from holon.bylaws import units
 from holon.integrity import doctor, lint
 from tests.helpers import JD, KernelCase
 
@@ -67,9 +67,9 @@ returns = "y"
 """
 
 
-class Genome(KernelCase):
+class Bylaws(KernelCase):
     # ops pools the vault and has a terminal fence ([scope.dept.ops] commands): the fence exists,
-    # so the pooled services' entry points join it and lint's genome pack stays quiet. The
+    # so the pooled services' entry points join it and lint's bylaws pack stays quiet. The
     # subclass below removes the fence to test the other side of the rule.
     config = '[scope.dept.ops]\ncommands = ["git"]\n'
 
@@ -81,7 +81,7 @@ class Genome(KernelCase):
                             driver="fake", reason="r", status="active")["id"]
         self.checker = o.hire(name="Ce", title="Ops checker", dept="ops", job_description=JD, slot="checker",
                               driver="fake", reason="r", status="active")["id"]
-        d = self.home.genome_units_dir
+        d = self.home.bylaws_units_dir
         d.mkdir(parents=True)
         (d / "vault.toml").write_text(VAULT % self.tmp)
 
@@ -104,19 +104,19 @@ class Genome(KernelCase):
         self.assertEqual(self.k.wconn.execute(
             "SELECT command FROM api_services WHERE unit='vault' AND service='kosmos'").fetchone()[0],
             "kosmos --query")
-        self.assertEqual(lint.run(self.k, ["api", "genome"]), [])
+        self.assertEqual(lint.run(self.k, ["api", "bylaws"]), [])
 
     def test_api_memory_reads_the_live_memory(self):
-        self.k.memory.add_item("org", "decision", "v3 is the genome API", "this test")
+        self.k.memory.add_item("org", "decision", "v3 is the bylaws API", "this test")
         self._sync()
         rows = self.k.mconn.execute("SELECT scope, kind, content FROM api_memory").fetchall()
-        self.assertTrue(any(r["content"] == "v3 is the genome API" for r in rows),
+        self.assertTrue(any(r["content"] == "v3 is the bylaws API" for r in rows),
                         "decisions are readable on the memory database, where the view lives")
 
     def test_bind_service_and_bind_pool_catch_dangling_references(self):
-        (self.home.genome_units_dir / "vault.toml").write_text((VAULT % self.tmp).replace(
+        (self.home.bylaws_units_dir / "vault.toml").write_text((VAULT % self.tmp).replace(
             'consumed = []', 'consumed = ["ghost:nothing"]').replace('pool_of = ["ops"]', 'pool_of = ["no-such-dept"]'))
-        findings = lint.run(self.k, ["genome"])
+        findings = lint.run(self.k, ["bylaws"])
         msgs = {f["message"] for f in findings}
         self.assertTrue(any("bind.service" in m for m in msgs), msgs)
         self.assertTrue(any("bind.pool" in m for m in msgs), msgs)
@@ -130,7 +130,7 @@ class Genome(KernelCase):
         vault = str(self.tmp / "data" / "vault")
         s = self.k.scope("ops")
         self.assertIn(vault, s["read_roots"], "the pooled unit's roots join the reach as reads (U2)")
-        self.assertNotIn(vault, s["roots"], "never the pen: a pooled root is not writable reach (GENOME §14)")
+        self.assertNotIn(vault, s["roots"], "never the pen: a pooled root is not writable reach (BYLAWS §14)")
         self.assertEqual(s["commands"], ["git", "kosmos"],
                          "a fence that exists names the pooled services' entry points (R-05)")
         w = self.add(dept="ops", task_class="demo")
@@ -175,8 +175,8 @@ class Genome(KernelCase):
         self.configure("")
         self._sync()
         self.assertEqual(self.k.scope("ops")["commands"], [])
-        found = lint.run(self.k, ["genome"])
-        warned = [f for f in found if f["rule"] == "genome.fence"]
+        found = lint.run(self.k, ["bylaws"])
+        warned = [f for f in found if f["rule"] == "bylaws.fence"]
         self.assertTrue(any("ops" in f["where"] for f in warned), found)
         self.assertTrue(any("fence is open" in f["message"] for f in warned), found)
 
@@ -227,21 +227,21 @@ class Genome(KernelCase):
         self._sync()
         p = units.emit(self.k)
         self.assertIn("vault:kosmos", p.read_text())
-        self.assertEqual([f for f in doctor.run(self.k) if f["check"].startswith("genome")], [])
+        self.assertEqual([f for f in doctor.run(self.k) if f["check"].startswith("bylaws")], [])
         import os
         import time
-        (self.home.genome_units_dir / "vault.toml").write_text(
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
             (VAULT % self.tmp).replace("the research substrate", "the research substrate, revised"))
-        os.utime(self.home.genome_units_dir / "vault.toml", (time.time() + 5, time.time() + 5))
+        os.utime(self.home.bylaws_units_dir / "vault.toml", (time.time() + 5, time.time() + 5))
         checks = {f["check"] for f in doctor.run(self.k)}
-        self.assertIn("genome.stale", checks, "a manifest newer than the sync is a warning")
+        self.assertIn("bylaws.stale", checks, "a manifest newer than the sync is a warning")
 
     def test_org_wide_surfaces_render_in_every_brief_with_prefer_notes_and_down_marks(self):
         """C1–C3: a surface unit (category="surface", pool_of=["*"]) publishes the v4 views,
         renders in every entitled brief — including department-less work (C-G4) — says which
         route to prefer, offers write routes to act stages only (R-03), and marks a route whose
         health probe failed as (down) so a planner routes around it before spending."""
-        (self.home.genome_units_dir / "browser.toml").write_text(BROWSER)
+        (self.home.bylaws_units_dir / "browser.toml").write_text(BROWSER)
         self._sync()
         self.assertEqual(self.k.wconn.execute(
             "SELECT value FROM api_meta WHERE key='api_version'").fetchone()[0], "4")
@@ -252,7 +252,7 @@ class Genome(KernelCase):
                         rows["sourcehound"]["note"].startswith("prefer"))
         self.assertEqual(rows["sourcehound"]["health"], "cloakctl doctor --json")
         self.assertEqual(self.k.wconn.execute("SELECT dept FROM api_pool").fetchone()[0], "*")
-        self.assertEqual(lint.run(self.k, ["api", "genome"]), [])
+        self.assertEqual(lint.run(self.k, ["api", "bylaws"]), [])
         # a plan (observe) sees the read route named to prefer, never the write one (R-03)
         w = self.add("choose a tool", dept="ops", task_class="demo")
         pc = self.k.claim("plan", self.maker, task_id=w["id"])
@@ -290,7 +290,7 @@ class Genome(KernelCase):
         """C1's lint rule: a surface service declares effect (which posture may take the route)
         and note (which route to prefer) — the two fields that make a surface usable, not just
         declared."""
-        (self.home.genome_units_dir / "browser.toml").write_text(SURFACE_INCOMPLETE)
+        (self.home.bylaws_units_dir / "browser.toml").write_text(SURFACE_INCOMPLETE)
         self._sync()
-        found = [f for f in lint.run(self.k, ["genome"]) if f["severity"] == "error"]
+        found = [f for f in lint.run(self.k, ["bylaws"]) if f["severity"] == "error"]
         self.assertTrue(any("effect" in f["message"] and "note" in f["message"] for f in found), found)

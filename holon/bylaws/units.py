@@ -1,8 +1,8 @@
-"""The genome layer (U1–U3): units and their services, declared not registered.
+"""The bylaws layer (U1–U3): units and their services, declared not registered.
 
 A **unit** is a thing with an identity the organization works through — a service its
 departments consume or pool (a foundation in the legacy organism's terms), or a department's
-own declared genome. One manifest per unit, `$HOLON_HOME/genome/units/<slug>.toml`:
+own declared bylaws. One manifest per unit, `$HOLON_HOME/bylaws/units/<slug>.toml`:
 
     charter  = "what this unit is for"
     category = "service"          # "surface" = a harness-level capability (browser, channels)
@@ -25,9 +25,9 @@ own declared genome. One manifest per unit, `$HOLON_HOME/genome/units/<slug>.tom
     output  = "text"              # toon | json | text
     health  = "kosmos --version"  # a command probing this route's liveness ([smoke])
 
-`holon genome sync` (chair) regenerates the database rows from the manifests and is the only
-writer; `holon lint` (bind.service, bind.pool) checks references; `holon genome emit` derives
-`genome/registry.md`. Nothing here flows back into the files: the manifests are the source.
+`holon bylaws sync` (chair) regenerates the database rows from the manifests and is the only
+writer; `holon lint` (bind.service, bind.pool) checks references; `holon bylaws emit` derives
+`bylaws/registry.md`. Nothing here flows back into the files: the manifests are the source.
 """
 
 from __future__ import annotations
@@ -49,7 +49,7 @@ def load(home) -> tuple[dict[str, dict], list[str]]:
     strings: lint reports them, sync refuses to touch the database while any exist."""
     units: dict[str, dict] = {}
     problems: list[str] = []
-    d = home.genome_units_dir
+    d = home.bylaws_units_dir
     if not d.is_dir():
         return units, problems
     for f in sorted(d.glob("*.toml")):
@@ -76,7 +76,7 @@ def load(home) -> tuple[dict[str, dict], list[str]]:
 
 def sync(k) -> dict:
     """Regenerate the units tables from the manifests (the only writer). Refuses on any parse
-    problem: a half-parsed genome is worse than a stale one."""
+    problem: a half-parsed bylaws is worse than a stale one."""
     units, problems = load(k.home)
     if problems:
         raise ValueError("; ".join(problems))
@@ -130,8 +130,8 @@ def validate(k) -> list[str]:
              if _synced_at(k, slug) and _synced_at(k, slug) < u["mtime"]]
     if stale:
         slug, u = stale[0]
-        problems.append(f"genome stale: {slug}'s manifest is newer than the last sync "
-                        f"(run `holon genome sync`)")
+        problems.append(f"bylaws stale: {slug}'s manifest is newer than the last sync "
+                        f"(run `holon bylaws sync`)")
     return problems
 
 
@@ -178,7 +178,7 @@ def emit(k) -> Path:
     """U3: derive the registry (registry.md) from the synced tables — the living architecture's
     role in the Holon grain: the unit tree, the services each offers, and the consumption graph.
     The manifests are the source; this is a view, never a register."""
-    lines = ["# The organization's units (derived — regenerate with `holon genome emit`)", ""]
+    lines = ["# The organization's units (derived — regenerate with `holon bylaws emit`)", ""]
     units = k.wconn.execute("SELECT * FROM units ORDER BY slug").fetchall()
     for u in units:
         pool = [r["other"] for r in k.wconn.execute(
@@ -196,7 +196,7 @@ def emit(k) -> Path:
                          + (f"; prefer: {s['note']}" if s["note"] else "")
                          + (f"; health `{s['health']}`" if s["health"] else "") + ")")
         lines.append("")
-    out = k.home.genome_registry
+    out = k.home.bylaws_registry
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines))
     return out

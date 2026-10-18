@@ -13,7 +13,7 @@
 4. checks that ZeroClaw sees every alias
 
 Agents may read and write only the run directories, the --allow paths and their department's [scope]
-roots; the instance's databases, configuration, skills and genome are forbidden paths, and ~/.config
+roots; the instance's databases, configuration, skills and bylaws are forbidden paths, and ~/.config
 (the Chair key) too.
 Uninstall: restore the printed backup (or delete the marked block) and remove the driver file.
 """
@@ -145,7 +145,7 @@ def main() -> int:
     runs = home / "execution" / "runtime" / "runs"
     roots = [str(runs)] + [str(Path(p).expanduser().resolve()) for p in a.allow]
     instance_state = [str(home / p) for p in ("execution/runtime/work.db", "capabilities", "holon.toml", "config",
-                                             "skills", "genome", "adapters")]
+                                             "skills", "bylaws", "adapters")]
     skills_dir = home / "adapters" / "zeroclaw" / "skills"
     provider_block = ""
     if a.model:

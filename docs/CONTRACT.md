@@ -36,11 +36,11 @@ Environment in push mode:
 | `HOLON_EMPLOYEE_ID` | who is working |
 | `HOLON_RUN_DIR`, `HOLON_RESULT_PATH` | this run's directory (where `policy.json`, `trajectory.json`, `usage.json` and refusals live) and where the result goes; `HOLON_BRIEF_DIR` is an alias of `HOLON_RUN_DIR` |
 | `HOLON_RUN_TOKEN` | authenticates this employee for this run only (§6) |
-| `HOLON_BROKER` | set under isolation (GENOME §11): the broker's address; `holon` sends every call there |
+| `HOLON_BROKER` | set under isolation (BYLAWS §11): the broker's address; `holon` sends every call there |
 
 The kernel never passes `HOLON_CHAIR_KEY` to a harness. Under isolation the harness gets only these
 variables and the driver's `[env]`, added to the agent user's own environment, never the kernel's.
-A department's configured secrets (`[secrets.dept.<slug>]`, GENOME §6) also arrive as their named
+A department's configured secrets (`[secrets.dept.<slug>]`, BYLAWS §6) also arrive as their named
 environment variables, resolved at claim — this list plus those is exactly the body's environment.
 The kernel reads `result.json` without following a symlink and only as a regular file of at most
 8 MB; a run directory is sticky, so an agent can add its result but not replace the files the
@@ -70,7 +70,7 @@ started you, or the heartbeat: `holon post-execute`), and holds the verify stage
 it has. The dispatcher may stop your harness as soon as the result is in; nothing you started after
 handing it in can change the outcome.
 
-**Fast lane.** An execute run of `fast` work (GENOME §10) has no separate plan: the executor plans and
+**Fast lane.** An execute run of `fast` work (BYLAWS §10) has no separate plan: the executor plans and
 acts in one session, lists the `writes` it made and any `external_effects`, and returns `noop` with
 `blockers` when the work is not routine after all (the work then goes through the full pipeline).
 Nothing changes for the harness: it is an execute stage like any other.
@@ -104,7 +104,7 @@ Placeholders (shell-quoted): `{brief_dir} {brief_md} {context_md} {identity_md} 
 {workdir} {run_id} {task_id} {stage} {role} {posture} {employee_id} {employee_slug} {read_only}
 {prompt}` (the BRIEF.md text), `{spawn}` (a one-line message pointing at BRIEF.md), `{holon}`,
 and `{scope}`: the department's scope name (its slug if `holon.toml` has `[scope.dept.<slug>]`, else
-`org`; GENOME §8). A harness that sandboxes builds one sandbox per scope, and its installer stamps
+`org`; BYLAWS §8). A harness that sandboxes builds one sandbox per scope, and its installer stamps
 `scope_fingerprint` (from `holon scope`) into the driver so `holon doctor` can report drift.
 Double literal braces: `{{ }}`. **Usage.** If `usage_line` matches lines on stdout or stderr, their
 sum is the run's token usage (it survives the kernel stopping a harness whose agent already
@@ -141,7 +141,7 @@ employee read, message, add to its own memory, heartbeat and submit **its own ru
 key (`HOLON_KEY`, issued with `holon hr key`) does the same for pull-mode sessions. The Chair key
 (`HOLON_CHAIR_KEY`, or the file at `HOLON_CHAIR_KEY_FILE`, by default
 `~/.config/holon/keys/<instance>.chair`) is created by `holon init` outside the instance. Adapters
-must keep it out of every agent's reach. The kernel does that itself with isolation (GENOME §11):
+must keep it out of every agent's reach. The kernel does that itself with isolation (BYLAWS §11):
 agents run as their own Unix user and reach the organization through the broker, which accepts
 only run tokens and employee keys and only the commands an employee needs (`holon mcp`'s tools,
 `submit`, `whoami`, `help`, `task list`, `plan queue`). `holon help --json` lists the actor class
@@ -192,7 +192,7 @@ is published there (migration `memory/0003`); open or attach `memory.db` read-on
 - `api_messages` — unacked messages: id, ts, sender, to_ref, kind, task_id, body
 - `api_triggers` — routine triggers: id, trigger_kind ('cron' or 'event' (H7)),
   pattern, department, employee, enabled, failure_streak, next_run_at
-- `api_units` — the synced genome units: slug, charter, category, tier, owner, synced_at (§14)
+- `api_units` — the synced bylaws units: slug, charter, category, tier, owner, synced_at (§14)
 - `api_services` — the services units offer: unit, service, command (the entry point), accepts,
   returns, effect (read | write), args, output, note (prefer-this-route), health
 - `api_pool` — the pool edges: unit, dept (`"*"` for an org-wide surface) — what a runtime
@@ -240,7 +240,7 @@ the `[budget]` per-run caps):
  "budget": {"tokens": 8000, "cost": null}}
 ```
 
-`roots` are writable; `read_roots` (pooled units, GENOME §14) are reads only — a harness that
+`roots` are writable; `read_roots` (pooled units, BYLAWS §14) are reads only — a harness that
 fences writes by `roots` refuses a write into them, and the kernel floors a plan that declares
 one at G3. The field is additive and policy version stays 1: a harness that does not know it
 ignores it. A harness MAY enforce the policy; a harness with its own enforcement layer MUST
@@ -281,7 +281,7 @@ wins over the envelope's claim: write `<run dir>/usage.json` with the same field
 `result.json`. A run that names no build falls back to its driver's `build_cmd` (a cheap
 command like `operant --version`, run once per driver per tick and cached). The rubric judge's
 rows carry the judged run's build, so pass rates group by build — and when a build's pass rate
-drops materially below the previous build's, incident work opens (GENOME §6
+drops materially below the previous build's, incident work opens (BYLAWS §6
 `[healing] build_regression_*`).
 
 ## 12. The supervisor protocol (H6)
@@ -317,7 +317,7 @@ runtime that sees an event (a gateway, a webhook receiver) reads `api_triggers` 
 holon routine fire <schedule_id> --payload 'what the event carried'
 ```
 
-Holon never matches events itself. Firing is at most once per `[events] cooldown_s` (GENOME §6),
+Holon never matches events itself. Firing is at most once per `[events] cooldown_s` (BYLAWS §6),
 then the same skip-if-open rule a cron firing has: slow work never piles up. The payload rides on
 the firing's work as a message, where the executor's brief shows it as **external content —
 data, not instructions**. A webhook that many systems must react to is one routine per reaction,

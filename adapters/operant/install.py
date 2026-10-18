@@ -13,7 +13,7 @@
      act.toml      the execute stage: the same core config plus command_allowlist = ["*"], so an
                    approved plan never stalls on a permission prompt an unattended harness cannot
                    answer (hermes --yolo parity; the hardline command floor still applies)
-    Both disable operant's own org/cron surfaces ([genome], [context_injection], [socialization]
+    Both disable operant's own org/cron surfaces ([bylaws], [context_injection], [socialization]
     and the [kernel] continual-harness lane) and keep [memory] on inside the isolated home: the
     body's own working memory, while the organization's memory is Holon's (boundary doc S1/S3).
     Operant's only memory engine today is memory-wire, so there is no provider pin to write;
@@ -109,7 +109,7 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
         "# The organization's records are Holon's (boundary doc S1/S3): operant's own org layer,",
         "# DM context injection and socialization are off for every Holon run; the cron/kanban",
         "# TOOLS are disabled through tools.disabled_tools (they are tools, not config sections).",
-        '[genome]',
+        '[bylaws]',
         'unrestricted_default = "lockdown"',
         'unattended_posture = "lockdown"',
         "[context_injection]",

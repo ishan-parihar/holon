@@ -55,12 +55,12 @@ class Shipped(KernelCase):
             fh.write('\n[scope.dept.eng]\nroots = ["/srv/shared"]\ncommands = ["arch"]\nact_commands = ["systemctl"]\n')
         # eng pools a unit: its roots are read-only reach, and ZeroClaw has no read-only root —
         # the installer must withhold them and say so (R-06)
-        self.home.genome_units_dir.mkdir(parents=True)
-        (self.home.genome_units_dir / "vault.toml").write_text(
+        self.home.bylaws_units_dir.mkdir(parents=True)
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
             f'charter = "the research substrate"\ncategory = "service"\ntier = "foundation"\n'
             f'roots = ["{self.tmp / "data" / "vault"}"]\npool_of = ["eng"]\nconsumed = []\n\n'
             f'[[services]]\nid = "kosmos"\ncommand = "kosmos --query"\naccepts = "q"\nreturns = "r"\n')
-        from holon.genome import units
+        from holon.bylaws import units
         units.sync(self.k)
         (zc / "config.toml").write_text('[providers.models.openai.main]\nuri = "http://x"\nmodel = "m"\napi_key = "sk-secret"\n\n'
                                         '[agents.assistant]\nmodel_provider = "openai.main"\n')
@@ -191,7 +191,7 @@ class Operant(KernelCase):
         # [memory] carries no `provider` key — current operant ignores it ("memory-wire is the only
         # memory engine now"), so the pin promised isolation that did not exist (R-08/R-10)
         for cfg in (obs, act):
-            self.assertEqual(cfg["genome"]["unrestricted_default"], "lockdown")
+            self.assertEqual(cfg["bylaws"]["unrestricted_default"], "lockdown")
             self.assertFalse(cfg["context_injection"]["enabled"])
             self.assertFalse(cfg["socialization"]["enabled"])
             self.assertFalse(cfg["tools"]["kernel"]["enabled"], "the continual-harness lane is pinned off")

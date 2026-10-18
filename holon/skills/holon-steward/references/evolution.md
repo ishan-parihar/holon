@@ -1,4 +1,4 @@
-# Evolving skills, playbooks and the genome
+# Evolving skills, playbooks and the bylaws
 
 Skills resolve in layers: department (`@<slug>`) → organization → standard library. Change the
 narrowest layer that fixes the problem, so other departments are not affected.
@@ -11,5 +11,5 @@ narrowest layer that fixes the problem, so other departments are not affected.
    rolls it back if `skill check` fails, and refreshes every harness that loads skills from disk.
 3. The check: watch the next runs that use it; if the metric did not move, propose a revert.
 
-Changes that widen authority, or alter a genome profile used by every department, go to the
+Changes that widen authority, or alter a bylaws profile used by every department, go to the
 approver the autonomy policy names: the Chair by default.

@@ -1,6 +1,6 @@
 # Staffing the department
 
-Your department follows a genome profile. `$holon dept roles <slug>` shows each slot, who fills
+Your department follows a bylaws profile. `$holon dept roles <slug>` shows each slot, who fills
 it, and separation problems such as no verifier independent of the executor.
 
 A good hire has a job description tailored to the department (the `holon-system-design` skill has the job-description guide) and a reason grounded in evidence: a vacant slot,

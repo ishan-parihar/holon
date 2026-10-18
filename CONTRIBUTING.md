@@ -21,7 +21,7 @@ Tested on Python 3.11 and 3.13. `holon lint` enforces most of the laws below mec
   regression ledger in AGENTS.md is checked by `holon lint` (`ref.guard`): every row names a
   test, and every test it names must exist, so a guard cannot be deleted silently.
 - **Schema changes are new migration files**, never edits to applied ones.
-- **New config keys are documented** in `docs/GENOME.md` §6, or lint fails.
+- **New config keys are documented** in `docs/BYLAWS.md` §6, or lint fails.
 
 ## No personal or instance data
 

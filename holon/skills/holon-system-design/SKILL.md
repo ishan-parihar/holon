@@ -8,7 +8,7 @@ version: 2
 
 # Designing a system
 
-A department is a holon: a mission, a genome profile whose slots cover the six roles, and
+A department is a holon: a mission, a bylaws profile whose slots cover the six roles, and
 employees tailored to fill them. Design it from its requirements, not from a template alone;
 the profile is the skeleton, the job descriptions and tailored skills are the muscle.
 
@@ -31,4 +31,4 @@ the profile is the skeleton, the job descriptions and tailored skills are the mu
 
 ## Never
 
-- Leave a role uncovered, or put executing and verifying in one slot: the genome rejects both.
+- Leave a role uncovered, or put executing and verifying in one slot: the bylaws rejects both.

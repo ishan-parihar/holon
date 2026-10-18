@@ -2,7 +2,7 @@
 
 Without it, an agent runs as the kernel's user, so any agent with a shell can read the Chair key or
 write work.db directly, and every check the kernel makes can be walked around. With `[isolation]
-agent_user` set (docs/GENOME.md §11):
+agent_user` set (docs/BYLAWS.md §11):
 
   runner  a small service running AS THE AGENT USER (installed once by root). The kernel sends it a
           command, a working directory and the run's environment; it starts the process, reports its
@@ -389,7 +389,7 @@ def setup_plan(k) -> dict:
     unit = f"holon-runner-{k.auth.instance_id}"
     dist = Path(__file__).resolve().parents[2]
     root = f"""#!/bin/sh
-# Holon isolation: the part only root can do, once (docs/GENOME.md §11). Creates the agent user and the
+# Holon isolation: the part only root can do, once (docs/BYLAWS.md §11). Creates the agent user and the
 # runner service that starts agent processes as that user for this instance's kernel (uid {me.pw_uid}).
 set -eu
 id -u {agent} >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/{agent} --shell /usr/sbin/nologin {agent}

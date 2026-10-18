@@ -111,10 +111,10 @@ class Lint(KernelCase):
 
     def test_edited_migrations_and_profileless_departments_are_caught(self):
         self.k.wconn.execute("UPDATE schema_migrations SET checksum='x' WHERE name='0001_init.sql'")
-        self.k.wconn.execute("UPDATE departments SET genome=NULL WHERE slug='eng'")
+        self.k.wconn.execute("UPDATE departments SET bylaws=NULL WHERE slug='eng'")
         found = [f for f in lint.run(self.k, ["schema"]) if f["severity"] == "error"]
         self.assertTrue(any(f["rule"] == "schema.migration" for f in found))
-        self.assertTrue(any(f["rule"] == "schema.genome" and f["where"] == "dept:eng" for f in found))
+        self.assertTrue(any(f["rule"] == "schema.bylaws" and f["where"] == "dept:eng" for f in found))
 
     def test_unknown_pack_is_rejected(self):
         with self.assertRaises(ValueError):

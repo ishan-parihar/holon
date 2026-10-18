@@ -15,7 +15,7 @@ from holon.capabilities.memory import STEERING_KINDS, Memory, fts_query, scope_f
 from holon.core.db import connect
 from holon.core.paths import Home
 from holon.execution.work import Work
-from holon.genome import units
+from holon.bylaws import units
 from holon.core import vocab
 
 DEFAULT_BUDGET_CHARS = 24_000  # ~6k tokens

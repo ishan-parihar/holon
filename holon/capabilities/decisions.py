@@ -3,7 +3,7 @@
 A decision endpoint takes a `state` (text) and typed `questions` and returns, per question, a choice
 with probabilities, a score, or a yes/no probability ("noul"). It costs a fraction of a second and no
 output tokens, so the kernel can ask on every intake and every result instead of spending an agent
-session. Configured in holon.toml (docs/GENOME.md §10):
+session. Configured in holon.toml (docs/BYLAWS.md §10):
 
     [classifier]
     url = "https://…/decisions"           # the endpoint; empty = off

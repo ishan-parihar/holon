@@ -41,7 +41,7 @@ Everything operant writes — config, sessions, memory, approval allowlist, `.en
 `HERMES_HOME=$HOLON_HOME/adapters/operant/home` (operant honors `HERMES_HOME`), so Holon's
 employees never share the user's own operant state, and the Chair key never reaches a run. The
 endpoint key is read from `--api-key-file` into that home's `.env` (mode 0600), never a command
-line. The posture configs also pin operant's own org surfaces off (`[genome]` lockdown,
+line. The posture configs also pin operant's own org surfaces off (`[bylaws]` lockdown,
 `[context_injection]` and `[socialization]` disabled, `[tools.kernel]` — the continual-harness
 lane (`KernelSettings` is a `ToolSettings` field in operant's config; a top-level `[kernel]`
 section is an unknown field there and operant refuses the whole config) —

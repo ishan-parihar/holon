@@ -263,7 +263,7 @@ Onboarding runbook — instance ready at {home} (export HOLON_HOME={home}).
      python3 {ROOT}/adapters/operant/install.py --holon-home {home} …   # same flags as jcode
      holon adapter test <name>          # conformance: a few real runs in a scratch organization
    Any OpenAI-compatible endpoint works as the model gateway; keys go in files, never arguments.
-2. The organization (docs/GENOME.md has the full command reference):
+2. The organization (docs/BYLAWS.md has the full command reference):
      holon hr hire --dept executive --slot ceo --name <name> --title CEO --driver <harness> \\
          --jd @<file> --reason "founding CEO" --status active
      holon dept create <slug> --name "<Name>" --mission "<mission>" --profile light

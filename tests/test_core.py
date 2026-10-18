@@ -371,7 +371,7 @@ class Grading(KernelCase):
 
 class Agnosticism(unittest.TestCase):
     """The kernel's defining guarantees: stdlib only, and no harness named anywhere in the distribution's
-    kernel (code, skills, genome)."""
+    kernel (code, skills, bylaws)."""
 
     def test_only_stdlib_imports(self):
         stdlib = set(sys.stdlib_module_names)

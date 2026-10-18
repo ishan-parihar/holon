@@ -2,14 +2,14 @@
 
 The Chair (the human) owns the charter. The CEO heads the executive department and turns
 objectives into department work. Each department has a head and employees who fill the
-role slots of its genome profile.
+role slots of its bylaws profile.
 
 ## Work is a graph
 
 Every piece of work is a node. Its pipeline is a chain of stages, one role each:
 research (researcher) → shape (head) → plan (planner) → approve (head or a higher approver) →
 execute (executor) → verify (verifier), with a retro (steward) when something went wrong.
-Research and shape run only when the department's genome calls for them. A plan may split work
+Research and shape run only when the department's bylaws calls for them. A plan may split work
 into child work nodes in any department; children may wait on each other. Rework appends new
 stages, so the history is never rewritten.
 

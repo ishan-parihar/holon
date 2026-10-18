@@ -1,4 +1,4 @@
-"""The trust boundary (docs/GENOME.md §11): agents run through the runner and reach the organization only
+"""The trust boundary (docs/BYLAWS.md §11): agents run through the runner and reach the organization only
 through the broker. Tests run both as the current user, which exercises every path except the uid
 switch itself (the runner's service does that in production)."""
 

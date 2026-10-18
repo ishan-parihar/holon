@@ -121,7 +121,7 @@ def _me(args, k, required: bool = True) -> str | None:
 def cmd_init(args, k):
     if not k.home.config_file.exists():
         k.home.config_file.write_text(
-            "# holon instance config (docs/GENOME.md, docs/CONTRACT.md)\n[context]\nbudget_chars = 24000\n\n"
+            "# holon instance config (docs/BYLAWS.md, docs/CONTRACT.md)\n[context]\nbudget_chars = 24000\n\n"
             "[planner]\nenforce_read_only = true\ntrust_harness_read_only = false\n\n"
             "[grading]\nnovelty_min_verified = 3\nsensitive_paths = []\n\n"
             "[autonomy]\n# supervised (safe default) | delegated | autonomous; keys below override the preset\n"
@@ -177,14 +177,14 @@ def cmd_org(args, k):
     _out(args, out, "\n".join(lines) or "no departments")
 
 
-@command("dept create", "chair", "create a department from a genome profile",
+@command("dept create", "chair", "create a department from a bylaws profile",
          arg("slug"), arg("--name", required=True), arg("--mission", help="text, '-' for stdin, or @file"),
          arg("--parent", help="parent department slug (default: executive)"),
          arg("--profile", default="light", help="light | standard | <instance profile> | file.toml"))
 def cmd_dept_create(args, k):
-    from holon.execution import genome
+    from holon.execution import bylaws
     d = k.org.create_dept(args.slug, args.name, _text_arg(args.mission), args.parent,
-                          genome.load_profile(args.profile, k.home))
+                          bylaws.load_profile(args.profile, k.home))
     st = k.org.staffing(d["slug"])
     _out(args, d, f"{d['id']}  {d['slug']} created with profile {d['profile']}; slots to fill: "
                   + ", ".join(f"{s['slot']} ({'+'.join(s['roles'])})" for s in st["slots"]))
@@ -208,18 +208,18 @@ def cmd_dept_roles(args, k):
     _out(args, st, "\n".join(lines))
 
 
-@command("dept profile", "chair", "change a department's genome profile", arg("slug"), arg("profile"),
+@command("dept profile", "chair", "change a department's bylaws profile", arg("slug"), arg("profile"),
          arg("--reason", required=True))
 def cmd_dept_profile(args, k):
-    from holon.execution import genome
-    d = k.org.set_profile(args.slug, genome.load_profile(args.profile, k.home), args.reason)
+    from holon.execution import bylaws
+    d = k.org.set_profile(args.slug, bylaws.load_profile(args.profile, k.home), args.reason)
     _out(args, d, f"{d['slug']} now follows profile {d['profile']}")
 
 
-@command("dept profiles", "any", "available genome profiles", mutates=False)
+@command("dept profiles", "any", "available bylaws profiles", mutates=False)
 def cmd_dept_profiles(args, k):
-    from holon.execution import genome
-    out = [genome.load_profile(n, k.home) for n in sorted(genome.profile_paths(k.home))]
+    from holon.execution import bylaws
+    out = [bylaws.load_profile(n, k.home) for n in sorted(bylaws.profile_paths(k.home))]
     _out(args, out, "\n".join(f"{g['name']:<12} v{g['version']} {g['description']}\n" + "\n".join(
         f"    {s['name']:<12} {'+'.join(s['roles'])}" for s in g["slots"]) for g in out))
 
@@ -845,7 +845,7 @@ def cmd_msg_inbox(args, k):
          AS, arg("dept"), arg("title"), arg("--intent", required=True, help="text, '-' for stdin, or @file"),
          arg("--acceptance", help="text, '-' for stdin, or @file"),
          arg("--service", metavar="unit:service", help="a declared service (K-5): validated against the "
-             "genome registry, and named in the request so the performer knows which entry point to run"),
+             "bylaws registry, and named in the request so the performer knows which entry point to run"),
          arg("--priority", type=int, default=3, choices=list(vocab.PRIORITIES)))
 def cmd_msg_request(args, k):
     title = args.title
@@ -853,7 +853,7 @@ def cmd_msg_request(args, k):
         u, _, s = args.service.rpartition(":")
         if not u or not k.wconn.execute("SELECT 1 FROM unit_services WHERE slug=? AND service=?",
                                        (u, s)).fetchone():
-            raise ValueError(f"{args.service!r} is not a declared service (holon genome sync; "
+            raise ValueError(f"{args.service!r} is not a declared service (holon bylaws sync; "
                              "api_services lists them)")
         title = f"[{args.service}] {title}"
     t = k.request(_sender(args, k), args.dept, title, _text_arg(args.intent),
@@ -1037,12 +1037,12 @@ def cmd_recall(args, k):
     _out(args, {"markdown": text}, text)
 
 
-@command("law show", "any", "the distribution's law docs (read-only): intent, genome, contract", arg("doc", choices=("intent", "genome", "contract")),
+@command("law show", "any", "the distribution's law docs (read-only): intent, bylaws, contract", arg("doc", choices=("intent", "bylaws", "contract")),
          mutates=False)
 def cmd_law_show(args, k):
     """R-5: agents stop depending on possibly-stale distilled copies for constitutional questions;
     the served file is the distribution's own doc, so no second copy exists to drift."""
-    path = {"intent": "docs/INTENT.md", "genome": "docs/GENOME.md", "contract": "docs/CONTRACT.md"}[args.doc]
+    path = {"intent": "docs/INTENT.md", "bylaws": "docs/BYLAWS.md", "contract": "docs/CONTRACT.md"}[args.doc]
     p = Path(__file__).resolve().parents[1] / path
     if not p.exists():
         raise LookupError(f"the distribution ships no {path}")
@@ -1062,7 +1062,7 @@ def cmd_memory_context(args, k):
     _out(args, {"markdown": md, **meta}, md)
 
 
-# ── genome and governance ─────────────────────────────────────────────────
+# ── bylaws and governance ─────────────────────────────────────────────────
 @command("charter authority", "any", "who may approve which grade (--set-for: Chair only)",
          arg("--set-for", help="approver to set: chair or emp:<id>"), arg("--task-class", default="*"),
          arg("--max-grade", default="G1"), arg("--reason", default="set by the Chair"))
@@ -1288,7 +1288,7 @@ def cmd_doctor(args, k):
     return 1 if errors else 0
 
 
-@command("backup", "chair", "a consistent copy of this instance (databases, config, skills, genome; never secrets)",
+@command("backup", "chair", "a consistent copy of this instance (databases, config, skills, bylaws; never secrets)",
          arg("--to", required=True, metavar="DIR"), arg("--with-runs", action="store_true", help="include run directories"))
 def cmd_backup(args, k):
     from holon.integrity import backup
@@ -1350,20 +1350,20 @@ def cmd_guards(args, k):
          or "no guards registered: an incident fix's `guard` field registers one")
 
 
-@command("genome sync", "chair", "regenerate the units tables from $HOLON_HOME/genome/units/*.toml "
+@command("bylaws sync", "chair", "regenerate the units tables from $HOLON_HOME/bylaws/units/*.toml "
          "(the only writer; refuses on a manifest that does not parse)")
-def cmd_genome_sync(args, k):
-    from holon.genome import units
+def cmd_bylaws_sync(args, k):
+    from holon.bylaws import units
     out = units.sync(k)
     _out(args, out, f"{out['units']} units, {out['services']} services")
 
 
-@command("genome emit", "chair", "derive genome/registry.md from the synced units (U3): the unit tree, "
+@command("bylaws emit", "chair", "derive bylaws/registry.md from the synced units (U3): the unit tree, "
          "the services each offers, and the consumption graph")
-def cmd_genome_emit(args, k):
-    from holon.genome import units
+def cmd_bylaws_emit(args, k):
+    from holon.bylaws import units
     if not k.wconn.execute("SELECT 1 FROM units LIMIT 1").fetchone():
-        raise ValueError("nothing synced yet: `holon genome sync` first")
+        raise ValueError("nothing synced yet: `holon bylaws sync` first")
     p = units.emit(k)
     _out(args, {"path": str(p)}, f"registry written to {p}")
 

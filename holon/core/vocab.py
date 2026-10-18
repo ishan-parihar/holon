@@ -6,7 +6,7 @@ are generated from or linted against them (`holon lint`, pack SCHEMA). Never cop
 
 from __future__ import annotations
 
-# ── the genome: six roles, and the pipeline stage each one performs ─────────
+# ── the bylaws: six roles, and the pipeline stage each one performs ─────────
 ROLES = ("head", "researcher", "planner", "executor", "verifier", "steward")
 
 # A stage is one unit of work done by one role. A work node's pipeline is a chain of stages.

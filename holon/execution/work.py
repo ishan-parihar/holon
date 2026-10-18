@@ -14,7 +14,7 @@ History is append-only: rework adds `execute#2`, a rejected plan adds `plan#2`.
 
 Who may claim a stage (see `Claimant`): its assignee; else anyone in its department holding the
 stage's role; executive members take department-less work. `approve` stages are claimable only by
-their approver; `verify` never by the stage's executor. Genome decisions (which optional stages
+their approver; `verify` never by the stage's executor. Bylaws decisions (which optional stages
 run) come from `rules`, supplied by the kernel.
 """
 
@@ -61,7 +61,7 @@ class Claimant:
 
 
 class Rules:
-    """Genome decisions the graph asks about. The kernel subclasses this with the department's
+    """Bylaws decisions the graph asks about. The kernel subclasses this with the department's
     profile and track record; the defaults run the minimal pipeline plan → approve → execute → verify."""
 
     def first_stage(self, work: dict) -> str:
@@ -747,7 +747,7 @@ class Work:
 
     def submit_retro(self, run_id: str, env: dict, exit_code: int | None = 0) -> dict:
         """A retro's actions become new work in the department: changes to playbooks, skills, staffing or
-        the genome go through the same pipeline as any other work."""
+        the bylaws go through the same pipeline as any other work."""
         created, routines = [], []
         with write_txn(self.conn):
             run, node, work, actor = self._begin_submit(run_id, "retro", exit_code)

@@ -243,8 +243,8 @@ def _emp(ref: str | None) -> list:
 
 
 def _profiles(k) -> list:
-    from holon.execution import genome
-    return sorted(genome.profile_paths(k.home))
+    from holon.execution import bylaws
+    return sorted(bylaws.profile_paths(k.home))
 
 
 def _drivers(k) -> list:
@@ -352,7 +352,7 @@ BY_KEY = {e.key: e for e in ENTITIES}
 # accounts for every column of the four tables; a new kernel column fails the guard test until it
 # is mirrored or listed here.
 UNMIRRORED = {
-    "departments": {"genome": "the resolved genome; Profile names it"},
+    "departments": {"bylaws": "the resolved bylaws; Profile names it"},
     "employees": {
         "skills": "resolved from the skill library (holon skill list)",
         "max_concurrency": "dispatch tuning (holon emp card)",

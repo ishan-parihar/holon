@@ -28,11 +28,11 @@ from holon.capabilities import skills as skills_mod
 from holon.capabilities.skills import Library
 from holon.core import contract, vocab
 from holon.core.contract import EnvelopeError
-from holon.genome import units
+from holon.bylaws import units
 from holon.core.db import connect, migrate, now, write_txn
 from holon.core.paths import Home
 from holon.core.vocab import CHAIR, EXECUTIVE
-from holon.execution import autonomy, briefs, drivers, genome, grading, isolation, security
+from holon.execution import autonomy, briefs, drivers, bylaws, grading, isolation, security
 from holon.execution.briefs import kernel_env
 from holon.execution import policy as run_policy
 from holon.execution.org import Org, approver_ref
@@ -53,7 +53,7 @@ DEFAULT_CONFIG = {
                 "build_regression_samples": 10, "build_regression_drop": 0.25},
     "retention": {"runs_days": 0, "messages_days": 0, "backup_max_age_days": 7},
     "pilot": {"depts": []},   # pilot departments: outside-reach floors at G4 — the Chair's call, job by job
-    # department secrets (G8, docs/GENOME.md §6): [secrets.dept.<slug>] VAR = path to a 0600 key file;
+    # department secrets (G8, docs/BYLAWS.md §6): [secrets.dept.<slug>] VAR = path to a 0600 key file;
     # resolved into the run's environment at claim — the value never lives in config
     "secrets": {"dept": {}},
     "cadence": {"dept_retro_days": 7, "dept_retro_min_proposals": 1, "probation_days": 14},
@@ -71,20 +71,20 @@ DEFAULT_CONFIG = {
     # machine checks the kernel runs in the workdir after every execute, before any verifier;
     # [checks.dept.<slug>] and [checks.class.<task_class>] add their own
     "checks": {"commands": [], "timeout_s": 600},
-    # lanes (docs/GENOME.md §10): fast = one session for routine (G0) work; script = the kernel runs a command
+    # lanes (docs/BYLAWS.md §10): fast = one session for routine (G0) work; script = the kernel runs a command
     "lanes": {"fast": True, "script_timeout_s": 600, "external_p_max": 0.5},
     # a decision model for lane choice, rubric judging, failure triage and routing; empty url = off
     "classifier": dict(decisions.DEFAULTS),
-    # the trust boundary (docs/GENOME.md §11): agents run as agent_user, through the runner, and reach the
+    # the trust boundary (docs/BYLAWS.md §11): agents run as agent_user, through the runner, and reach the
     # organization only through the broker; empty agent_user = off (agents run as the kernel's user)
     "isolation": {"agent_user": "", "broker": "", "runner": "", "grants": [], "reads": []},
-    # playbooks (docs/GENOME.md §12): refinement is due after refine_after runs on a version, on any verifier
+    # playbooks (docs/BYLAWS.md §12): refinement is due after refine_after runs on a version, on any verifier
     # failure or judge/verifier disagreement, or when a criterion averages below the pass bar over
     # min_judged results; a task class gets its first playbook after class_after verified results
     "playbooks": {"refine_after": 5, "min_judged": 2, "class_after": 3},
     # objectives: reviewed when their pool finishes a cycle, and at least every review_every_days
     "objectives": {"review_every_days": 7},
-    # smoke checks (docs/GENOME.md §13): [[smoke.checks]] for everyone, [[smoke.dept.<slug>.checks]] or
+    # smoke checks (docs/BYLAWS.md §13): [[smoke.checks]] for everyone, [[smoke.dept.<slug>.checks]] or
     # [smoke.dept.<slug>] file = "<toml with [[checks]]>" per department; a critical failure blocks the
     # department's agents until it passes; results are cached for every_min
     "smoke": {"checks": [], "every_min": 30, "timeout_s": 60},
@@ -151,16 +151,16 @@ class Claimed:
 
 
 class KernelRules(Rules):
-    """The department genome deciding which optional stages a piece of work goes through, and the
+    """The department bylaws deciding which optional stages a piece of work goes through, and the
     feedback loops that fire when work goes wrong."""
 
     def __init__(self, k: "Kernel"):
         self.k = k
 
     def _pipeline(self, work: dict) -> dict:
-        p = {**genome.PIPELINE_DEFAULTS, **self.k.config.get("pipeline", {})}
+        p = {**bylaws.PIPELINE_DEFAULTS, **self.k.config.get("pipeline", {})}
         if work.get("dept_id"):
-            g = self.k.org.dept(work["dept_id"]).get("genome")
+            g = self.k.org.dept(work["dept_id"]).get("bylaws")
             if g:
                 p.update(json.loads(g).get("pipeline") or {})
         return p
@@ -1106,7 +1106,7 @@ class Kernel:
                              actor=f"emp:{emp['id']}" if emp else self.actor)
         return {"skill": name, "file": file, "layer": layer, "path": str(path), "text": text}
 
-    # ── lanes: the cheapest way to do each job, chosen at intake and enforced (docs/GENOME.md §10) ──
+    # ── lanes: the cheapest way to do each job, chosen at intake and enforced (docs/BYLAWS.md §10) ──
     def _ask(self, why: str, state: str, questions: dict, patient: bool = False) -> dict | None:
         """A decision, or None. A failure (rate limit, outage) is recorded as an event and reaches the Chair:
         every caller then takes its safe default, which costs verifier sessions until the model is back."""
@@ -1683,7 +1683,7 @@ class Kernel:
     def scope(self, dept_slug: str | None) -> dict:
         """The effective reach for a department: [scope] plus [scope.dept.<slug>], plus what every
         pooled unit grants (U2). A pooled unit's roots join `read_roots` — presence and reads, never
-        the pen (GENOME §14) — and, when the department already has a terminal fence (`commands` or
+        the pen (BYLAWS §14) — and, when the department already has a terminal fence (`commands` or
         `act_commands`, whichever exists), its services' entry-point binaries join that fence. `name` is the slug when the department has its own
         section, else "org"; harness adapters build one sandbox per name."""
         base = self.config.get("scope", {})

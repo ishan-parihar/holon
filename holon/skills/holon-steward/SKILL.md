@@ -1,6 +1,6 @@
 ---
 name: holon-steward
-description: Keep a Holon department healthy and learning. Use when you hold the steward role and claim a retro stage (after failures, rework, or the department's periodic retro), or when curating memory and evolving the department's skills and genome.
+description: Keep a Holon department healthy and learning. Use when you hold the steward role and claim a retro stage (after failures, rework, or the department's periodic retro), or when curating memory and evolving the department's skills and bylaws.
 kind: role
 roles: [steward]
 version: 2
@@ -19,7 +19,7 @@ that they did.
   periodically when colleagues' proposals are waiting.
 
 Outside the pipeline: `references/curation.md` (memory and knowledge base),
-`references/evolution.md` (skills, playbooks, genome), `references/healing.md` (stuck work).
+`references/evolution.md` (skills, playbooks, bylaws), `references/healing.md` (stuck work).
 
 ## Principles
 
@@ -31,5 +31,5 @@ Outside the pipeline: `references/curation.md` (memory and knowledge base),
 
 ## Never
 
-- Change skills, playbooks, staffing or the genome directly; those changes go through the pipeline.
+- Change skills, playbooks, staffing or the bylaws directly; those changes go through the pipeline.
 - Approve a change you proposed.

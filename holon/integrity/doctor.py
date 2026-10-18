@@ -21,7 +21,7 @@ EXTERNAL_STORE_VERSIONS = ("1",)
 
 
 def _isolation(k, add) -> None:
-    """The trust boundary (docs/GENOME.md §11), checked from the agent's side: the runner is asked, as the
+    """The trust boundary (docs/BYLAWS.md §11), checked from the agent's side: the runner is asked, as the
     agent user, who it is and what it can reach."""
     if not k.auth.configured:
         return
@@ -122,23 +122,23 @@ def run(k) -> list[dict]:
                 f"no `holon gc --apply` in over {window} days (last: {last or 'never'}) — run directories and "
                 "messages past [retention] sit uncollected; dry-run `holon gc` first, back up, then apply")
 
-    # U1/U3: the genome's synced view must not be older than its source, nor the registry than the sync
-    from holon.genome import units as units_mod
+    # U1/U3: the bylaws's synced view must not be older than its source, nor the registry than the sync
+    from holon.bylaws import units as units_mod
     manifests, _ = units_mod.load(k.home)
     if manifests:
         newest = max(u["mtime"] for u in manifests.values())
         row = w.execute("SELECT max(synced_at) FROM units").fetchone()
         if not row[0] or row[0] < newest:
-            add("warning", "genome.stale",
-                f"a unit manifest changed after the last `holon genome sync` ({newest[:19]}): the tables, "
-                "pooled reach and registry are a stale view of the genome")
-        reg = k.home.genome_registry
+            add("warning", "bylaws.stale",
+                f"a unit manifest changed after the last `holon bylaws sync` ({newest[:19]}): the tables, "
+                "pooled reach and registry are a stale view of the bylaws")
+        reg = k.home.bylaws_registry
         if row[0] and reg.exists():
             from datetime import datetime, timezone
             reg_at = datetime.fromtimestamp(reg.stat().st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
             if reg_at < row[0]:
-                add("warning", "genome.registry",
-                    "genome/registry.md is older than the last sync: `holon genome emit` regenerates it")
+                add("warning", "bylaws.registry",
+                    "bylaws/registry.md is older than the last sync: `holon bylaws emit` regenerates it")
 
     # C3: a surface whose health probe fails is down for everyone who pools it — name the
     # departments, so a planner routes around the dead tier before spending anything. The

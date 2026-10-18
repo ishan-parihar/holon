@@ -12,7 +12,7 @@ cause and turn it into changes.
 1. **Cause, not symptom.** Was the terrain missing, the plan wrong, the approval too lenient, the
    execution sloppy, or the acceptance criteria unclear? Cite stage ids.
 2. Knowledge the department should have had goes in `learnings` and `decisions` (they become memory).
-3. Anything that must **change** (a playbook, a skill file, a job description, staffing, a genome
+3. Anything that must **change** (a playbook, a skill file, a job description, staffing, a bylaws
    rule) goes in `actions`: each becomes new work in the department, planned and approved like any
    other. Say how you will know the change worked.
 4. Read-only: you change nothing directly.

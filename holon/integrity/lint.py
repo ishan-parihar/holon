@@ -3,12 +3,12 @@
 Six packs. Each finding is {severity: error | warning, rule, where, message}; errors fail CI.
 
   SCHEMA    every artifact matches its schema: published JSON Schemas = the contract, skill frontmatter,
-            genome profiles (and each department's copy), drivers, holon.toml, migration checksums,
+            bylaws profiles (and each department's copy), drivers, holon.toml, migration checksums,
             SQL CHECK lists = holon.core.vocab
   REF       every reference resolves: `holon …` commands and options in skills/docs exist in the command
             registry, skill and markdown links, brief placeholders, documented environment variables
   BIND      every org word is a mechanism: each role has stages, skills and briefs; mechanism columns in
-            INTENT/GENOME name real commands or code; every config key is documented
+            INTENT/BYLAWS name real commands or code; every config key is documented
   DEPTH     skills and docs meet the rubric: required sections per kind, word bounds, a "Use when"
             trigger, runnable commands, limits for roles that act
   DRY       nothing is said twice: near-duplicate paragraphs across skills/briefs/docs, and copies of
@@ -34,7 +34,7 @@ from pathlib import Path
 from holon.core import contract, vocab
 from holon.core.db import checksum, migration_files
 
-PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "genome", "drift", "extstore")
+PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "bylaws", "drift", "extstore")
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
@@ -98,29 +98,29 @@ def pack_schema(k, f: Findings) -> None:
             f.add("error", "schema.contract", f"schemas/{extra}", "no stage has this schema; delete it")
     for p in k.skills.check(None, list(vocab.ROLES)):
         f.add("error", "schema.skill", p.split(":")[0], p)
-    from holon.execution import genome
-    for name, path in genome.profile_paths(k.home).items():
+    from holon.execution import bylaws
+    for name, path in bylaws.profile_paths(k.home).items():
         try:
             raw = tomllib.loads(path.read_text())
-            g = genome.load_profile(name, k.home)
+            g = bylaws.load_profile(name, k.home)
             if "version" not in raw:
-                f.add("error", "schema.genome", _rel(Path(str(path))), "profile has no `version`")
-        except (genome.GenomeError, tomllib.TOMLDecodeError) as e:
-            f.add("error", "schema.genome", _rel(Path(str(path))), str(e))
+                f.add("error", "schema.bylaws", _rel(Path(str(path))), "profile has no `version`")
+        except (bylaws.BylawsError, tomllib.TOMLDecodeError) as e:
+            f.add("error", "schema.bylaws", _rel(Path(str(path))), str(e))
     for d in k.org.depts():
-        if not d.get("genome"):
-            f.add("error", "schema.genome", f"dept:{d['slug']}", "department has no genome profile "
+        if not d.get("bylaws"):
+            f.add("error", "schema.bylaws", f"dept:{d['slug']}", "department has no bylaws profile "
                   "(`holon dept profile <slug> light|standard --reason …`)")
             continue
-        snap = json.loads(d["genome"])
+        snap = json.loads(d["bylaws"])
         try:
-            current = genome.load_profile(snap["name"], k.home)
+            current = bylaws.load_profile(snap["name"], k.home)
             if current.get("version", 1) > snap.get("version", 1):
-                f.add("warning", "schema.genome", f"dept:{d['slug']}",
+                f.add("warning", "schema.bylaws", f"dept:{d['slug']}",
                       f"follows {snap['name']} v{snap.get('version', 1)}; v{current['version']} exists "
                       "(re-apply with `holon dept profile`)")
-        except genome.GenomeError:
-            f.add("warning", "schema.genome", f"dept:{d['slug']}", f"its profile {snap['name']!r} no longer exists")
+        except bylaws.BylawsError:
+            f.add("warning", "schema.bylaws", f"dept:{d['slug']}", f"its profile {snap['name']!r} no longer exists")
     from holon.execution import drivers
     try:
         drivers.available(k.home)
@@ -546,21 +546,21 @@ def harness_names() -> set[str]:
     return names
 
 
-def pack_genome(k, f: Findings) -> None:
-    """The genome layer (U1): unit manifests parse, every consumed service is offered by some unit
+def pack_bylaws(k, f: Findings) -> None:
+    """The bylaws layer (U1): unit manifests parse, every consumed service is offered by some unit
     (bind.service), every pooled unit names a real department (bind.pool), the sync is not stale,
     and a department that pools units names shell commands (a fence that exists — an empty commands
     list means ungoverned, and pooling must not switch one on). The manifests are the source;
     the tables are a view of them."""
-    from holon.genome import units as units_mod
+    from holon.bylaws import units as units_mod
     for p in units_mod.validate(k):
-        f.add("error", "genome.manifest", "genome/units", p)
+        f.add("error", "bylaws.manifest", "bylaws/units", p)
     manifests, _ = units_mod.load(k.home)
     base = k.config.get("scope", {})
     known = {d["slug"] for d in k.org.depts()}
     for slug in sorted({d for u in manifests.values() for d in u["pool_of"] if d in known}):
         if not [*base.get("commands", []), *(((base.get("dept") or {}).get(slug) or {}).get("commands", []))]:
-            f.add("warning", "genome.fence", f"dept:{slug}",
+            f.add("warning", "bylaws.fence", f"dept:{slug}",
                   "pools units but lists no [scope] commands — its terminal fence is open (an empty "
                   "commands list means ungoverned; list the commands its stages use, and the pooled "
                   "services' entry points join the fence)")

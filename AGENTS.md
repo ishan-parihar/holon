@@ -16,9 +16,9 @@ agent is at the end.
 | `holon/core/{db,ids,paths}.py` | SQLite, migrations with checksums, the hash-chained audit trail, ids, instance paths |
 | `holon/execution/work.py` | the work graph; **the only writer of tasks, task_needs, outputs, runs** |
 | `holon/execution/org.py` | departments, employees, authority, evidence-based reviews |
-| `holon/execution/genome.py`, `holon/genome/*.toml` | role → stage mapping, profiles, slots |
+| `holon/execution/bylaws.py`, `holon/bylaws/*.toml` | role → stage mapping, profiles, slots |
 | `holon/execution/autonomy.py` | the autonomy policy |
-| `holon/execution/service.py` | the kernel: genome rules, claims, ingestion, sampling, triggers, metrics |
+| `holon/execution/service.py` | the kernel: bylaws rules, claims, ingestion, sampling, triggers, metrics |
 | `holon/execution/security.py` | the Chair key, employee keys, run tokens |
 | `holon/execution/{briefs,drivers,grading,schedules,staleness,cron}.py` | the harness contract and scheduling |
 | `holon/execution/isolation.py` | the trust boundary: the runner (agent processes as the agent user), the broker (the organization for agents), setup plan and doctor's probe |
@@ -33,7 +33,7 @@ agent is at the end.
 | `adapters/systemd/` | the heartbeat timer (`holon tick` every 2 minutes) |
 | `adapters/notion/` | the Chair's dashboard: a live Notion mirror (not a harness); tested against `tests/fake_notion.py` |
 | `install.py` | cold start or upgrade of a machine: instance (SQLite + Chair key), launcher, Notion databases, user units; `tests/test_install.py` |
-| `docs/` | INTENT, GENOME, CONTRACT: the kernel's reference and law docs |
+| `docs/` | INTENT, BYLAWS, CONTRACT: the kernel's reference and law docs |
 | `docs/design/` | scrubbed design records and audits; an audit's work list separates defects fixable now from changes that wait on the Chair |
 | `TODO.md` | the register: open work items with their status and verdicts, seeded from the audit work lists (`scripts/genome status` is the supervised transition) |
 | `docs/decisions/` | immutable decision records (AD-NNN), minted when the Chair ratifies a direction change; superseded only by a newer AD |
@@ -47,7 +47,7 @@ agent is at the end.
 4. **Status changes go through `Work._set`**, which logs a hash-chained event.
 5. **Enumerations come from `vocab.py`; result shapes from `contract.py`.** Copies fail lint.
 6. **Schema changes are new migration files.** An edited applied migration fails lint.
-7. **Every org term binds to a mechanism** in the INTENT and GENOME tables.
+7. **Every org term binds to a mechanism** in the INTENT and BYLAWS tables.
 8. **Every command declares its actor class** in the registry.
 9. **Tests first** for any change to the graph, the contract, security or drivers.
 
@@ -75,18 +75,18 @@ python3 -m holon --home "$(mktemp -d)" lint --strict   # zero errors and zero wa
 - **Read the dated design records before changing a mechanism they cover.** They live in
   the operator's private overlay (`docs/design/` there; see the section below) — publish a record
   here only when it is scrubbed of operator context. Its universal lessons belong where they are
-  enforced: the ledger below, the adapter READMEs, GENOME and CONTRACT. A design record superseded
+  enforced: the ledger below, the adapter READMEs, BYLAWS and CONTRACT. A design record superseded
   by a later one is moved to `docs/archive/` with a tombstone at its original path — never edited
   past its status line.
 - **A defect found by a real run gets a guard test and a ledger row in the same commit.** The
   ledger below is checked by `holon lint` (`ref.guard`): every row names a test, and every test
   it names must exist, so a guard cannot be deleted silently.
 - **Real-harness lessons belong in the adapter's README** (what the harness does that the
-  contract does not expect) and, when the kernel changed, in GENOME or CONTRACT.
+  contract does not expect) and, when the kernel changed, in BYLAWS or CONTRACT.
 - **An interface package is done only when one test crosses the seam with the other side's real
   artifact** — the kernel's real prepared run into the runtime, the runtime's real files into
   the kernel's `submit`. Unit tests that stub the seam mark phases "landed" that have never run.
-- **A new config key is documented in `docs/GENOME.md` §6** or lint fails (`bind.config`).
+- **A new config key is documented in `docs/BYLAWS.md` §6** or lint fails (`bind.config`).
 - **After deploying to an instance:** pull, run the tests there, `holon doctor`, and re-run an
   adapter installer whose inputs changed (`[scope]`, model, notify); doctor reports `scope.drift`
   until you do.
@@ -202,7 +202,7 @@ What that means for every change here:
 
 1. `docs/INTENT.md`: what Holon is and the laws.
 2. This file: the code map, the laws lint enforces, the regression ledger.
-3. `docs/GENOME.md` (departments, roles, configuration) and `docs/CONTRACT.md` (the harness
+3. `docs/BYLAWS.md` (departments, roles, configuration) and `docs/CONTRACT.md` (the harness
    contract).
 4. The README of the adapter you touch (`adapters/<name>/README.md`), which records what the
    real harness does.

@@ -5,7 +5,7 @@ Every org term is bound to data here (INTENT.md, law 3):
   HOD         -> departments.head_id
   employee    -> employees row (+ memory scope emp:<id>), persistent across tasks and harnesses
   hire / fire -> create / retire with reason; a successor inherits the predecessor's memory scope
-  role / slot -> employees.roles (the six standard roles) filling the slots of the department's genome profile
+  role / slot -> employees.roles (the six standard roles) filling the slots of the department's bylaws profile
   authority   -> authority rows; earned and lost from verified outcomes, never from self-report
   review      -> computed from runs, stage outputs and audit samples (no stored counters to drift)
 """
@@ -19,7 +19,7 @@ from holon.core.db import log_event, now, write_txn
 from holon.core.ids import new_id
 from holon.core.vocab import CHAIR, EXECUTIVE
 from holon.execution import autonomy
-from holon.execution import genome as gn
+from holon.execution import bylaws
 
 
 class OrgError(RuntimeError):
@@ -52,9 +52,9 @@ class Org:
         with write_txn(self.conn):
             if self.conn.execute("SELECT 1 FROM departments WHERE slug=?", (EXECUTIVE,)).fetchone() is None:
                 did = new_id("dept")
-                g = gn.load_profile(EXECUTIVE)
+                g = bylaws.load_profile(EXECUTIVE)
                 self.conn.execute(
-                    "INSERT INTO departments (id, slug, name, mission, profile, genome, created_at) VALUES (?,?,?,?,?,?,?)",
+                    "INSERT INTO departments (id, slug, name, mission, profile, bylaws, created_at) VALUES (?,?,?,?,?,?,?)",
                     (did, EXECUTIVE, "Executive Office",
                      "Turn the Chair's objectives into department mandates; arbitrate across departments.",
                      g["name"], json.dumps(g), now()))
@@ -66,13 +66,13 @@ class Org:
     # ── departments ───────────────────────────────────────────────────────
     def create_dept(self, slug: str, name: str, mission: str | None = None, parent: str | None = None,
                     profile: dict | None = None) -> dict:
-        """`profile` is a validated genome profile (genome.load_profile); default: light."""
+        """`profile` is a validated bylaws profile (bylaws.load_profile); default: light."""
         parent_id = self.dept(parent)["id"] if parent else self.dept(EXECUTIVE)["id"]
-        g = profile or gn.load_profile("light")
+        g = profile or bylaws.load_profile("light")
         did = new_id("dept")
         with write_txn(self.conn):
             self.conn.execute(
-                "INSERT INTO departments (id, slug, name, mission, parent_id, profile, genome, created_at)"
+                "INSERT INTO departments (id, slug, name, mission, parent_id, profile, bylaws, created_at)"
                 " VALUES (?,?,?,?,?,?,?,?)", (did, slug, name, mission, parent_id, g["name"], json.dumps(g), now()))
             self._event("dept", did, None, "active", f"created {slug} with profile {g['name']}")
         return self.dept(slug)
@@ -80,15 +80,15 @@ class Org:
     def set_profile(self, dept: str, profile: dict, reason: str) -> dict:
         d = self.dept(dept)
         with write_txn(self.conn):
-            self.conn.execute("UPDATE departments SET profile=?, genome=? WHERE id=?",
+            self.conn.execute("UPDATE departments SET profile=?, bylaws=? WHERE id=?",
                               (profile["name"], json.dumps(profile), d["id"]))
             self._event("dept", d["id"], d.get("profile"), profile["name"], f"profile: {reason}")
         return self.dept(dept)
 
     def staffing(self, dept: str) -> dict:
         d = self.dept(dept)
-        g = json.loads(d["genome"]) if d.get("genome") else gn.load_profile("light")
-        return {"dept": d["slug"], **gn.staffing(g, self.employees(d["id"]))}
+        g = json.loads(d["bylaws"]) if d.get("bylaws") else bylaws.load_profile("light")
+        return {"dept": d["slug"], **bylaws.staffing(g, self.employees(d["id"]))}
 
     def slot_roles(self, dept: str, slot: str) -> list[str]:
         st = self.staffing(dept)
@@ -119,8 +119,8 @@ class Org:
         employee may claim follow from its roles; a slot or role list containing 'head' makes the hire the head."""
         roles = sorted(set(roles or []) | set(self.slot_roles(dept, slot) if slot else []))
         try:
-            gn.stages_for(roles)
-        except gn.GenomeError as e:
+            bylaws.stages_for(roles)
+        except bylaws.BylawsError as e:
             raise OrgError(str(e)) from None
         if head and "head" not in roles:
             roles = sorted({*roles, "head"})
@@ -174,7 +174,7 @@ class Org:
         out["skills"] = json.loads(out["skills"]) if out["skills"] else None
         out["is_head"] = bool(out["is_head"])
         out["roles"] = json.loads(out["roles"] or "[]")
-        out["stages"] = gn.stages_for(out["roles"])
+        out["stages"] = bylaws.stages_for(out["roles"])
         out.pop("key_hash", None)
         return out
 
@@ -212,8 +212,8 @@ class Org:
         if not new:
             raise OrgError("give --roles or --slot")
         try:
-            gn.stages_for(sorted(new))
-        except gn.GenomeError as err:
+            bylaws.stages_for(sorted(new))
+        except bylaws.BylawsError as err:
             raise OrgError(str(err)) from None
         with write_txn(self.conn):
             self.conn.execute("UPDATE employees SET roles=? WHERE id=?", (json.dumps(sorted(new)), eid))

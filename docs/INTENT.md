@@ -22,7 +22,7 @@ CHAIR (the human) — sets the charter, approves what it reserves, steers priori
         └── Head, department B …
 ```
 
-Every department, the executive included, is a copy of the same genome (docs/GENOME.md):
+Every department, the executive included, is a copy of the same bylaws (docs/BYLAWS.md):
 six roles, a profile of slots, a pipeline, tailored skills, and an autonomy policy.
 
 ## Every word is a mechanism
@@ -43,7 +43,7 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
 | Probation | a new hire's period, ended by a confirmation their head decides | `execution.service.Kernel.triggers` |
 | Collective intelligence | lessons promoted from employees to departments to the company | `capabilities.memory.Memory.promote_recurring` |
 | Self-healing | leases, retries, stale-plan detection, incident work when runs keep dying or failing | `holon tick` |
-| Self-evolving | retros whose actions become work that changes skills, staffing and the genome | `execution.work.Work.submit_retro`, `execution.service.Kernel.apply_skill_changes` |
+| Self-evolving | retros whose actions become work that changes skills, staffing and the bylaws | `execution.work.Work.submit_retro`, `execution.service.Kernel.apply_skill_changes` |
 | Integrity | artifact rubric, live-state checks, and machine checks on every result | `holon lint`, `holon doctor`, `execution.service.Kernel.run_checks` |
 | Lane | how work runs, cheapest first: a script the kernel runs, one fast session for routine work, or the full pipeline | `execution.work.Work.fast_track`, `execution.service.Kernel.run_script` |
 | Routine | a recurring job (a cron job) in the cheapest lane that does it reliably, approved once | `holon routine add`, `execution.work.Work.instantiate_recurring` |
@@ -69,7 +69,7 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
 | Department (on failure, and periodically) | rework, failures, colleagues' proposals, metrics | a retro whose actions become department work | `holon metrics` |
 | Playbook (per job, after verified runs) | judgments per criterion, verifier failures, judge/verifier disagreements | refinement work that rewrites the protocol and rubric; the next version is judged | `execution.service.Kernel._playbook_refinements` |
 | Objective (per cycle of its pool) | the pool's results against the key results | new work, new routines, refinement; closing the objective | `execution.service.Kernel._objective_reviews` |
-| Company (on request) | department metrics, audit samples, promoted lessons | genome and charter changes, approved like any work | `holon audit samples` |
+| Company (on request) | department metrics, audit samples, promoted lessons | bylaws and charter changes, approved like any work | `holon audit samples` |
 
 ## Design laws
 
