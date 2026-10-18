@@ -213,6 +213,52 @@ class Operations(KernelCase):
         backup.restore(self.k, out["path"])
         self.assertTrue((body_store / "memory_wire.sqlite").exists(),
                         "the body's memory store rides backup/restore")
+
+    def test_a_present_external_store_declares_a_known_version(self):
+        """R-6 (CONTRACT §9a): the strategy seam is dormant — a store that exists must declare an
+        api_version the kernel knows, so the bundle's fail-open joins cannot read a schema blind."""
+        from holon.integrity import doctor
+        tc = sqlite3.connect(self.home.trajectory_db)
+        tc.executescript("CREATE TABLE nodes (id TEXT PRIMARY KEY, parent_id TEXT, item_type TEXT, "
+                         "name TEXT, status TEXT, description TEXT)")
+        tc.close()
+        found = [f for f in doctor.run(self.k) if f["check"] == "extstore.version"]
+        self.assertTrue(any("does not declare" in f["message"] for f in found),
+                        f"a schema with no version declaration is a warning, not silence: {found}")
+        tc = sqlite3.connect(self.home.trajectory_db)
+        tc.executescript("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);")
+        tc.close()
+        found = [f for f in doctor.run(self.k) if f["check"] == "extstore.version"]
+        self.assertTrue(any("'none'" in f["message"] for f in found), found)
+        tc = sqlite3.connect(self.home.trajectory_db)
+        tc.execute("INSERT INTO meta VALUES ('api_version','9')")
+        tc.commit(); tc.close()
+        found = [f for f in doctor.run(self.k) if f["check"] == "extstore.version"]
+        self.assertTrue(any("'9'" in f["message"] for f in found), found)
+        tc = sqlite3.connect(self.home.trajectory_db)
+        tc.execute("INSERT OR REPLACE INTO meta VALUES ('api_version','1')")
+        tc.commit(); tc.close()
+        self.assertEqual([f for f in doctor.run(self.k) if f["check"] == "extstore.version"], [],
+                         "a known version is clean")
+
+    def test_the_extstore_lint_pack_proves_the_contract_columns(self):
+        """R-6: the bundle's SELECTs are the schema contract's other half — the pack proves the
+        columns still match, and catches a column leaving the SELECT."""
+        pkg = Path(holon_cli.__file__).parent
+        self.assertEqual(lint.run(self.k, ["extstore"]), [])
+        original = (pkg / "capabilities" / "context.py").read_text()
+        try:
+            (pkg / "capabilities" / "context.py").write_text(
+                original.replace("SELECT id, parent_id, item_type, name, status, description FROM nodes",
+                                 "SELECT id, parent_id, name, status, description FROM nodes"))
+            found = lint.run(self.k, ["extstore"])
+            self.assertTrue(any("item_type" in f["message"] for f in found), found)
+        finally:
+            (pkg / "capabilities" / "context.py").write_text(original)
+
+    def test_backup_verify_catches_tampering(self):
+        from holon.integrity import backup
+        out = backup.backup(self.k, str(self.tmp / "bk"))
         (Path(out["path"]) / "work.db").write_bytes(b"tampered")
         self.assertIn("work.db", backup.verify(out["path"])["corrupt"])
 

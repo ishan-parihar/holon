@@ -12,8 +12,12 @@ import stat
 from pathlib import Path
 
 from holon.core import vocab
-from holon.core.db import event_hash, now
+from holon.core.db import connect, event_hash, now
 from holon.execution import autonomy
+
+# the strategy seam's versions this Holon reads (CONTRACT §9a); a store declaring another is
+# reported, not guessed at
+EXTERNAL_STORE_VERSIONS = ("1",)
 
 
 def _isolation(k, add) -> None:
@@ -56,6 +60,24 @@ def run(k) -> list[dict]:
 
     w = k.wconn
     q = lambda sql, *a: w.execute(sql, a).fetchall()  # noqa: E731
+
+    # the dormant strategy seam (R-6, CONTRACT §9a): a present store must declare a version the
+    # kernel knows; an absent one is fine (the bundle's joins fail open and log it)
+    for name, path in (("trajectory.db", k.home.trajectory_db), ("logbook.db", k.home.logbook_db)):
+        if not path.exists():
+            continue
+        try:
+            conn = connect(path, readonly=True)
+            row = conn.execute("SELECT value FROM meta WHERE key='api_version'").fetchone()
+            conn.close()
+        except sqlite3.Error as e:
+            add("warning", "extstore.version", f"{name} exists but does not declare an api_version ({e}); "
+                "the bundle joins its schema blind (CONTRACT §9a)")
+            continue
+        if row is None or row[0] not in EXTERNAL_STORE_VERSIONS:
+            v = row[0] if row else "none"
+            add("warning", "extstore.version", f"{name} api_version {v!r} is not one this Holon knows "
+                f"({', '.join(EXTERNAL_STORE_VERSIONS)}); the bundle may read it wrong")
 
     _isolation(k, add)
     # which checkout owns this instance (H-09's silent half): two checkouts sharing one

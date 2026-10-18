@@ -207,6 +207,25 @@ sides), so a v3 consumer keeps working unchanged on a v4 database.
 
 The memory capability stays reachable through its own FTS (`items_fts`), same law.
 
+## 9a. External strategy stores (trajectory.db, logbook.db — dormant seam)
+
+The context bundle joins two stores the kernel never writes (R-6's contract, so the day an
+external writer appears, drift cannot fail silently):
+
+- **trajectory.db** — a goal tree the Chair's strategy tooling maintains: table `nodes`
+  (id TEXT PRIMARY KEY, parent_id TEXT, item_type TEXT, name TEXT, status TEXT,
+  description TEXT). The bundle walks parent links upward (12 nodes max) from the work's
+  `project_ref` (`traj:<node id>`).
+- **logbook.db** — human evidence entries: table `entries` (id TEXT PRIMARY KEY, date TEXT,
+  channel TEXT, title TEXT, body TEXT) plus `entries_fts` (FTS5 over title, body,
+  external-content). The bundle runs a bm25 top-5 over the task's title and intent.
+
+Both are opened `mode=ro` and both joins **fail open**: an absent file or a schema error is
+recorded in `context_log` as degraded, never fatal (KB-1's method). A store that exists must
+carry a `meta` table with `key='api_version'` and a value the kernel knows; `holon doctor`
+reports a store whose version is unknown, and `holon lint` pack `extstore` proves the column
+lists above match the code that reads them.
+
 ## 10. policy.json and refusals (H3+H5)
 
 Every claim writes `runs/<id>/policy.json` beside the brief — the run's reach, compiled

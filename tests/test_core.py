@@ -310,6 +310,39 @@ class MemoryBehaviour(KernelCase):
                       text.lower(), "the memory item surfaced")
         self.assertNotIn("holon_", text, "a recall answer is text, not tool plumbing")
 
+    def test_recall_logs_what_it_found(self):
+        """R-2's sensor: every recall records its question and per-source hit counts, and items it
+        surfaced gain a use — recall-vs-use becomes measurable, not narrated."""
+        from holon import cli
+        it = self.k.memory.add_item("org", "lesson", "Atlas projection needs the nightly token refresh", "work:r1")
+        self.k.memory.add_episode("org", "reran the atlas projection after the token refresh")
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = cli.main(["--home", str(self.home.root), "recall", "atlas projection token"])
+        self.assertEqual(rc, 0)
+        row = self.k.mconn.execute(
+            "SELECT question, items, episodes, skills, gold FROM recall_log ORDER BY ts DESC LIMIT 1").fetchone()
+        self.assertIsNotNone(row, "a recall leaves its sensor row")
+        self.assertIn("atlas", row["question"])
+        self.assertGreaterEqual(row["items"], 1)
+        self.assertGreaterEqual(row["episodes"], 1)
+        uses = self.k.mconn.execute("SELECT uses FROM items WHERE id=?", (it["id"],)).fetchone()[0]
+        self.assertGreaterEqual(uses, 1, "a surfaced item gains its use")
+
+    def test_recall_scans_the_department_layer(self):
+        """D-5's other half: a department's playbooks live in its skill layer — recall scans them
+        there, so a rubric line is findable without knowing the playbook's name."""
+        from holon import cli
+        pb = self.home.root / "skills" / "@eng" / "playbook-atlas-projection"
+        (pb / "briefs").mkdir(parents=True)
+        (pb / "SKILL.md").write_text(
+            "---\ntitle: Atlas projection playbook\nversion: 1\n---\n\nRun the atlas projection nightly.\n")
+        (pb / "briefs" / "execute.md").write_text(
+            "# Execute\n\nThe rubric: the projection reconciles every delta token against the ledger.\n")
+        with contextlib.redirect_stdout(buf := io.StringIO()):
+            rc = cli.main(["--home", str(self.home.root), "recall", "projection reconciles delta", "--dept", "eng"])
+        self.assertEqual(rc, 0)
+        self.assertIn("reconciles every delta", buf.getvalue(), "the playbook's rubric line surfaced")
+
     def test_law_show_serves_the_distributions_own_docs(self):
         """R-5: the law layer is reachable at runtime; the file served is the distribution's own."""
         from holon import cli

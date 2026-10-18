@@ -16,7 +16,8 @@ _last_ms = -1
 _last_rand = 0
 
 PREFIXES = {"task": "tsk", "plan": "pln", "run": "run", "item": "itm", "episode": "eps",
-            "message": "msg", "employee": "emp", "dept": "dept", "schedule": "sch", "output": "out"}
+            "message": "msg", "employee": "emp", "dept": "dept", "schedule": "sch", "output": "out",
+            "recall": "rec"}
 
 
 def _encode(value: int, length: int) -> str:

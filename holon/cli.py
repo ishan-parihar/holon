@@ -987,11 +987,16 @@ def cmd_memory_show(args, k):
 
 
 @command("recall", "any", "one joined answer from the organization's knowledge: memory, episodes, skills, playbooks",
-         arg("question"), arg("--limit", type=int, default=6), mutates=False)
+         arg("question"), arg("--limit", type=int, default=6), arg("--dept"), mutates=False)
 def cmd_recall(args, k):
     """R-1, the join surface: the pull-mode counterpart of the context bundle. Deterministic and
-    budgeted; every source is a read the kernel already owns."""
+    budgeted; every source is a read the kernel already owns. `--dept` (defaulted to an employee
+    principal's own department) adds the department skill layer to the scan — where a pool's
+    playbooks live — so a rubric line is findable without knowing the playbook's name."""
     q, out = args.question, []
+    dept = args.dept
+    if dept is None and args.principal.kind == "employee":
+        dept = k.org.employee(args.principal.employee_id)["dept"]
     items = k.memory.search(q, limit=args.limit)
     if items:
         out.append("## Memory\n\n" + "\n".join(
@@ -1002,18 +1007,9 @@ def cmd_recall(args, k):
         out.append("## Past work\n\n" + "\n".join(
             f"- {e['ts'][:10]} [{e['scope']}] {e['digest']}" + (f" (task:{e['task_id']})" if e.get("task_id") else "")
             for e in eps))
-    hits = k.skills.search(q, limit=args.limit)
+    hits = k.skills.search(q, limit=args.limit, dept=dept)
     if hits:
-        out.append("## Skills (protocol)\n\n" + "\n".join(f"- {h}" for h in hits))
-    try:
-        from holon.capabilities.memory import fts_query
-        terms = [w.strip('"') for w in fts_query(q).split(" OR ")]
-        pbs = [n for n in k.skills.names() if n.startswith("playbook-") and any(t in n.lower() for t in terms)]
-    except Exception:
-        pbs = []
-    if pbs:
-        out.append("## Playbooks (protocol + rubric: `holon playbook show <name> --dept <dept>`)\n\n"
-                   + "\n".join(f"- {p}" for p in pbs))
+        out.append("## Skills and playbooks (protocol + rubric)\n\n" + "\n".join(f"- {h}" for h in hits))
     gold = []
     try:
         from holon.capabilities.memory import fts_query
@@ -1031,6 +1027,9 @@ def cmd_recall(args, k):
     if gold:
         out.append("## Verified results (gold standards)\n\n" + "\n".join(
             f"- {g['work_id']}: {(g['summary'] or '')[:200]}" for g in gold))
+    # R-2's sensor: the recall records what it found, and surfaced items gain their use
+    k.memory.log_recall(q, items=len(items), episodes=len(eps), skills=len(hits), gold=len(gold))
+    k.memory.mark_used([i["id"] for i in items])
     if not out:
         _out(args, [], "no matches in memory, episodes, skills, playbooks or gold standards")
         return

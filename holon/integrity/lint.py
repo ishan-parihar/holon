@@ -16,6 +16,8 @@ Six packs. Each finding is {severity: error | warning, rule, where, message}; er
   AGNOSTIC  stdlib-only imports; no harness named anywhere in the kernel distribution
   DRIFT     the distilled law copies (skills, docs) name every role, stage, scope and memory kind
             that exists; a copy that drops one is an error, not silence
+  EXTSTORE  the dormant external strategy stores (trajectory, logbook) match CONTRACT §9a; the
+            bundle's SELECTs name the contract columns, so drift cannot fail open invisibly
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from pathlib import Path
 from holon.core import contract, vocab
 from holon.core.db import checksum, migration_files
 
-PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "genome", "drift")
+PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "genome", "drift", "extstore")
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
@@ -639,6 +641,30 @@ def pack_drift(k, f: Findings) -> None:
         for token, message in items:
             if token not in text:
                 f.add("error", "kb.drift", f"{skill}/{rel}", message)
+
+
+def pack_extstore(k, f: Findings) -> None:
+    """CONTRACT §9a (R-6): the external strategy stores' schemas are a contract. The columns the
+    bundle's SELECTs name must match the contract exactly — the seam is dormant (no writer on
+    most instances), so drift there would fail open and invisibly."""
+    src = (PKG / "capabilities" / "context.py").read_text(encoding="utf-8", errors="replace")
+    for store, table, columns in (
+        ("trajectory.db", "nodes", ("id", "parent_id", "item_type", "name", "status", "description")),
+        ("logbook.db", "entries", ("date", "channel", "title", "body")),
+    ):
+        # the SELECT's column list is the kernel's whole definition of the schema today; the
+        # logbook join runs over its FTS twin (entries_fts), so either spelling counts; match to
+        # the FROM clause (the list itself contains function parens)
+        m = re.search(rf"SELECT (.*?) FROM {table}s?(_fts)?\b", src, flags=re.S)
+        if not m:
+            f.add("error", "extstore.contract", "capabilities/context.py",
+                  f"no SELECT from {table}: the bundle no longer reads {store} — update CONTRACT §9a")
+            continue
+        missing = [c for c in columns if not re.search(rf"\b(?:e\.)?{c}\b", m.group(1))]
+        if missing:
+            f.add("error", "extstore.contract", "capabilities/context.py",
+                  f"the {table} SELECT does not name contract columns {missing}; a schema change "
+                  "crosses the seam only with a CONTRACT §9a version bump")
 
 
 def run(k, packs: list[str] | None = None) -> list[dict]:

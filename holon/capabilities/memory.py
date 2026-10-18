@@ -239,6 +239,14 @@ class Memory:
                               (run_id, now(), chars, budget, json.dumps(sections),
                                json.dumps(degraded) if degraded else None))
 
+    def log_recall(self, question: str, items: int = 0, episodes: int = 0, skills: int = 0,
+                   playbooks: int = 0, gold: int = 0) -> None:
+        """R-2's sensor: every recall records what it found, so cross-domain recall misses become
+        measurable — a stretch of zero-hit recalls is the trigger to revisit ranking."""
+        with write_txn(self.conn):
+            self.conn.execute("INSERT OR REPLACE INTO recall_log VALUES (?,?,?,?,?,?,?,?)",
+                              (new_id("recall"), now(), question, items, episodes, skills, playbooks, gold))
+
     # ── consolidation (the write path after every run) ────────────────────
     def consolidate(self, task: dict, run_id: str, env: dict, employee_id: str | None = None,
                     dept_scope: str | None = None, stage: str = "execute") -> dict:
