@@ -35,7 +35,7 @@ agent is at the end.
 | `install.py` | cold start or upgrade of a machine: instance (SQLite + Chair key), launcher, Notion databases, user units; `tests/test_install.py` |
 | `docs/` | INTENT, GENOME, CONTRACT: the kernel's reference and law docs |
 | `docs/design/` | scrubbed design records and audits; an audit's work list separates defects fixable now from changes that wait on the Chair |
-| `TODO.md` | the register: open work items with their status and verdicts, seeded from the audit work lists (`scripts/kb status` is the supervised transition) |
+| `TODO.md` | the register: open work items with their status and verdicts, seeded from the audit work lists (`scripts/genome status` is the supervised transition) |
 | `docs/decisions/` | immutable decision records (AD-NNN), minted when the Chair ratifies a direction change; superseded only by a newer AD |
 | `docs/archive/` | superseded docs, with a tombstone at the original path and a row in its `INDEX.md` |
 

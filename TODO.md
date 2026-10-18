@@ -1,9 +1,9 @@
 # TODO — the register
 
 One row per open work item; rows update in place, verdicts append — never
-delete. `scripts/kb status <id> <state> --evidence <path>` is the supervised
+delete. `scripts/genome status <id> <state> --evidence <path>` is the supervised
 transition (terminal states demand evidence; claims are flock-guarded via
-`scripts/kb claim-register`).
+`scripts/genome claim-register`).
 
 Seeded 2026-10-17 from `docs/design/2026-10-16-capability-layer-audit.md`'s
 work list and its execution-status note. §1's defect fixes carry their guards
