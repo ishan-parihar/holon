@@ -23,7 +23,7 @@ from pathlib import Path
 from holon.core.paths import Home
 
 GENOME = Path(__file__).resolve().parent.parent / "vendor" / "genome.py"
-GENOME_SHA256 = "1d3a355bfa06c47212cffb94ba728bcd718fa80e7ee18a21dee2f3e89d25c95d"  # genome 2026.10.19-2
+GENOME_SHA256 = "e22a07ae4a282de488b0e7a9b41369fdcea418db12997fac355fb7ef35d175c2"  # genome 2026.10.19-3
 READ_VERBS = ("find", "view", "ask", "wake", "show", "lint")
 WRITE_VERBS = ("new", "move", "set", "link")
 JSON_VERBS = ("find", "ask", "show", "new")  # the verbs with a --json form
