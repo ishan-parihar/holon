@@ -36,3 +36,6 @@ runbook = "native:adapter READMEs (adapters/<name>/README.md) and the AGENTS.md 
 # (law: instance state stays out of the distribution); STATUS and PERSONAL
 # live in the operator's private overlay by design; INDEX.md is referenced by
 # bare name inside its own archive row.
+
+[card]
+architecture = "AGENTS.md"
