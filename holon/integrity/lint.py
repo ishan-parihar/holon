@@ -531,6 +531,8 @@ def pack_agnostic(k, f: Findings) -> None:
                     f.add("error", "agnostic.import", _rel(py), f"imports {n} (stdlib only)")
     words = harness_names()
     for p in [*PKG.rglob("*.py"), *PKG.rglob("*.md"), *PKG.rglob("*.toml")]:
+        if PKG / "vendor" in p.parents:  # pinned upstream tooling (kb.py checks its sha256); its text is not ours
+            continue
         text = p.read_text().lower()
         for word in words:
             if re.search(rf"\b{word}\b", text):

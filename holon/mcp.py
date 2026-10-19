@@ -27,7 +27,7 @@ AGENT_COMMANDS = ("emp card", "org", "dept roles", "task show", "task tree", "pl
                   "memory add", "memory context", "memory episodes", "memory show", "recall", "law show",
                   "msg send", "msg inbox", "msg request", "skill list", "skill show", "skill path", "skill invoke",
                   "playbook list", "playbook show", "events", "run show", "run heartbeat", "metrics", "claim",
-                  "classify", "routine list")
+                  "classify", "routine list", "kb list", "kb run", "kb blueprint draft", "kb blueprint check")
 
 
 def _tool_name(path: tuple[str, ...]) -> str:
@@ -43,7 +43,7 @@ def _arg_schema(a: tuple, kw: dict) -> tuple[str, dict, bool, bool] | None:
     action = kw.get("action")
     if action == "store_true":
         s: dict = {"type": "boolean"}
-    elif action == "append":
+    elif action == "append" or kw.get("nargs") == argparse.REMAINDER:
         s = {"type": "array", "items": {"type": "string"}}
     elif kw.get("type") is int:
         s = {"type": "integer"}
@@ -53,7 +53,7 @@ def _arg_schema(a: tuple, kw: dict) -> tuple[str, dict, bool, bool] | None:
         s["enum"] = list(kw["choices"])
     if kw.get("help"):
         s["description"] = kw["help"]
-    required = (positional and kw.get("nargs") != "?") or bool(kw.get("required"))
+    required = (positional and kw.get("nargs") not in ("?", argparse.REMAINDER)) or bool(kw.get("required"))
     return name, s, required, positional
 
 
@@ -144,7 +144,7 @@ def call(name: str, arguments: dict) -> tuple[bool, str]:
             continue
         v = arguments[key]
         if positional:
-            argv.append(str(v))
+            argv += [str(i) for i in v] if s["type"] == "array" else [str(v)]
         elif s["type"] == "boolean":
             if v:
                 opts.append(a[0])

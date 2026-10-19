@@ -1460,6 +1460,55 @@ def cmd_help(args, k):
     _out(args, m, "\n".join(f"{c['command']:<22} [{c['actor']:<8}] {c['help']}" for c in m))
 
 
+# ── knowledge bases (holon/capabilities/kb.py; plan docs/plans/2026-10-19-holon-knowledge-layer.md) ──
+@command("kb seed", "chair", "create a knowledge base from a blueprint, bound to one department",
+         arg("blueprint", help="a catalog or built-in blueprint name"), arg("slug"),
+         arg("--dept", required=True, help="the department slug or id"))
+def cmd_kb_seed(args, k):
+    from holon.capabilities import kb
+    r = kb.seed(k, args.principal, args.blueprint, args.slug, args.dept)
+    _out(args, r, f"seeded kb/{r['slug']} from {r['blueprint']}, bound to dept {r['dept']} ({r['commit']})")
+
+
+@command("kb list", "any", "the knowledge bases you can see", mutates=False)
+def cmd_kb_list(args, k):
+    from holon.capabilities import kb
+    rows = kb.listing(k, args.principal)
+    _out(args, rows, "\n".join(f"{s:<24} dept {e['dept']:<14} {e['blueprint']}" for s, e in sorted(rows.items()))
+         or "no knowledge bases")
+
+
+@command("kb run", "any", "one genome verb in a knowledge base: kb run SLUG VERB [ARGS...]",
+         arg("slug"), arg("verb", help="find, view, ask, wake, show, lint, new, move, set or link"),
+         arg("tokens", nargs=argparse.REMAINDER, help="the verb's own arguments"))
+def cmd_kb_run(args, k):
+    from holon.capabilities import kb
+    print(kb.run(k, args.principal, args.slug, args.verb, args.tokens), end="")
+
+
+@command("kb blueprint draft", "employee", "draft a blueprint from a base; it seeds nothing until the Chair promotes it",
+         arg("name"), arg("--base", required=True, help="the built-in or catalog blueprint to start from"))
+def cmd_kb_draft(args, k):
+    from holon.capabilities import kb
+    r = kb.draft(k, args.principal, args.name, args.base)
+    _out(args, r, f"drafted {r['draft']}: {'passes' if r['pass'] else 'fails'} blueprint check ({r['message']})")
+
+
+@command("kb blueprint check", "employee", "genome blueprint check on a draft or a catalog blueprint",
+         arg("name"), mutates=False)
+def cmd_kb_check(args, k):
+    from holon.capabilities import kb
+    r = kb.check(k, args.principal, args.name)
+    _out(args, r, f"{r['blueprint']}: {'passes' if r['pass'] else 'fails'} ({r['message']})")
+
+
+@command("kb blueprint promote", "chair", "promote a passing draft into the catalog: the Chair's ruling", arg("name"))
+def cmd_kb_promote(args, k):
+    from holon.capabilities import kb
+    r = kb.promote(k, args.principal, args.name)
+    _out(args, r, f"promoted {r['promoted']} to the catalog")
+
+
 # ── parser and dispatch ───────────────────────────────────────────────────
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="holon", description="Holon: an agentic OS that runs as an organization")

@@ -11,6 +11,7 @@ import json
 import sqlite3
 from dataclasses import dataclass, field
 
+from holon.capabilities import kb
 from holon.capabilities.memory import STEERING_KINDS, Memory, fts_query, scope_for
 from holon.core.db import connect
 from holon.core.paths import Home
@@ -78,6 +79,18 @@ def _lineage(home: Home, project_ref: str | None, bundle: Bundle) -> None:
         desc = (r["description"] or "").strip().replace("\n", " ")
         lines.append(f"{'  ' * depth}- {r['item_type']}: {r['name']} [{r['status']}]" + (f" — {desc[:240]}" if desc else ""))
     bundle.add("Why this matters (goal lineage)", "\n".join(lines))
+
+
+def _kb(home: Home, dept: str | None, bundle: Bundle) -> None:
+    """The department's knowledge bases, each as its `genome wake` cut to kb.WAKE_CAP (plan K4)."""
+    if not dept:
+        return
+    try:
+        text = kb.wake_for_dept(home, dept)
+    except (ValueError, OSError) as e:  # KbError and a malformed registry are both ValueErrors
+        bundle.degraded.append(f"knowledge bases unavailable: {e}")
+        return
+    bundle.add("Knowledge bases (your department)", text)
 
 
 def _logbook(home: Home, text: str, bundle: Bundle, limit: int = 5) -> None:
@@ -367,6 +380,7 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
     if eps:
         b.add("Related past work", "\n".join(f"- {e['ts'][:10]} {e['digest']}" for e in eps))
     _logbook(home, text, b)
+    _kb(home, task_dept, b)
 
     # render within budget, in priority order (two passes so the gap block can lead); the recall
     # family is reserved the floor: non-recall sections stop being added once that much remains,
