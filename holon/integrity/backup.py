@@ -17,7 +17,7 @@ from pathlib import Path
 
 from holon.core.db import now
 
-TREES = ("config", "skills", "bylaws", "adapters")
+TREES = ("config", "skills", "bylaws", "adapters", "kb")
 
 
 def _sha(p: Path) -> str:

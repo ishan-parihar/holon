@@ -12,6 +12,7 @@ from unittest import mock
 
 from holon import cli, mcp
 from holon.capabilities import context, kb
+from holon.integrity import backup
 from holon.execution.security import Principal
 from holon.execution.service import Kernel
 from tests.helpers import KernelCase
@@ -117,6 +118,11 @@ class KnowledgeBases(KernelCase):
         md, meta = context.compile_context(self.home, self.k.work, self.k.memory, stage["id"])
         self.assertIn(f"### kb/{self.slug}", md)
         self.assertIn("Knowledge bases (your department)", meta["sections"])
+
+    def test_the_instance_backup_carries_the_kbs(self):
+        out = backup.backup(self.k, str(self.tmp / "backups"))["path"]
+        self.assertTrue((Path(out) / "kb" / self.slug / "genome.toml").exists())
+        self.assertEqual(backup.verify(out)["corrupt"], [])
 
     def test_the_actor_classes_hold_on_the_cli_and_mcp(self):
         key = self.k.auth.issue_employee_key(self.dev1)
