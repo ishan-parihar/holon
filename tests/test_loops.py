@@ -163,6 +163,17 @@ class Notifications(KernelCase):
         self.assertFalse(self.k.tick()["notified"]["sent"])
         self.assertTrue(any(e["entity"] == "notify" and e["to_status"] == "failed" for e in self.k.work.events()))
 
+    def test_a_failed_delivery_is_owed_again_on_the_next_heartbeat(self):
+        out = self.tmp / "sent.txt"
+        self.k.config["notify"] = {"command": "exit 3"}
+        self.plan(self.add("Rotate keys", dept="eng"))
+        self.assertFalse(self.k.tick()["notified"]["sent"])
+        self.assertEqual(self.k.tick()["notified"]["items"], 1, "a failed send does not mark the item seen")
+        self.k.config["notify"] = {"command": f"printf '%s\\n---\\n' {{message}} >> {out}"}
+        self.assertEqual(self.k.tick()["notified"], {"items": 1, "sent": True})
+        self.assertIn("approve? Rotate keys", out.read_text())
+        self.assertIsNone(self.k.tick()["notified"], "once delivered, it is announced once")
+
 
 class DoctorOnTheHeartbeat(KernelCase):
     pipeline = '[pipeline]\nresearch = "never"\nshape = "never"\nretro = "never"\n[healing]\ndoctor_every_min = 30\n'

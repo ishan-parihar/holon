@@ -39,6 +39,18 @@ class Scope(KernelCase):
         d = drivers.Driver(name="x", command="agent -a holon-{scope}-{posture}")
         self.assertEqual(drivers.render(d, brief)[0], "agent -a holon-eng-observe")
 
+    def test_a_driver_refuses_a_scope_name_that_is_not_a_plain_token(self):
+        # OS-11: {scope} rides unquoted inside larger tokens, so a name with shell syntax is refused
+        (self.tmp / "BRIEF.md").write_text("brief")
+        brief = {"stage": "plan", "brief_md": str(self.tmp / "BRIEF.md"), "context_md": str(self.tmp / "BRIEF.md"),
+                 "result_path": str(self.tmp / "result.json"), "workdir": str(self.tmp), "run_id": "r1",
+                 "task_id": "t1", "holon": "holon", "scope": {"name": "eng; touch pwned"}}
+        d = drivers.Driver(name="x", command="agent -a holon-{scope}")
+        with self.assertRaises(drivers.DriverError):
+            drivers.render(d, brief)
+        brief["scope"] = {"name": "eng"}
+        self.assertEqual(drivers.render(d, brief)[0], "agent -a holon-eng")
+
     def test_writes_inside_the_reach_are_in_bounds_and_beyond_it_go_to_the_chair(self):
         shared = self.tmp / "shared"
         self.configure(f'[grading]\nnovelty_min_verified = 0\n[scope.dept.eng]\nroots = ["{shared}"]\n')

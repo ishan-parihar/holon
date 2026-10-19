@@ -123,6 +123,9 @@ def spawn_message(brief: dict) -> str:
             f"Load the holon-employee skill, then do the {brief['stage']} stage described in {brief['brief_md']}.")
 
 
+_PLAIN_TOKEN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
+
+
 def render(driver: Driver, brief: dict) -> tuple[str, str]:
     stage = brief["stage"]
     values = {
@@ -137,6 +140,10 @@ def render(driver: Driver, brief: dict) -> tuple[str, str]:
     }
     values["identity"] = Path(brief["identity_md"]).read_text() if brief.get("identity_md") else ""
     values["briefing"] = (values["identity"] + "\n\n---\n\n" if values["identity"] else "") + values["prompt"]
+    # OS-11: employee_slug and scope ride unquoted inside larger tokens (alias names), so they must be plain
+    for k in ("employee_slug", "scope"):
+        if values[k] and not _PLAIN_TOKEN.fullmatch(values[k]):
+            raise DriverError(f"driver {driver.name}: {k} {values[k]!r} is not a plain token")
     quoted = {k: shlex.quote(v) for k, v in values.items()}
     quoted["holon"] = values["holon"]  # already a shell-ready command
     for k in ("stage", "duty", "role", "posture", "employee_slug", "scope"):

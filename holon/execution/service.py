@@ -1855,7 +1855,9 @@ class Kernel:
         top = self.wconn.execute("SELECT coalesce(max(seq), 0) FROM events").fetchone()[0]
         lines = self.pending_for_chair(last)
         with write_txn(self.wconn):
-            self.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('notify_seq', ?)", (str(top),))
+            # the cursor moves past what was seen only when nothing is owed; a delivered message moves it below
+            if not lines:
+                self.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('notify_seq', ?)", (str(top),))
             self.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('notify_ts', ?)", (now(),))
         if not lines:
             return None
@@ -1868,6 +1870,8 @@ class Kernel:
         except (OSError, subprocess.TimeoutExpired) as e:
             ok, detail = False, str(e)
         with write_txn(self.wconn):
+            if ok:  # OS-5: a failed send leaves its items owed, and the next heartbeat retries them
+                self.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('notify_seq', ?)", (str(top),))
             self.work._event("notify", "chair", None, "sent" if ok else "failed",
                              f"{len(lines)} items" + ("" if ok else f": {detail}"), actor="kernel")
         return {"items": len(lines), "sent": ok}
