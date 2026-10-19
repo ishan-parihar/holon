@@ -1,6 +1,6 @@
-# genome.toml — holon's role→path map and genome modules. Replaces kb.toml. kb.toml is kept
-# byte-identical for scripts/kb until that script is retired. The pointer_ignore list lives under
-# [core] here because genome rejects it under [paths] (E017).
+# genome.toml — holon's role→path map and genome modules. Replaces kb.toml.
+# The pointer_ignore list lives under [core] here because genome rejects it under
+# [paths] (E017).
 #
 # Pointer forms: `overlay:<path>` — the role lives in the operator's private
 # overlay repo (AGENTS.md, "The universal repo and the personal overlay");
@@ -31,7 +31,7 @@ feed = "overlay:the operator's overlay messages"
 runbook = "native:adapter READMEs (adapters/<name>/README.md) and the AGENTS.md verify section"
 
 # References in AGENTS.md prose that are legitimate non-repo paths (per-line,
-# path-shaped backticked tokens are existence-checked by `kb lint`):
+# path-shaped backticked tokens are existence-checked by `genome lint`):
 # the per-run brief and the instance config live in $HOLON_HOME, never here
 # (law: instance state stays out of the distribution); STATUS and PERSONAL
 # live in the operator's private overlay by design; INDEX.md is referenced by
