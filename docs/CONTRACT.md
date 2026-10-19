@@ -1,5 +1,22 @@
 # The harness contract
 
+## Contents
+
+- [1. A run](#1-a-run)
+- [2. Result envelopes](#2-result-envelopes)
+- [3. Drivers (push mode)](#3-drivers-push-mode)
+- [4. Leases](#4-leases)
+- [5. Staleness](#5-staleness)
+- [6. Identity](#6-identity)
+- [7. Adapters](#7-adapters)
+- [8. Native tools (MCP)](#8-native-tools-mcp)
+- [9. The read API (apiversion 4)](#9-the-read-api-apiversion-4)
+- [9a. External strategy stores (trajectory.db, logbook.db — dormant seam)](#9a-external-strategy-stores-trajectorydb-logbookdb-dormant-seam)
+- [10. policy.json and refusals (H3+H5)](#10-policyjson-and-refusals-h3h5)
+- [11. trajectory.json and usage (H4)](#11-trajectoryjson-and-usage-h4)
+- [12. The supervisor protocol (H6)](#12-the-supervisor-protocol-h6)
+- [13. Event triggers (H7)](#13-event-triggers-h7)
+
 Everything a harness author needs to run Holon employees. The kernel guarantees this contract;
 any agent runtime that honors it can work in the organization, and nothing else is required.
 The ZeroClaw and Hermes adapters in `adapters/` are implementations of it, and

@@ -1,5 +1,22 @@
 # Bylaws: roles, stages, profiles, skills, autonomy
 
+## Contents
+
+- [1. Roles and stages](#1-roles-and-stages)
+- [2. Profiles](#2-profiles)
+- [3. Pipeline rules](#3-pipeline-rules)
+- [4. Skills](#4-skills)
+- [5. Autonomy](#5-autonomy)
+- [6. holon.toml reference](#6-holontoml-reference)
+- [7. Operations](#7-operations)
+- [8. Scope: what a department may reach](#8-scope-what-a-department-may-reach)
+- [9. Machine checks: acceptance a command can decide](#9-machine-checks-acceptance-a-command-can-decide)
+- [10. Lanes, routines, rubrics and the decision model](#10-lanes-routines-rubrics-and-the-decision-model)
+- [11. Isolation: the trust boundary](#11-isolation-the-trust-boundary)
+- [12. Playbooks, refinement and objectives: the department's learning loop](#12-playbooks-refinement-and-objectives-the-departments-learning-loop)
+- [13. Smoke checks: is the infrastructure there](#13-smoke-checks-is-the-infrastructure-there)
+- [14. Units and the bylaws layer](#14-units-and-the-bylaws-layer)
+
 The bylaws is what makes every department the same kind of holon while letting each one be
 configured for its purpose. It has five parts, each defined once in code and checked by
 `holon lint`: the roles and their stages, the department profiles, the pipeline rules, the skills
