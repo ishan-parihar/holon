@@ -111,11 +111,34 @@ What that means for every change here:
 - **A pull request is checked for the above before merge**; instance specifics are asked to move
   to the contributor's own overlay.
 - **Upstreaming flows one way**: universal work is committed here first and the overlay pulls it
-  (`git merge` of this repo's `main`); nothing flows from an overlay into this repo except
-  deliberate, scrubbed cherry-picks.
+  by running `scripts/sync-public.sh` in the overlay checkout; nothing flows from an overlay into
+  this repo except deliberate, scrubbed cherry-picks.
 - **Instances move between machines with `holon backup` / `holon restore`**, never with git.
 - **Publishing this repo requires the history-squash runbook** (in the overlay's PERSONAL.md):
   history that predates the split carries operator context and must never be pushed as-is.
+
+### The two repos are synced by a script, never by hand
+
+The overlay's `scripts/sync-public.sh` is the only way work moves between this public repo
+and an overlay. It lives in the overlay, not here — run it from the overlay checkout, on
+the `personal` branch:
+
+```sh
+scripts/sync-public.sh              # sync, gate, and push
+scripts/sync-public.sh --no-push    # sync and gate, but do not push
+```
+
+What it does, in order: fast-forwards the overlay's `main` to this repo's `main`; merges
+`main` into `personal`; checks the invariant that outside the overlay's file set, `personal`
+equals `main`; runs the test suite and the strict lint; then pushes `main` and `personal`.
+A red gate or a drifted file stops it before anything is pushed.
+
+So the loop is: **make a universal change here, commit and push it, then run the script in
+the overlay.** Do not hand-merge the public repo into the overlay, and do not copy files
+between the two checkouts — the script is what keeps the branches, the invariant and the
+gates in agreement, and a hand merge skips all three. When the script reports a conflict,
+the rule is: overlay files keep the overlay's version, universal files take `main`'s, then
+commit and run it again.
 
 ## Regression ledger
 
