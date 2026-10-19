@@ -39,3 +39,7 @@ runbook = "native:adapter READMEs (adapters/<name>/README.md) and the AGENTS.md 
 
 [card]
 architecture = "AGENTS.md"
+# The `runbook` role above is `native:` (a holon-native mechanism owns it), so the card's
+# `operate` class would otherwise be empty. This file pointer names the section that
+# actually holds the commands; the `native:` role stays the owner.
+operate = "AGENTS.md#Verify a change"
