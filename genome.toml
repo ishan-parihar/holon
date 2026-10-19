@@ -8,6 +8,7 @@
 # to it, never shadows it. Both are reported by `scripts/genome doctor` as
 # legitimately-elsewhere, never as missing.
 [genome]
+schema_version = 2
 modules = ["core", "records", "agents"]   # the legacy kb.toml set, unchanged
 
 [core]
@@ -22,7 +23,6 @@ audits = "docs/design"
 decisions = "docs/decisions"   # AD-NNN, minted on the Chair's ratification
 archive = "docs/archive"       # tombstones at the original path, INDEX.md here
 ledger = "native:the regression-ledger table in AGENTS.md, guard-checked by holon lint (ref.guard)"
-closed = "native:the regression ledger — a defect fixed is a guard test plus a ledger row in the same commit"
 regressions = "native:the regression ledger's rows (a bite plus the law that prevents it)"
 workflows = "native:the organization's own board — `holon task list` / api_board / [budget] caps"
 state = "overlay:docs/STATUS.md"
