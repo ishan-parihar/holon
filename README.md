@@ -1,5 +1,8 @@
 # Holon
 
+
+- [Page index](docs/PAGE-INDEX.md) — every active doc and the question it owns.
+
 **An agentic operating system that runs as an organization.** Persistent AI employees work in
 departments under heads, led by a CEO, governed by a charter and supervised by you, the Chair.
 Every piece of work leaves the organization smarter: lessons accumulate in employees, recur
