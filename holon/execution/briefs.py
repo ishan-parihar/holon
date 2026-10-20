@@ -31,6 +31,18 @@ from holon.core import vocab
 
 BRIEF_OF_STAGE = {s: (f"holon-{vocab.STAGE_ROLE[s]}", f"briefs/{s}.md") for s in vocab.STAGES}
 
+# The exploration budget, rendered into every stage's brief (R2, the 2026-10-20 bridge plan).
+# One place, one number, every stage — so a body can follow it and a reader sees one rule.
+#
+# The measurement that made it a rule: one body spent 66 tool calls and hit its
+# 40-iteration cap hunting `schemas/plan-result.schema.json` — a file the brief never asks
+# for — while the brief had already named the exact path to write and the exact JSON shape.
+# A budget a body can follow carries a number; a budget without one is a hope.
+BUDGET = ("Read the context and your skill, and consult **at most three more sources**. The result "
+          "shape is in this brief — do not search for a schema, a template or a reference file, and do "
+          "not read Holon's own source to plan. When the budget is spent, write the result with what "
+          "you have: a thin result is rework, an unfinished run is nothing.")
+
 
 def holon_command(home: Home) -> str:
     """How an agent invokes the kernel from any shell. Prefers an installed `holon` command so a
@@ -67,6 +79,11 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
         context_md=str(d / "context.md"), result_path=str(result_path), workdir=workdir, holon=holon,
         envelope_path=str(d / "envelope.schema.json"))
     md = lib.render(lib.read(skill, file, dept), variables)
+    # R2 (the 2026-10-20 bridge plan): the exploration budget is rendered here, once, for
+    # every stage — not copied into each brief. Seven copies of one paragraph is exactly
+    # the redundancy the bridge plan set out to remove, and the kernel's own lint says so
+    # ("dry.paragraph"). The budget is the kernel's rule, so the kernel states it.
+    md = md.rstrip() + "\n\n## Your budget\n\n" + BUDGET
     if scope and (scope["roots"] or scope.get("read_roots") or scope["commands"] or scope["act_commands"]):
         cmds = scope["commands"] + (scope["act_commands"] if vocab.POSTURE[stage] == "act" else [])
         md = md.rstrip() + "\n\n## Your reach\n\n" + (

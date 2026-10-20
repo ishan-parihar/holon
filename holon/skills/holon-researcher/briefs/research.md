@@ -30,6 +30,4 @@ Follow the `holon-employee` skill's turn-budget section. The exact envelope shap
  "learnings": ["lessons for your own memory"], "proposals": ["improvements to the department or the OS"]}
 ```
 
-Every terrain item is saved to the department's knowledge base. **Budget.** Read the context and your skill, then consult at most three more sources. The result shape is here — do not search for a schema, a template or a reference file. When the budget is spent, hand in what you have: a thin result is rework, an unfinished run is nothing.
-
-No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.
+Every terrain item is saved to the department's knowledge base. No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.

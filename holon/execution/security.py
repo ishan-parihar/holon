@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
 import sqlite3
@@ -45,10 +46,13 @@ class AuthError(PermissionError):
 
 @dataclass
 class Principal:
-    kind: str                       # chair | employee | anonymous
+    kind: str                       # chair | employee | intake | anonymous
     employee_id: str | None = None
     run_id: str | None = None       # set when authenticated by a run token
     legacy: bool = False            # no Chair key configured: open mode
+    dept_id: str | None = None      # an intake key's department
+    floor: str = "G1"               # an intake key's grade floor
+    task_classes: tuple[str, ...] = ()   # the classes an intake key may file
 
     @property
     def actor(self) -> str:
@@ -56,6 +60,8 @@ class Principal:
             return CHAIR
         if self.kind == "employee":
             return f"emp:{self.employee_id}"
+        if self.kind == "intake":
+            return f"intake:{self.dept_id}"
         return "anonymous"
 
 
@@ -128,6 +134,76 @@ class Auth:
     def revoke_employee_key(self, employee_id: str) -> None:
         with write_txn(self.conn):
             self.conn.execute("UPDATE employees SET key_hash=NULL WHERE id=?", (employee_id,))
+
+    # ── intake keys (G4: the Chair-key-free external intake) ─────────────
+    def issue_intake_key(self, dept: str, floor: str = "G1", task_classes: list[str] | None = None) -> str:
+        """A scoped credential that files work into ONE department, at a grade floor.
+
+        A scanner in a venture pool has no Holon identity, so before this every lead it
+        found stopped at the Chair. This is the credential that ends that stop — and it
+        is deliberately not a second Chair key: it can file work into its own
+        department, and nothing else. It cannot approve, cannot decide, and cannot
+        reach a Chair command at all.
+
+        The floor and the classes come from `[intake.dept.<slug>]` when that stanza
+        exists, so the configuration file is the one place the Chair states them; the
+        arguments here are the fallback for an instance with no such stanza.
+
+        Only the hash is stored (like every other credential here). The key itself is
+        returned to the caller once, and lives in the scanner's own environment.
+        """
+        from holon.execution.service import load_config
+        cfg = ((load_config(self.home).get("intake") or {}).get("dept") or {}).get(dept) or {}
+        floor = cfg.get("grade_floor", floor)
+        classes = cfg.get("task_classes", task_classes or [])
+        key = "hik_" + secrets.token_urlsafe(24)
+        with write_txn(self.conn):
+            self._put_raw("intake_key:" + dept, json.dumps({
+                "hash": digest(key), "floor": floor, "task_classes": list(classes),
+                "created_at": now(),
+            }))
+        return key
+
+    def revoke_intake_key(self, dept: str) -> None:
+        """The Chair takes the key back: the department's intake stops working."""
+        with write_txn(self.conn):
+            self.conn.execute("DELETE FROM settings WHERE key=?", ("intake_key:" + dept,))
+
+    def intake_keys(self) -> list[dict]:
+        """Each department's intake key: its floor and its classes, never the key."""
+        rows = []
+        for (value,) in self.conn.execute("SELECT value FROM settings WHERE key LIKE 'intake_key:%'"):
+            d = json.loads(value)
+            rows.append({"dept": d.get("dept", ""), "floor": d.get("floor", "G1"),
+                         "task_classes": d.get("task_classes", []), "created_at": d.get("created_at", "")})
+        for r in self.conn.execute("SELECT key, value FROM settings WHERE key LIKE 'intake_key:%'"):
+            dept = r[0].split(":", 1)[1]
+            for row in rows:
+                if not row["dept"]:
+                    row["dept"] = dept
+        return sorted(rows, key=lambda r: r["dept"])
+
+    def _put_raw(self, key: str, value: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO settings VALUES (?,?)", (key, value))
+
+    def intake_principal(self, key: str) -> Principal:
+        """Who an intake key is: the department it may file into, and nothing more.
+
+        A key that is unknown, revoked, or rotated away is nobody — never the Chair.
+        That is the property the earlier false diagnosis turned up in the MCP seam: a
+        lost credential must not silently become a more powerful one.
+        """
+        if not key or not key.startswith("hik_"):
+            raise AuthError("not an intake key")
+        h = digest(key)
+        row = self.conn.execute(
+            "SELECT key, value FROM settings WHERE key LIKE 'intake_key:%'").fetchall()
+        for k, value in row:
+            d = json.loads(value)
+            if d.get("hash") == h:
+                return Principal("intake", dept_id=k.split(":", 1)[1],
+                                 floor=d.get("floor", "G1"), task_classes=tuple(d.get("task_classes", [])))
+        raise AuthError("intake key is unknown or revoked")
 
     # ── resolution ────────────────────────────────────────────────────────
     def agent_principal(self, token: str | None, key: str | None) -> Principal:

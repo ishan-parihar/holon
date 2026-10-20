@@ -259,9 +259,9 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive
     #   "final message"  the body ended with the JSON object and wrote no result.json —
     #                    the path the brief names ("end your final message with that
     #                    JSON object") and the shape both real harnesses end in when
-    #                    they do not stop (measured 2026-10-20: jcode 36 tool calls / 0
-    #                    submits; operant 66 tool calls / 40 iterations / 0 — both cut
-    #                    holding a well-formed result, and both discarded it).
+    #                    they do not stop (measured 2026-10-20: one ran 36 tool calls with
+    #                    0 submits, the other 66 tool calls and 40 iterations with 0 —
+    #                    both cut holding a well-formed result, and both discarded it).
     #   "stdout-json"    a bare JSON summary with no reply field inside it.
     # A body that printed no JSON at all stays a contract breach: nothing here
     # manufactures an envelope, and the log records which path each run took.

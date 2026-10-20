@@ -24,7 +24,7 @@ LEASE_S = {"research": 1800, "shape": 900, "plan": 1800, "approve": 900, "execut
 WORK_STATUSES = ("blocked", "open", "waiting", "needs_input", "done", "failed", "cancelled")
 STAGE_STATUSES = ("ready", "claimed", "done", "failed", "cancelled")
 TERMINAL = ("done", "failed", "cancelled")
-SOURCES = ("chair", "agent", "audit", "schedule", "kernel")
+SOURCES = ("chair", "agent", "audit", "schedule", "kernel", "intake")
 RISKS = ("low", "normal", "high", "irreversible")
 GRADES = (0, 1, 2, 3, 4)
 GRADE_NAMES = {0: "routine", 1: "minor", 2: "significant", 3: "major", 4: "critical"}
@@ -64,7 +64,7 @@ EMPLOYEE_STATUSES = ("probation", "active", "paused", "retired")
 CHAIR = "chair"
 EXECUTIVE = "executive"
 # who may run a command (the command registry declares one per command; R3 enforces it)
-ACTOR_CLASSES = ("chair", "employee", "any", "kernel")
+ACTOR_CLASSES = ("chair", "employee", "intake", "any", "kernel")
 
 # ── memory ───────────────────────────────────────────────────────────────
 MEMORY_KINDS = ("fact", "decision", "constraint", "preference", "lesson", "open_question", "glossary", "artifact")

@@ -25,10 +25,6 @@ approver whose authority covers that grade, so make it reviewable in under two m
    a `dept`, and `after: [index]` when it must wait for an earlier child.
 6. `needs_input` only when a decision that belongs to the Chair blocks planning: one question,
    with the options and your recommendation.
- 7. **A budget, and it is small.** Read the context, load the planner skill, and consult at most
-    three more sources. The result shape is below — do not search for a schema, a template or a
-    reference file, and do not read Holon's own source to plan. When the budget is spent, write
-    the result with what you have: a missing step is rework, an unfinished run is nothing.
 
 ## Budget
 

@@ -289,6 +289,32 @@ def cmd_hr_key(args, k):
          f"{key}\nGive this to {args.employee}'s harness session as HOLON_KEY. It is shown once.")
 
 
+@command("intake key", "chair", "issue (or revoke) a department's intake key: the Chair-key-free "
+         "external intake, scoped to one department, one grade floor and one set of task classes",
+         arg("dept"), arg("--floor", default="G1", help="the highest grade this key may file"),
+         arg("--task-class", action="append", default=[], help="a task class it may file (repeat)"),
+         arg("--revoke", action="store_true"))
+def cmd_intake_key(args, k):
+    if args.revoke:
+        k.auth.revoke_intake_key(args.dept)
+        _out(args, {"revoked": args.dept}, f"intake key revoked for {args.dept}")
+        return
+    k.org.dept(args.dept)  # a key for a department that does not exist would be a key for nothing
+    key = k.auth.issue_intake_key(args.dept, floor=args.floor, task_classes=args.task_class)
+    _out(args, {"dept": args.dept, "key": key, "floor": args.floor, "task_classes": args.task_class},
+         f"{key}\nGive this to {args.dept}'s scanner as its intake key "
+         f"(holon task add --intake-key <key>). It files work into {args.dept} only, "
+         f"at floor {args.floor}. It is shown once.")
+
+
+@command("intake list", "chair", "each department's intake key: its floor and its task classes, "
+         "never the key itself", mutates=False)
+def cmd_intake_list(args, k):
+    rows = k.auth.intake_keys()
+    _out(args, rows, "\n".join(f"{r['dept']:<24} floor {r['floor']}  classes: "
+                               f"{', '.join(r['task_classes']) or 'any'}" for r in rows) or "no intake keys")
+
+
 @command("emp list", "any", "employees", arg("--dept"), arg("--all", action="store_true", help="include retired"),
          mutates=False)
 def cmd_emp_list(args, k):
@@ -313,7 +339,8 @@ def cmd_emp_card(args, k):
 
 
 # ── work ──────────────────────────────────────────────────────────────────
-@command("task add", "chair", "add work (a root, or nested under --parent)",
+@command("task add", "intake", "add work (a root, or nested under --parent). The Chair acts directly; "
+         "an intake key (G4) files into its own department only, at its floor",
          arg("title"), arg("--intent", required=True, help="text, '-' for stdin, or @file"),
          arg("--acceptance", help="how done will be judged"), arg("--project", help="project ref, e.g. traj:<node>"),
          arg("--parent"), arg("--after", action="append", default=[], help="work this waits for (repeat)"),
@@ -322,9 +349,21 @@ def cmd_emp_card(args, k):
          arg("--task-class"), arg("--risk", default="normal", choices=list(vocab.RISKS)), arg("--workdir"),
          arg("--due"), arg("--max-attempts", type=int, default=2),
          arg("--lane", default="auto", choices=["auto", "fast", "full"],
-             help="auto: the decision model picks; fast runs only if the kernel grades the work G0"))
+             help="auto: the decision model picks; fast runs only if the kernel grades the work G0"),
+         arg("--intake-key", help="G4: file with an intake key instead of the Chair's authority "
+             "(scoped to one department, one grade floor, one set of task classes)"))
 def cmd_task_add(args, k):
     intent = _text_arg(args.intent)
+    if args.intake_key:
+        # G4: the Chair-key-free external intake. The key files the work; it does not
+        # approve, decide, or reach anything else. The kernel's own scoping checks run
+        # inside intake_file, and each refusal names what was tried.
+        t = k.intake_file(args.intake_key, args.title, intent, dept=args.dept,
+                          task_class=args.task_class, risk=args.risk,
+                          acceptance=_text_arg(args.acceptance), priority=args.priority)
+        stage = k.work.stages(t["id"])
+        _out(args, t, _line(t) + (f"\n  first stage: {stage[0]['stage']} {stage[0]['id']}" if stage else ""))
+        return
     routed = k.route_dept(args.title, intent) if args.dept == "auto" else None
     lane, cls = k.intake_lane(args.title, intent, None if args.lane == "auto" else args.lane)
     t = k.work.add_work(args.title, intent, acceptance=_text_arg(args.acceptance),
@@ -1582,6 +1621,11 @@ def _allowed(cmd: Command, principal) -> bool:
         return True
     if cmd.actor == "any":
         return True
+    if cmd.actor == "intake":
+        # G4: an intake key reaches exactly the commands that file work, and nothing else.
+        # It is never the Chair, so it can never approve, decide or read the Chair's
+        # surfaces. The Chair reaches it too, because the Chair can do anything.
+        return principal.kind == "intake" and cmd.path == ("task", "add")
     return cmd.actor == "employee" and principal.kind == "employee"
 
 
@@ -1612,7 +1656,18 @@ def main(argv: list[str] | None = None, broker: dict | None = None) -> int:
         k = Kernel(home, actor="anonymous")
         principal = k.auth.agent_principal(broker.get("token"), broker.get("key")) if broker is not None \
             else k.auth.principal(args.token)
-        if principal.legacy and cmd.mutates and cmd.path != ("init",):
+        if principal.kind == "anonymous" and getattr(args, "intake_key", None):
+            # G4: an intake key is its own kind of credential — scoped to one department,
+            # one grade floor, one set of task classes, and never the Chair.
+            try:
+                principal = k.auth.intake_principal(args.intake_key)
+            except Exception as e:
+                print(f"holon: not allowed: {e}", file=sys.stderr)
+                return FORBIDDEN
+        if principal.legacy and cmd.mutates and cmd.path != ("init",) and principal.kind != "intake":
+            # open mode (no Chair key): the CLI acts as the Chair, and mutating commands
+            # warn. An intake key is not the Chair and is scoped, so it does not warn —
+            # it is exactly the credential the Chair configured.
             print("holon: authentication is not configured (open mode); run `holon init` to create the Chair key",
                   file=sys.stderr)
         if not _allowed(cmd, principal):

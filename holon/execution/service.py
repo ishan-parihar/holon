@@ -54,6 +54,10 @@ DEFAULT_CONFIG = {
                 "build_regression_samples": 10, "build_regression_drop": 0.25},
     "retention": {"runs_days": 0, "messages_days": 0, "backup_max_age_days": 7},
     "pilot": {"depts": []},   # pilot departments: outside-reach floors at G4 — the Chair's call, job by job
+    # G4 (the Chair-key-free external intake): [intake.dept.<slug>] names the grade floor and
+    # the task classes a department's intake key may file. The key itself lives with the
+    # scanner; only its hash is stored, and the key can never approve or decide.
+    "intake": {"dept": {}},
     # department secrets (G8, docs/BYLAWS.md §6): [secrets.dept.<slug>] VAR = path to a 0600 key file;
     # resolved into the run's environment at claim — the value never lives in config
     "secrets": {"dept": {}},
@@ -1544,6 +1548,47 @@ class Kernel:
                             "budget ran out); its output is in driver.log",
                             actor=f"emp:{claimed.employee['id']}" if claimed.employee else None)
         return self.submit(claimed.run["id"], out["envelope"], out["exit_code"], driver_output=out)
+
+    def intake_file(self, key: str, title: str, intent: str, *, dept: str | None = None,
+                    task_class: str | None = None, risk: str = "normal",
+                    acceptance: str | None = None, priority: int = 3) -> dict:
+        """File work with an **intake key** — G4, the Chair-key-free external intake.
+
+        A scanner in a venture pool has no Holon identity, so before this every lead it
+        found stopped at the Chair. This is the credential that ends that stop, and it is
+        scoped three ways so it is never a second Chair key:
+
+        1. **One department.** The key names its own; filing anywhere else is refused,
+           and the refusal names the department it tried.
+        2. **A grade floor the Chair sets per department.** A key at G1 cannot file an
+           irreversible job (G4) or anything the floor puts above it.
+        3. **The task classes the key may file**, so a key for `lead` does not file
+           `objective`.
+
+        The filed work is a normal root node: it enters the work graph, is planned,
+        approved, executed and verified like anything else. The key only *files*; it
+        never approves and never decides.
+        """
+        p = self.auth.intake_principal(key)
+        target = dept or p.dept_id
+        if not target:
+            raise PermissionError("an intake key must name the department it files into")
+        if target != p.dept_id:
+            raise PermissionError(f"an intake key for {p.dept_id} cannot file into {target}")
+        if p.task_classes and task_class and task_class not in p.task_classes:
+            raise PermissionError(f"an intake key for {p.dept_id} may not file task class "
+                                   f"{task_class!r} (it may file: {', '.join(p.task_classes)})")
+        # the floor: the Chair's per-department limit, and the risk's own floor
+        risk_floor = grading.RISK_FLOOR.get(risk, 1)
+        limit = grading.parse_grade(p.floor) if isinstance(p.floor, str) else 1
+        if risk_floor > limit:
+            raise PermissionError(f"an intake key for {p.dept_id} has floor {p.floor}; "
+                                   f"this job is {risk} (floor G{risk_floor})")
+        d = self.org.dept(target)
+        work = self.work.add_work(title, intent, dept=d["id"], task_class=task_class, risk=risk,
+                                   acceptance=acceptance, priority=priority, source="intake",
+                                   requested_by=p.actor, expand=True)
+        return work
 
     def chair_channels(self) -> set[str]:
         """The Chair's channel identities (H8): '<platform>:<user id>' refs, e.g. 'telegram:123456'.
