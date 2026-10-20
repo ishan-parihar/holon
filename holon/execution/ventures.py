@@ -56,10 +56,14 @@ def _unescape(text: str) -> str:
             i += 1
             continue
         nxt = text[i + 1]
-        if nxt in ("u", "x") and i + 5 < len(text) + 1:
+        # `\x` takes TWO hex digits and `\u` takes FOUR. Reading four for both left every `\x`
+        # escape raw — and the pools write a multiplication sign as `\xD7`, so a charter read
+        # that way showed the operator's escape sequence instead of the character.
+        width = {"u": 4, "x": 2}.get(nxt)
+        if width and i + 2 + width <= len(text):
             try:
-                out.append(chr(int(text[i + 2:i + 6], 16)))
-                i += 6
+                out.append(chr(int(text[i + 2:i + 2 + width], 16)))
+                i += 2 + width
                 continue
             except ValueError:
                 pass
@@ -269,7 +273,12 @@ def venture_import(k, pool: Path, dept: str, dry_run: bool = True) -> dict:
     v = read_venture(pool)
     rows = [legacy_cron(p) for p in v["protocols"]]
     with_skills = sum(1 for r in rows if r["skills"])
-    outside = [r["title"] for r in rows if k._external({"title": r["title"], "intent": r["intent"]})]
+    # Outside-reach is decided by the protocol's own words, not by the decision model: the model
+    # is off by default, it rate-limits, and it fails — and a job the model cannot judge reads as
+    # internal, which for an import means it lands enabled and scheduled. The verbs that reach
+    # people outside the organization are named in the protocol itself (the same floor the
+    # ordinary intake uses), so the import sees the same thing the Chair's rule means.
+    outside = [r["title"] for r in rows if k._external_by_name(r["title"], r["intent"])[0]]
 
     summary = {"dept": dept, "pool": str(v["pool"]), "charter": v["charter"],
                "protocols": len(rows), "protocols_with_skills": with_skills,
