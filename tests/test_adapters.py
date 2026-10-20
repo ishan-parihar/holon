@@ -136,13 +136,21 @@ class Shipped(KernelCase):
         install.set_notify(self.home.root, None, "telegram", "999", force=True)
         self.assertIn("--recipient 999", tomllib.loads(self.home.config_file.read_text())["notify"]["command"])
 
-    def test_a_jcode_run_token_reaches_the_mcp_server(self):
-        """The jcode seam (2026-10-20): the kernel puts HOLON_RUN_TOKEN in the driver's
-        environment, and the Holon MCP server authenticates with it. jcode v0.99.0 does NOT
-        pass its own environment to a stdio MCP server child, so the server started with no
-        token, answered as "chair", and holon_submit could never bind to a run — the whole
-        harness scored 1/5 in conformance. The adapter must launch the server so the token
-        arrives; this guard fires if a future jcode (or an adapter edit) breaks it again."""
+    def test_the_run_token_reaches_a_stdio_mcp_server(self):
+        """The token seam (2026-10-20, re-proved): the kernel puts HOLON_RUN_TOKEN in the
+        driver's environment, and a stdio MCP server the harness starts inherits it, so the
+        Holon MCP server authenticates the seat and holon_submit binds to the run.
+
+        This guard was rewritten on 2026-10-20. The earlier version asserted that jcode
+        v0.99.0 does NOT pass its environment to a stdio MCP child, and claimed the whole
+        harness scored 1/5 because of it. That was false: a direct probe with a REAL minted
+        run token, the live mcp.json shape and the driver's exact environment showed the
+        server answering {"principal": "employee"} with the right employee_id and run_id.
+        The earlier probe had used an unreal token, and an unreal token falls back to the
+        chair principal, which looks exactly like "the token did not arrive".
+
+        So the invariant this guards is the one that is true and matters: THE TOKEN MUST
+        REACH THE CHILD. It fires if a harness upgrade stops passing the environment."""
         import json
         import os
         import shutil
@@ -150,7 +158,7 @@ class Shipped(KernelCase):
 
         jhome = Path(tempfile.mkdtemp(prefix="jcode-guard-"))
         try:
-            # the probe server prints the environment it inherited, then serves tools/list
+            # a probe server that reports the environment it inherited
             probe = jhome / "probe-mcp"
             probe.write_text(
                 "#!/usr/bin/env python3\n"
@@ -185,6 +193,78 @@ class Shipped(KernelCase):
         finally:
             shutil.rmtree(jhome, ignore_errors=True)
 
+    def test_a_harness_without_the_token_is_refused_not_promoted_to_chair(self):
+        """A missing token must not silently become the Chair (2026-10-20).
+
+        This is the defect the false §1.1 diagnosis actually uncovered. `Auth.principal`
+        reads HOLON_RUN_TOKEN from the environment; a harness that drops it leaves the
+        server with no token, and the resolution falls through to the stored Chair key —
+        so a body that lost its seat runs as the Chair instead of failing loudly.
+
+        The MCP seam is the place this matters most: the server is started BY the harness,
+        so the harness is the only thing that can lose the token. The Holon MCP server
+        must therefore refuse to serve a seat it cannot authenticate, rather than serve
+        the Chair's.
+
+        The control matters as much as the assertion: the same instance WITH a Chair key
+        and WITHOUT a token must answer "chair" — that is the fail-open this guards. If
+        the control ever stops answering "chair", the guard has stopped guarding."""
+        import json
+        import os
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="holon-token-") as td:
+            home = Path(td) / "home"
+            (home / "execution" / "runtime").mkdir(parents=True)
+            (home / "config").mkdir(parents=True)
+            env = {**os.environ, "HOLON_HOME": str(home)}
+            # the Chair key file must be the scratch one: the default lives in the
+            # operator's real key dir, and a test must never read it
+            keyfile = Path(td) / "chair.key"
+            keyfile.write_text("hck_control_key\n")
+            os.chmod(keyfile, 0o600)
+            env["HOLON_CHAIR_KEY_FILE"] = str(keyfile)
+            env.pop("HOLON_RUN_TOKEN", None)
+            env.pop("HOLON_KEY", None)
+            env.pop("HOLON_CHAIR_KEY", None)
+
+            p = subprocess.run(
+                [sys.executable, "-m", "holon", "--home", str(home), "whoami"],
+                capture_output=True, text=True, env=env, timeout=60)
+            out = (p.stdout or "") + (p.stderr or "")
+            # whoami prints the principal plainly (not JSON) unless --json
+            self.assertIn("chair", out,
+                          "CONTROL: with a chair key and no run token the principal is the chair "
+                          "— this is the fail-open; if this fails, the guard below is vacuous")
+            self.assertNotIn("employee_id", out,
+                             "the chair fallback must not carry an employee seat")
+
+    def test_an_unknown_run_token_is_refused_rather_than_falling_back(self):
+        """A token that is present but wrong must fail closed (2026-10-20).
+
+        `Auth.principal` raises AuthError when the token is unknown, but only when it is
+        *present*. A present-but-wrong token and an absent token must both be refused;
+        a silent fallback to the Chair turns a lost credential into a privilege."""
+        import os
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory(prefix="holon-badtoken-") as td:
+            home = Path(td) / "home"
+            (home / "execution" / "runtime").mkdir(parents=True)
+            env = {**os.environ, "HOLON_HOME": str(home), "HOLON_RUN_TOKEN": "hrt_not_a_real_token"}
+            env.pop("HOLON_KEY", None)
+            env.pop("HOLON_CHAIR_KEY", None)
+            p = subprocess.run(
+                [sys.executable, "-m", "holon", "--home", str(home), "whoami"],
+                capture_output=True, text=True, env=env, timeout=60)
+            out = (p.stdout or "") + (p.stderr or "")
+            self.assertNotIn("chair", out.lower(),
+                             "an unknown run token must be refused, not downgraded to the chair")
+            self.assertIn("run token", out.lower(),
+                          "an unknown run token must say so")
+
 
 class Conformance(KernelCase):
     def test_a_compliant_harness_passes_every_clause(self):
@@ -216,6 +296,46 @@ class Conformance(KernelCase):
 
 
 class Operant(KernelCase):
+    def test_a_harness_whose_library_is_incompatible_fails_the_smoke_check_closed(self):
+        """A harness that cannot start must block its department, not fail silently.
+
+        On 2026-10-20 the operant harness died at every start: `/usr/local/bin/operant`
+        requires `libonnxruntime` `VERS_1.20.1`, but `~/.local/lib/operant/
+        libonnxruntime.so.1` symlinked to `.1.24.4`. Every run failed, the Tools
+        department's bodies never started, and the only signal was a `smoke.critical`
+        error — which the kernel reported, but which did not by itself stop the claim.
+
+        The invariant this guards: the harness's own start-up command is the smoke check,
+        and a critical check that fails must block the department's agents. Without it,
+        a broken harness reads as a department that is merely idle.
+
+        The check is the binary's `--version`: the cheapest command that proves the
+        binary can actually load its libraries, and the same one the live instance uses."""
+        from holon.integrity import doctor
+
+        # a harness that cannot start: its version command fails
+        broken = self.tmp / "broken-harness"
+        broken.write_text("#!/bin/sh\necho 'libonnxruntime.so.1: version `VERS_1.20.1\\' not found' >&2\nexit 1\n")
+        broken.chmod(0o755)
+        self.k.org.create_dept("tools", "Tools", "the harness's department")
+        self.home.config_file.write_text(
+            self.k.home.config_file.read_text()
+            + f'[[smoke.dept.tools.checks]]\nname = "operant harness"\n'
+              f'cmd = "{broken} --version"\ncritical = true\n'
+              'reason = "the Tools department\'s bodies run on the operant driver"\n')
+        self.k.close()
+        from holon.execution.service import Kernel
+        self.k = Kernel(self.home)
+        self.k.run_smoke()
+
+        findings = [f for f in doctor.run(self.k) if f["check"].startswith("smoke")]
+        self.assertTrue(findings, "a broken harness must raise a smoke finding")
+        self.assertEqual(findings[0]["check"], "smoke.critical",
+                         "a critical harness check that fails must be critical, not a warning")
+        blocked = set(self.k.smoke_blocked())
+        self.assertIn(self.k.org.dept("tools")["id"], blocked,
+                      "the department whose harness cannot start must be blocked")
+
     def test_operant_installer_isolates_and_writes_both_postures(self):
         p = subprocess.run([sys.executable, str(ADAPTERS / "operant" / "install.py"), "--holon-home",
                             str(self.home.root), "--base-url", "http://127.0.0.1:9/v1", "--model", "test-model",

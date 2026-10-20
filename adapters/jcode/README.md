@@ -45,24 +45,37 @@ timer whose `PATH` differs still runs the same binary. Re-run the installer to c
 ## What broke after v0.93 (2026-10-20) — read this before trusting the adapter
 
 **On jcode v0.99.0 this adapter scores 1/5 in conformance** (`holon adapter test jcode`: the
-`driver` clause passes; `plan`, `approve`, `execute` and `verify` fail). Two independent causes,
-both measured on a real jcode:
+`driver` clause passes; `plan`, `approve`, `execute` and `verify` fail).
 
-1. **The run token does not reach the MCP server.** On v0.93 an MCP server started with
-   `shared: false` saw the run's environment — a variable set for the run reached the server —
-   and that is what authenticated `holon_submit`. **On v0.99.0 it does not**: a probe server
-   printing its environment received no `HOLON_RUN_TOKEN`, so the server authenticated as
-   `{"principal": "chair"}` and every `holon_submit` was refused with *"no run: pass run_id, or
-   call from a run (HOLON_RUN_TOKEN)"*. jcode's `mcp.json` `env` block does **not** work around
-   it. The fix is to launch the server through a wrapper that injects the token, or to make the
-   CLI path primary (the body already has `$HOLON` and the token in its own environment).
-   Guarded by `test_a_jcode_run_token_reaches_the_mcp_server`.
-2. **The body does not stop.** Given a working provider it produced a *correct* plan envelope and
-   *did* call `holon_submit` — which was then refused for cause 1. With the MCP mount removed it
-   explored for 15+ minutes (58 tool calls) and never reached a submit. A driver turn cap and a
-   brief that names the exploration budget are the open fix.
+**What was wrong with the *first* diagnosis, and why it matters (corrected 2026-10-20).**
+An earlier version of this file claimed that on v0.99.0 the run token does not reach the MCP
+server, that the server authenticates as `{"principal": "chair"}`, and that every
+`holon_submit` is therefore refused. **That claim was false, and it was falsified by direct
+measurement:** with a *real* minted run token, the *live* `mcp.json` shape
+(`args: ["mcp"]`, no `--home`) and the driver's exact environment (`HOLON_HOME` +
+`HOLON_RUN_TOKEN`), the real `holon mcp` server answered
+`{"principal": "employee", "employee_id": "emp_…", "run_id": "run_…"}`. **The token does
+reach the child on v0.99.0.**
 
-**Nothing here is fixed in the adapter yet.** The claim this file used to make — that the MCP
-server sees the run's environment — was true on v0.93 and is false on v0.99.0; it is kept here as
-a versioned statement, not as a current guarantee. Until conformance passes again, treat this
+The earlier probe had used a token that was never real, and the failure mode looks
+identical either way: a missing *or* an unknown token falls back to the chair principal.
+The lesson is general: *a fallback identity is not evidence of a missing credential.*
+
+**What is actually true, and is worth a guard.** A harness that loses the token does not
+fail loudly — it **silently becomes the chair**. The MCP seam is where this bites, because
+the harness starts the server and is therefore the only thing that can lose the token.
+Guarded by `test_the_run_token_reaches_a_stdio_mcp_server` (the token must reach the child)
+and `test_a_harness_without_the_token_is_refused_not_promoted_to_chair` (the fail-open).
+
+**The one real cause of the 1/5: the body does not stop.** Measured 2026-10-20 with the
+gateway repointed to the live one, a real `plan` dispatch to a real jcode-driven employee
+ran **10 min 21 s**, **19 assistant turns**, **36 tool calls** (33 `bash`, 2 `read`,
+1 `skill_manage`) and **0 submits** — it was cut by the kernel's own timeout while still
+verifying facts. The body *did* reason its way to the right answer ("No write/edit/
+apply_patch tool → use `holon_submit`… I'll use mcp_call to holon_submit") and then kept
+exploring. A second session died the same way, reading the kernel's own source for the
+grading floor the brief forbids. The open fix is a **driver turn cap** and a **brief that
+names the exploration budget**; neither is implemented.
+
+**Nothing here is fixed in the adapter yet.** Until conformance passes again, treat this
 adapter as **unverified**: `holon adapter test jcode` is the gate, and it must reach 5/5.
