@@ -12,7 +12,7 @@ schema_version = 2
 modules = ["core", "records", "agents"]   # the legacy kb.toml set, unchanged
 
 [core]
-pointer_ignore = "BRIEF.md holon.toml docs/STATUS.md PERSONAL.md INDEX.md scripts/sync-public.sh"   # AGENTS.md path refs that live in the private overlay, not this repo
+pointer_ignore = "BRIEF.md holon.toml docs/STATUS.md PERSONAL.md INDEX.md scripts/sync-public.sh docs/design/2026-10-20-the-a-side-program-boundary-and-solutions.md"   # AGENTS.md path refs that live in the private overlay, not this repo
 # the gate this repo's own AGENTS.md names, as one command
 gate = "./scripts/gate.sh"
 # the judgement the repo's laws make mandatory

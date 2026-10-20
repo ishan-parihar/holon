@@ -5,7 +5,7 @@ description: "The work list from a red-team audit of the capability layer (units
 tags: [audit, capability-layer, units, policy, operant, notion, worklist]
 ---
 
-# 2026-10-16: the capability-layer audit — a work list for this repository
+# 2026-10-16: the capability-layer audit — the units, the pools, and the fences around them
 
 Status: **proposed work list** (published scrubbed; the full record with operator context lives
 in the private overlay). It was found by reading the kernel at `a513f4b`, the operant runtime's

@@ -167,3 +167,21 @@ class GenomePin(unittest.TestCase):
         digest = hashlib.sha256(kb.GENOME.read_bytes()).hexdigest()
         self.assertEqual(digest, kb.GENOME_SHA256,
                          f"the vendored CLI's checksum moved: update GENOME_SHA256 (now {digest})")
+
+    def test_the_plan_the_code_cites_exists_and_names_the_phases(self):
+        """`holon/capabilities/kb.py` cites `docs/plans/2026-10-19-holon-knowledge-layer.md` as
+        its plan. The citation pointed at a file that did not exist: the module's own docstring
+        named a plan no reader could open, and the phases it names (K1 to K4) were only in the
+        code's section comments. The document exists, and its claims are checked against the
+        code — a plan nobody can open is not a plan."""
+        repo = Path(__file__).resolve().parents[1]
+        plan = repo / "docs" / "plans" / "2026-10-19-holon-knowledge-layer.md"
+        self.assertTrue(plan.exists(), "the plan the KB module cites is missing")
+        text = plan.read_text()
+        for phase in ("K1", "K2", "K3", "K4"):
+            self.assertIn(f"**{phase}**", text, f"the plan does not describe {phase}")
+        # the verbs the plan names are the ones the kernel accepts
+        for verb in kb.READ_VERBS + kb.WRITE_VERBS:
+            self.assertIn(verb, text, f"the plan does not name the verb {verb!r}")
+        # and the plan's own claims about the seat policy hold
+        self.assertIn("The seat policy", text)

@@ -90,15 +90,46 @@ class Taxonomy(KernelCase):
 
     def test_a_class_nobody_in_reach_holds_is_reported_not_left_waiting(self):
         """A stage whose class no employee in reach holds can never be claimed. The kernel's own
-        doctor already reports a stage nobody can claim; it must know about the class gate too."""
+        doctor already reports a stage nobody can claim; it must know about the class gate too.
+        Every employee in reach must be narrowed away for the stage to be unreachable — one
+        unnarrowed colleague keeps it claimable."""
         from holon.integrity import doctor
-        self.configure('[classes]\norg = ["incident"]\neng = ["greeting"]\n')
-        # Bo is the only planner in eng, and his record names no class; the work carries one no
-        # employee holds — the class gate makes it unclaimable by everyone.
+        self.configure('[classes]\norg = ["incident"]\neng = ["greeting", "docs"]\n')
+        # every planner in eng is narrowed to a class the work does not carry
+        self.k.org.hire(name="Su", title="Greeting engineer", dept="eng", job_description="jd",
+                        roles=["planner"], driver="fake", reason="r", status="active",
+                        task_classes=["greeting"])["id"]
+        self.k.org.conn.execute("UPDATE employees SET task_classes=? WHERE id=?",
+                                ('["greeting"]', self.hod))
         self.add(dept="eng", task_class="poetry")
         findings = {f["check"] for f in doctor.run(self.k)}
         self.assertIn("classes.unstaffed", findings,
                       "a stage whose class no employee in reach holds is reported, not left waiting")
+
+    def test_an_unnarrowed_employee_keeps_a_classed_stage_claimable(self):
+        """The class gate narrows only the employees whose record names classes. A colleague whose
+        record names none may still pick the work up — so the doctor must not report the stage as
+        unstaffable. (The first cut of this check reported every classed stage on any instance
+        whose employees carried no classes at all: a false positive on a healthy organization.)"""
+        from holon.integrity import doctor
+        self.configure('[classes]\norg = ["incident"]\neng = ["greeting", "docs"]\n')
+        # work in a class the specialist does not hold: Bo (unnarrowed) may still claim it
+        self.add(dept="eng", task_class="docs")
+        self.assertIsNotNone(self.k.claim("plan", self.hod),
+                             "an employee whose record names no class may claim any stage")
+        findings = {f["check"] for f in doctor.run(self.k)}
+        self.assertNotIn("classes.unstaffed", findings,
+                         "an unnarrowed employee in reach keeps the stage claimable")
+        # but when the only colleague is narrowed away, the stage is reported
+        self.k.org.hire(name="Wa", title="Docs engineer", dept="eng", job_description="jd",
+                        roles=["planner"], driver="fake", reason="r", status="active",
+                        task_classes=["greeting"])
+        self.k.org.conn.execute("UPDATE employees SET task_classes=? WHERE id=?",
+                                ('["greeting"]', self.hod))
+        self.add(dept="eng", task_class="docs")
+        findings = {f["check"] for f in doctor.run(self.k)}
+        self.assertIn("classes.unstaffed", findings,
+                      "a stage whose only candidate is narrowed away is reported")
 
     def test_a_hire_may_not_name_a_task_class_the_taxonomy_does_not_carry(self):
         """A typo in `--task-classes` would narrow the employee to a class that exists nowhere:

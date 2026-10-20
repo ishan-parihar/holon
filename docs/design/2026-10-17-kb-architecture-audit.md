@@ -5,7 +5,7 @@ description: "The work list from a red-team audit of the kernel as a knowledge b
 tags: [audit, knowledge-base, memory, skills, context, episodes, worklist]
 ---
 
-# 2026-10-17: the knowledge-base audit — a work list for this repository
+# 2026-10-17: the knowledge-base audit — what an agent can write, read, join and synthesize
 
 Status: **proposed work list** (published scrubbed; the decision packet with the Chair's
 pending rulings is reproduced below). Found by tracing every store the kernel calls

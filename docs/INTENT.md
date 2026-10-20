@@ -58,6 +58,7 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
 | Joined recall | one deterministic answer fusing memory, episodes, skills, playbooks and verified results — the pull-mode counterpart of the context bundle | `holon recall`, `capabilities.skills.Library.search` |
 | Lineage | an item's provenance graph: supersedes chain, derived-from sources, links | `holon memory show` |
 | Law surface | the distribution's own law docs, served read-only to every agent (distilled copies stay checked by lint) | `holon law show`, `integrity.lint.pack_drift` |
+| Knowledge base | a department's own records with a lifecycle and a history: one git repository the kernel writes, one commit per write, and its wake text in the bundle | `holon kb seed`, `holon kb run`, `capabilities.kb.wake_for_dept` |
 
 ## The feedback loops
 

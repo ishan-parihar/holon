@@ -21,6 +21,7 @@ the one it replaces, and the earlier record is left readable so the reasoning su
 | [`INTENT.md`](INTENT.md) | LIVE | Intent | — |
 | [`2026-10-16-capability-layer-audit.md`](design/2026-10-16-capability-layer-audit.md) | LIVE | 2026-10-16: the capability-layer audit — a work list for this repository | — |
 | [`2026-10-17-kb-architecture-audit.md`](design/2026-10-17-kb-architecture-audit.md) | LIVE | 2026-10-17: the knowledge-base audit — a work list for this repository | — |
+| [`2026-10-19-holon-knowledge-layer.md`](plans/2026-10-19-holon-knowledge-layer.md) | LIVE | The knowledge layer: what a knowledge base is, and phases K1 to K4 | — |
 | [`install-script-patterns-2026-10-17.md`](install-script-patterns-2026-10-17.md) | LIVE | Install Script Patterns — Compressed Findings | — |
 | [`RECORDS.md`](RECORDS.md) | LIVE | Records — decisions (AD) and regressions (RG) — Generated zones below are written by genome rec emit; never hand-edit them. Topic → governing record… | — |
 | [`ASKS.md`](kb/ASKS.md) | LIVE | Operator questions and rulings — genome q add "<question>" · genome q rule Q1 "<ruling>" --applied <owner path>. A ruling is done onl… | — |

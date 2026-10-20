@@ -237,8 +237,10 @@ commit and run it again.
 | Taxonomy, 2026-10-20 | `hr hire --task-classes` was write-only — the employee's classes were stored and read by nothing, so the `dept:class` namespace named a class without binding it to a gate: a specialist claimed work in a class their record did not name | `test_an_employee_may_only_claim_the_task_classes_their_record_names` |
 | Taxonomy, 2026-10-20 | the class gate as first written also blocked *assigned* work, so a Chair's assignment to a specialist in a class they do not hold stranded the work forever — nobody else may claim assigned work | `test_a_narrowed_employee_still_claims_the_work_assigned_to_them` |
 | Taxonomy, 2026-10-20 | a stage whose class no employee in reach holds can never be claimed, and the doctor's unstaffed check knew nothing of the class gate: the work waited forever with no signal | `test_a_class_nobody_in_reach_holds_is_reported_not_left_waiting` |
+| Taxonomy, 2026-10-20 | the class check as first written reported every classed stage on an instance whose employees named no classes — five false errors on a healthy live instance, because an unnarrowed employee may still pick the work up | `test_an_unnarrowed_employee_keeps_a_classed_stage_claimable` |
 | Taxonomy, 2026-10-20 | a typo in `--task-classes` created a class the taxonomy does not carry: the employee could claim nothing, and nothing said so | `test_a_hire_may_not_name_a_task_class_the_taxonomy_does_not_carry` |
 | Taxonomy, 2026-10-20 | the class gate was invisible to the employee it narrows — the identity card named the roles, never the classes the record held | `test_an_employee_is_told_the_task_classes_they_hold` |
+| Knowledge layer, 2026-10-20 | `holon/capabilities/kb.py` cited `docs/plans/2026-10-19-holon-knowledge-layer.md` as its plan, and the file did not exist: the module named a plan no reader could open, and the phases (K1–K4) lived only in the code's section comments | `test_the_plan_the_code_cites_exists_and_names_the_phases` |
 
 ## Reading order for a new agent
 
