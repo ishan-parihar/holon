@@ -557,6 +557,12 @@ def pack_bylaws(k, f: Findings) -> None:
     from holon.bylaws import units as units_mod
     for p in units_mod.validate(k):
         f.add("error", "bylaws.manifest", "bylaws/units", p)
+    # A manifest outside the manifest directory is invisible to the kernel: the next sync would
+    # empty the units tables with no error. Catch it statically, before the sync runs.
+    for orphan in units_mod.orphan_manifests(k.home):
+        f.add("error", "bylaws.orphan", orphan,
+              f"a unit manifest outside {k.home.bylaws_units_dir.name}/ — the kernel cannot see it, and "
+              f"`holon bylaws sync` would empty the units tables; move it into {k.home.bylaws_units_dir}/")
     manifests, _ = units_mod.load(k.home)
     base = k.config.get("scope", {})
     known = {d["slug"] for d in k.org.depts()}

@@ -436,3 +436,11 @@ commands.
 
 Nothing about a unit is implicit: no inherited scope, no hidden authority — the manifest is
 the whole contract, the tables and registry are views of it.
+
+**A sync never empties the layer.** The tables are a view of the manifests, and the manifests
+are the source — so a manifest that is not in `$HOLON_HOME/bylaws/units/` is a capability the
+kernel cannot see. `holon bylaws sync` therefore **refuses** (and changes nothing) when the
+manifest directory yields no manifest while the tables hold units, or when a manifest exists at
+the layer's former path (`genome/units/`). `holon lint` and `holon doctor` both report such a
+manifest as `bylaws.orphan`, so the mistake is visible before any sync runs. Deleting a
+capability is the Chair's explicit act, never a side effect of a path change.

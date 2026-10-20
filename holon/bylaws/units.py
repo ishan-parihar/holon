@@ -74,12 +74,47 @@ def load(home) -> tuple[dict[str, dict], list[str]]:
     return units, problems
 
 
+# The manifest directory's former name (the layer was "genome" before the bylaws rename). A
+# manifest left there is invisible to load() and to lint: the capability layer's only unit
+# disappears from the tables on the next sync, with no error and no finding. The doctor names
+# it; sync refuses to empty the tables while it is there.
+LEGACY_MANIFEST_DIRS = ("genome/units",)
+
+
+def orphan_manifests(home) -> list[str]:
+    """Manifest files that exist outside the manifest directory — the layer's old path, or a
+    directory that was renamed. Each is a capability the kernel cannot see."""
+    out: list[str] = []
+    for rel in LEGACY_MANIFEST_DIRS:
+        d = home.root / rel
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob("*.toml")):
+            out.append(f"{rel}/{f.name}")
+    return out
+
+
 def sync(k) -> dict:
     """Regenerate the units tables from the manifests (the only writer). Refuses on any parse
-    problem: a half-parsed bylaws is worse than a stale one."""
+    problem: a half-parsed bylaws is worse than a stale one. And refuses to empty the tables
+    when the manifest directory yields nothing while the tables hold units — the capability
+    layer's own deletion is never a sync's job (a manifest at the wrong path would take it)."""
     units, problems = load(k.home)
     if problems:
         raise ValueError("; ".join(problems))
+    orphans = orphan_manifests(k.home)
+    current = k.wconn.execute("SELECT count(*) FROM units").fetchone()[0]
+    if orphans and not units:
+        raise ValueError(
+            f"refusing to empty the units tables: {len(orphans)} manifest(s) exist outside "
+            f"{k.home.bylaws_units_dir.name}/ ({', '.join(orphans)}) — move them there, or remove them "
+            "if the capability is retired")
+    if not units and current:
+        raise ValueError(
+            f"refusing to empty the units tables: {current} unit(s) are synced but "
+            f"{k.home.bylaws_units_dir} holds no manifest — moving a manifest out of the directory "
+            "would silently drop the capability layer; restore it or sync from a manifest directory "
+            "that still has it")
     n_services = sum(len(u["services"]) for u in units.values())
     with write_txn(k.wconn):
         k.wconn.execute("DELETE FROM units")

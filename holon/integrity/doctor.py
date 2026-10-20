@@ -125,6 +125,13 @@ def run(k) -> list[dict]:
     # U1/U3: the bylaws's synced view must not be older than its source, nor the registry than the sync
     from holon.bylaws import units as units_mod
     manifests, _ = units_mod.load(k.home)
+    # A manifest outside the manifest directory is invisible to load() and to lint: the next
+    # `bylaws sync` would empty the capability layer with no error. Name it before it happens.
+    for orphan in units_mod.orphan_manifests(k.home):
+        add("error", "bylaws.orphan",
+            f"{orphan}: a unit manifest outside {k.home.bylaws_units_dir.name}/ — the kernel cannot see "
+            f"it, and `holon bylaws sync` would empty the units tables; move it into "
+            f"{k.home.bylaws_units_dir}/")
     if manifests:
         newest = max(u["mtime"] for u in manifests.values())
         row = w.execute("SELECT max(synced_at) FROM units").fetchone()

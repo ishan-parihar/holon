@@ -294,3 +294,44 @@ class Bylaws(KernelCase):
         self._sync()
         found = [f for f in lint.run(self.k, ["bylaws"]) if f["severity"] == "error"]
         self.assertTrue(any("effect" in f["message"] and "note" in f["message"] for f in found), found)
+
+    def test_a_manifest_outside_the_manifest_directory_never_empties_the_capability_layer(self):
+        """The layer was renamed genome->bylaws; a manifest left at the old path is invisible to
+        the kernel, and `bylaws sync` used to empty the units tables with no error and no lint
+        finding -- one command from losing the whole capability layer."""
+        self._sync()
+        self.assertEqual(self.k.wconn.execute("SELECT count(*) FROM units").fetchone()[0], 1)
+        # the manifest moves to the path the kernel no longer reads
+        legacy = self.home.root / "genome" / "units"
+        legacy.mkdir(parents=True)
+        (self.home.bylaws_units_dir / "vault.toml").rename(legacy / "vault.toml")
+        # the sync refuses, and the tables survive
+        with self.assertRaises(ValueError) as cm:
+            self._sync()
+        self.assertIn("refusing to empty", str(cm.exception))
+        self.assertEqual(self.k.wconn.execute("SELECT count(*) FROM units").fetchone()[0], 1,
+                         "the units tables were emptied by a sync that could not see the manifest")
+        # and lint names the orphan before anything runs
+        found = [f for f in lint.run(self.k, ["bylaws"]) if f["severity"] == "error"]
+        self.assertTrue(any(f["rule"] == "bylaws.orphan" and "vault.toml" in f["where"] for f in found), found)
+        # doctor names it too
+        found = [f for f in doctor.run(self.k) if f["check"] == "bylaws.orphan"]
+        self.assertTrue(any("vault.toml" in f["message"] for f in found), found)
+        # moving it back restores the layer
+        (legacy / "vault.toml").rename(self.home.bylaws_units_dir / "vault.toml")
+        self._sync()
+        self.assertEqual(self.k.wconn.execute("SELECT count(*) FROM units").fetchone()[0], 1)
+
+    def test_a_sync_never_empties_populated_tables_from_an_empty_manifest_directory(self):
+        """Whatever the cause -- a manifest moved, a directory renamed, a mount that vanished --
+        a sync that finds no manifest must not silently delete the synced capability layer."""
+        self._sync()
+        self.assertEqual(self.k.wconn.execute("SELECT count(*) FROM units").fetchone()[0], 1)
+        for f in self.home.bylaws_units_dir.glob("*.toml"):
+            f.unlink()
+        with self.assertRaises(ValueError) as cm:
+            self._sync()
+        self.assertIn("refusing to empty", str(cm.exception))
+        self.assertEqual(self.k.wconn.execute("SELECT count(*) FROM units").fetchone()[0], 1)
+        self.assertEqual(self.k.wconn.execute("SELECT count(*) FROM unit_services").fetchone()[0], 1)
+
