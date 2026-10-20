@@ -74,19 +74,39 @@ def pin_binary(name: str, given: str | None = None, version_args: tuple[str, ...
     return binary
 
 
-def strip_block(text: str, begin: str, end: str, body: str = "") -> str:
-    """`text` without any copy of a managed block.
+def strip_block(text: str, begin: str, end: str, first_section: str = "") -> str:
+    """`text` without any copy of a managed block. Installers rewrite their harness's
+    config file and can drop the BEGIN line, so match either form.
 
-    An installer rewrites its harness's config and can drop the BEGIN line, so a block is matched
-    in two forms: whole (BEGIN through END), and a copy that lost only its BEGIN — which is
-    identifiable because the caller passes the body it writes. The two are removed separately:
-    making BEGIN optional in one pattern lets `.*?<end>` match from the start of the file, which
-    swallows the harness's own config along with the block. Everything else is kept exactly, so
-    stripping a file with no block is a no-op."""
-    out = re.sub(rf"{re.escape(begin)}\n.*?{re.escape(end)}\n*", "", text, flags=re.S)
-    if body and body.strip() and body in out:
-        out = out.replace(body, "")                     # the dropped copy's own lines
-        out = re.sub(rf"(?m)^[ \t]*{re.escape(end)}[ \t]*\n?", "", out)   # and its END marker
+    The block is anchored at its start — the BEGIN line, or the section it declares
+    when the BEGIN line is gone — and ends at the END line. A greedy match would eat
+    the configuration that surrounds the block, which is how a provider entry
+    disappears from a config file and the harness then has no endpoint.
+    """
+    # The block runs from its start to the END line, and its start is REQUIRED: a config
+    # without the block is left alone rather than eaten. There are two possible starts —
+    # the BEGIN line, and (when a rewriting tool dropped that line) the block's first
+    # section. The section is tried FIRST: a config that has a copy without its BEGIN
+    # line AND a copy with one would otherwise keep the wrong one.
+    starts = []
+    if first_section:
+        starts.append(re.escape(first_section) + r"\n")
+    if begin:
+        starts.append(re.escape(begin) + r"\n")
+    # Every copy of the block goes, whichever start it has: a config can hold a copy
+    # with its BEGIN line AND a copy without one (an installer that ran twice, or one
+    # that rewrote the file and dropped the line). Each pattern is applied until it
+    # stops matching, and then the other is tried too — so no copy is left behind.
+    out = text
+    for _ in range(8):  # a bound: a config with many copies still terminates
+        before = out
+        for start in starts:
+            out, _n = re.subn(rf"{start}.*?{re.escape(end)}\n*", "", out, flags=re.S)
+        # a BEGIN line with no block after it is a leftover of a removed copy
+        if begin:
+            out = re.sub(rf"{re.escape(begin)}\n", "", out)
+        if out == before:
+            break
     return out
 
 
