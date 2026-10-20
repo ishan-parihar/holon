@@ -103,8 +103,18 @@ def migrate(conn: sqlite3.Connection, db_name: str) -> list[str]:
                 conn.execute("PRAGMA foreign_keys=ON")
             else:
                 sql = "" if ".fts." in f.name and not fts else text  # FTS is optional; search falls back to LIKE
-                conn.executescript(f"BEGIN IMMEDIATE;\n{sql}\nINSERT INTO schema_migrations VALUES "
-                                   f"('{f.name}', '{now()}', '{checksum(text)}');\nCOMMIT;")
+                # A .sql migration may rebuild a table others reference (SQLite cannot alter a CHECK
+                # in place), and its DROP fails the FK checks at that statement. Deferring them for
+                # the transaction is what a .py migration does with foreign_keys=OFF. The pragma must
+                # NOT be prepended to this script: a migration's trigger bodies contain their own
+                # `BEGIN … END`, so a leading BEGIN IMMEDIATE would nest inside one and fail. It is
+                # set on the connection, and re-set after, so it covers the statements that need it.
+                conn.execute("PRAGMA defer_foreign_keys = ON")
+                try:
+                    conn.executescript(f"BEGIN IMMEDIATE;\n{sql}\nINSERT INTO schema_migrations VALUES "
+                                       f"('{f.name}', '{now()}', '{checksum(text)}');\nCOMMIT;")
+                finally:
+                    conn.execute("PRAGMA defer_foreign_keys = OFF")
         except BaseException:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")

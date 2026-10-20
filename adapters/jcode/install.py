@@ -46,8 +46,9 @@ enabled = false       # no unapproved proactive work
 
 
 def strip_block(text: str) -> str:
-    """The config without any copy of BLOCK: `jcode provider add` rewrites the file and can drop the BEGIN line."""
-    return install_lib.strip_block(text, BEGIN, END)
+    """The config without any copy of BLOCK: `jcode provider add` rewrites the file and can drop the
+    BEGIN line, so the body is passed too — a copy without its BEGIN is still this installer's."""
+    return install_lib.strip_block(text, BEGIN, END, BLOCK.split("\n", 1)[1])
 
 
 def main() -> int:

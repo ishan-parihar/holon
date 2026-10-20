@@ -74,10 +74,20 @@ def pin_binary(name: str, given: str | None = None, version_args: tuple[str, ...
     return binary
 
 
-def strip_block(text: str, begin: str, end: str) -> str:
-    """`text` without any copy of a managed block. Installers rewrite their harness's
-    config file and can drop the BEGIN line, so match either form."""
-    return re.sub(rf"(?:{re.escape(begin)}\n)?.*?{re.escape(end)}\n*", "", text, flags=re.S)
+def strip_block(text: str, begin: str, end: str, body: str = "") -> str:
+    """`text` without any copy of a managed block.
+
+    An installer rewrites its harness's config and can drop the BEGIN line, so a block is matched
+    in two forms: whole (BEGIN through END), and a copy that lost only its BEGIN — which is
+    identifiable because the caller passes the body it writes. The two are removed separately:
+    making BEGIN optional in one pattern lets `.*?<end>` match from the start of the file, which
+    swallows the harness's own config along with the block. Everything else is kept exactly, so
+    stripping a file with no block is a no-op."""
+    out = re.sub(rf"{re.escape(begin)}\n.*?{re.escape(end)}\n*", "", text, flags=re.S)
+    if body and body.strip() and body in out:
+        out = out.replace(body, "")                     # the dropped copy's own lines
+        out = re.sub(rf"(?m)^[ \t]*{re.escape(end)}[ \t]*\n?", "", out)   # and its END marker
+    return out
 
 
 def export_skills(home: Path, dest: Path, cwd: Path = REPO) -> None:

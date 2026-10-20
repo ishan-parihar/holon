@@ -5,6 +5,11 @@
 -- definition below is the current one, verbatim, with ONE change: the source CHECK
 -- gains 'intake'. The rows are copied unchanged.
 --
+-- Rebuilding a table others reference needs the FK checks deferred for the transaction
+-- (SQLite checks them per statement, so DROP would fail on the `outputs` and `runs`
+-- rows that point at these tasks). `migrate` defers them for every .sql migration, as
+-- a .py migration already does with foreign_keys=OFF.
+--
 -- The read API's views over tasks are dropped FIRST: SQLite drops a view whose table
 -- disappears, but the copy below reads the old table, so the views must be gone before
 -- the table is replaced. api_board and api_approvals both read tasks.

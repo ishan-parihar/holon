@@ -123,7 +123,11 @@ class Security(KernelCase):
         rc, manifest, _ = self.cli("help")
         self.assertEqual(rc, 0)
         actors = {c["command"]: c["actor"] for c in manifest}
-        for cmd in ("plan approve", "task add", "hr hire", "hr key", "dept profile", "audit judge"):
+        # `task add` is deliberately reachable by an intake principal as well as the Chair: a
+        # scanner files its own lead with an intake key and no Chair key (G4). Every other
+        # Chair-only command is unchanged.
+        self.assertEqual(actors["task add"], "intake")
+        for cmd in ("plan approve", "hr hire", "hr key", "dept profile", "audit judge"):
             self.assertEqual(actors[cmd], "chair", cmd)
         for cmd in ("claim", "submit", "run heartbeat", "msg send"):
             self.assertEqual(actors[cmd], "employee", cmd)
