@@ -197,6 +197,45 @@ def cmd_dept_list(args, k):
                              for d in ds))
 
 
+@command("dept export", "chair", "write a department's archive: its profile, its people (never their "
+         "keys), its reach, its checks, its secret PATHS, its routines and its knowledge bases (G12)",
+         arg("slug"), arg("--to", required=True, help="the directory to write the archive into"))
+def cmd_dept_export(args, k):
+    out = k.export_department(args.slug, args.to)
+    _out(args, out, f"archive: {out['path']}\n{out['dept']}: {out['employees']} employees, "
+                     f"{out['routines']} routines\n"
+                     "note: no secret value and no approval travels with it")
+
+
+@command("dept import", "chair", "create a department from an archive (G12). Every routine lands "
+         "unapproved: an import is not an approval", arg("archive"))
+def cmd_dept_import(args, k):
+    out = k.import_department(args.archive)
+    _out(args, out, f"{out['dept']}: {out['employees']} employees, {out['routines']} routines "
+                     f"(all unapproved)\n{out['note']}")
+
+
+@command("venture import", "chair", "read a venture's four artifacts (_org.yaml, cron-jobs/, smoke.yaml, "
+         "scripts/) and make them a department. A dry run unless --apply; every routine lands "
+         "unapproved, because an import is not an approval",
+         arg("path"), arg("--dept", required=True, help="the department slug to create"),
+         arg("--apply", action="store_true", help="create the department and its routines"))
+def cmd_venture_import(args, k):
+    from holon.execution import ventures
+    out = ventures.venture_import(k, Path(args.path).expanduser(), args.dept, dry_run=not args.apply)
+    if out["dry_run"]:
+        _out(args, out, f"dry run: {out['dept']}\n"
+                        f"  charter: {out['charter']}\n"
+                        f"  protocols: {out['protocols']} ({out['protocols_with_skills']} with their skills)\n"
+                        f"  checks: {out['checks']}   scripts: {out['scripts']}\n"
+                        f"  outside reach: {out['outside_reach']} of {out['protocols']}"
+                        + (f" — {', '.join(out['outside_reach_titles'][:5])}" if out["outside_reach"] else "")
+                        + "\n  nothing written; pass --apply to create it")
+        return
+    _out(args, out, f"{out['dept']}: {out['routines']} routines, {out['checks']} checks\n"
+                    f"{out['note']}")
+
+
 @command("dept roles", "any", "the department's role slots and who fills them", arg("slug"), mutates=False)
 def cmd_dept_roles(args, k):
     st = k.org.staffing(args.slug)
@@ -754,6 +793,12 @@ def legacy_cron(path: Path) -> dict:
             "source": str(path),
             "skills": skills, "enabled_toolsets": toolsets,
             "provenance": {"source": str(path), "fields": dict(carried), "dropped": []}}
+
+
+def venture_import(pool, dept: str, dry_run: bool = True, k=None) -> dict:
+    """The venture builder's seam, callable directly (the command wraps it)."""
+    from holon.execution import ventures
+    return ventures.venture_import(k, Path(pool), dept, dry_run=dry_run)
 
 
 @command("routine import", "chair", "propose routines from legacy cron-job protocols (cron-jobs/*.md); a dry "

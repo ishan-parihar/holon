@@ -1,0 +1,123 @@
+"""Tests first for the bridge plan's M3 — G12, the department archive.
+
+There was no `holon dept export` / `dept import`, so every venture department had to
+be onboarded by hand: a wave was per-pool toil instead of one command. The archive
+makes a wave configuration.
+
+Three properties, each a guard here:
+- export → import round-trips the department's shape;
+- the archive carries **no secret value** (the secrets are paths, never the keys);
+- an imported routine lands **unapproved** — an import is not an approval.
+"""
+
+import json
+from pathlib import Path
+
+from tests.helpers import KernelCase
+
+
+class DepartmentArchive(KernelCase):
+    """M3. One command per department instead of a day of hand-work."""
+
+    def department(self, slug: str = "eng"):
+        """A department with its head, a routine, and a scoped reach.
+
+        `eng` already exists in KernelCase with a head; a second department is created
+        for the tests that need one of their own."""
+        if not any(d["slug"] == slug for d in self.k.org.depts()):
+            self.k.org.create_dept(slug, slug.title(), "the test department")
+        d = self.k.org.dept(slug)
+        a = self.k.add_routine("Digest", "Summarise the inbox", dept=slug, cron="0 7 * * *",
+                               workdir=str(self.workdir), strict=False)
+        self.k.approve(a["id"])  # an approved routine, so the archive has one to carry
+        return d
+
+    def test_export_writes_one_archive(self):
+        """The archive holds the department, not the instance: its profile and slots, its
+        employees' records, its scope roots, its smoke checks, its secrets bindings as
+        paths, its routines with their playbooks, and its KB bindings."""
+        d = self.department()
+        out = self.k.export_department(d["id"], str(self.tmp / "archive"))
+        self.assertTrue(Path(out["path"]).exists(), "the archive is on disk")
+        manifest = json.loads((Path(out["path"]) / "department.json").read_text())
+        self.assertEqual(manifest["dept"]["slug"], "eng")
+        self.assertIn("employees", manifest)
+        self.assertIn("routines", manifest)
+        sums = json.loads((Path(out["path"]) / "checksums.json").read_text())
+        self.assertIn("files", sums, "the archive's files are checksummed, like a backup")
+
+    def test_the_archive_carries_no_secret_value(self):
+        """The rule: the archive carries the *path* to a key file, never the key. A
+        department archive that leaked a key would be a second copy of every credential
+        the instance holds — and it travels."""
+        d = self.department()
+        secret = self.tmp / "secret.key"
+        secret.write_text("sk-the-actual-key\n")
+        self.home.config_file.write_text(
+            self.home.config_file.read_text()
+            + f'\n[secrets.dept.eng]\nIMAP_KEY = "{secret}"\n')
+        self.k.close()
+        from holon.execution.service import Kernel
+        self.k = Kernel(self.home)
+        out = self.k.export_department(d["id"], str(self.tmp / "archive2"))
+        blob = json.dumps(out)
+        for p in Path(out["path"]).rglob("*"):
+            if p.is_file():
+                blob += p.read_text(errors="replace")
+        self.assertNotIn("sk-the-actual-key", blob,
+                         "the archive must never carry a secret value")
+        self.assertIn(str(secret), blob, "it carries the path instead")
+
+    def test_a_round_trip_restores_the_departments_shape(self):
+        """Export, then import into a fresh instance: the same profile, the same
+        employees' roles, the same routines."""
+        d = self.department()
+        out = self.k.export_department(d["id"], str(self.tmp / "archive3"))
+        manifest = json.loads((Path(out["path"]) / "department.json").read_text())
+        shape = {"profile": manifest["dept"]["profile"],
+                 "employees": sorted((e["name"], tuple(sorted(e["roles"]))) for e in manifest["employees"]),
+                 "routines": sorted(r["title"] for r in manifest["routines"])}
+        # a second instance
+        from holon.core.paths import Home
+        from holon.execution.service import Kernel
+        home2 = Home(self.tmp / "home2")
+        home2.root.mkdir(parents=True)
+        k2 = Kernel(home2)
+        try:
+            got = k2.import_department(out["path"])
+            d2 = k2.org.dept("eng")
+            self.assertEqual(d2["profile"], shape["profile"])
+            names = sorted((e["name"], tuple(sorted(e["roles"] or "")))
+                           for e in k2.org.employees(d2["id"]))
+            self.assertEqual(names, shape["employees"],
+                             "the imported department has the same people, in the same roles")
+            self.assertEqual(got["routines"], len(shape["routines"]))
+        finally:
+            k2.close()
+
+    def test_an_imported_routine_lands_unapproved(self):
+        """An import is not an approval. The Chair approves each routine, as with any
+        other routine — and a routine that reached the schedule unapproved would be the
+        outside-reach import the kernel deliberately disables."""
+        d = self.department()
+        out = self.k.export_department(d["id"], str(self.tmp / "archive4"))
+        from holon.core.paths import Home
+        from holon.execution.service import Kernel
+        home2 = Home(self.tmp / "home3")
+        home2.root.mkdir(parents=True)
+        k2 = Kernel(home2)
+        try:
+            k2.import_department(out["path"])
+            self.assertEqual(k2.routines(), [],
+                             "an imported routine is not scheduled until the Chair approves it")
+        finally:
+            k2.close()
+
+    def test_an_import_refuses_to_overwrite_a_department_that_exists(self):
+        """The import is additive: a department that already exists is the Chair's to
+        change, not the archive's to replace."""
+        d = self.department()
+        out = self.k.export_department(d["id"], str(self.tmp / "archive5"))
+        with self.assertRaises(ValueError) as caught:
+            self.k.import_department(out["path"])
+        self.assertIn("eng", str(caught.exception))

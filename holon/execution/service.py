@@ -1549,6 +1549,17 @@ class Kernel:
                             actor=f"emp:{claimed.employee['id']}" if claimed.employee else None)
         return self.submit(claimed.run["id"], out["envelope"], out["exit_code"], driver_output=out)
 
+    def export_department(self, dept: str, dest: str) -> dict:
+        """G12: write one department's archive (see execution/portability.py)."""
+        from holon.execution import portability
+        d = self.org.dept(dept)
+        return portability.export_department(self, d["id"], dest)
+
+    def import_department(self, archive: str) -> dict:
+        """G12: create a department from an archive (see execution/portability.py)."""
+        from holon.execution import portability
+        return portability.import_department(self, archive)
+
     def intake_file(self, key: str, title: str, intent: str, *, dept: str | None = None,
                     task_class: str | None = None, risk: str = "normal",
                     acceptance: str | None = None, priority: int = 3) -> dict:
