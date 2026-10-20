@@ -333,11 +333,17 @@ def _chain(path: Path, top: Path) -> list[Path]:
 def reach(k) -> dict:
     """What the agent user needs: trees it writes (the departments' reach, `[isolation] grants`, harness
     homes named in driver environments), trees it only reads (`[isolation] reads`, the pooled units'
-    read-only roots, the kernel distribution, harness binaries) and the run directories."""
+    read-only roots, the knowledge bases, the kernel distribution, harness binaries) and the run
+    directories."""
     from holon.execution import drivers
     c = k.config["isolation"]
     writes = {Path(r).expanduser() for r in c.get("grants") or []}
     reads = {Path(r).expanduser() for r in c.get("reads") or []} | {Path(__file__).resolve().parents[2]}
+    # The knowledge bases are read-only to an agent: the kernel is their writer (one verb, one
+    # commit, one seat), so the tree is granted as a read, never as a grant. Without this the
+    # agent user cannot read the KB it is bound to — `holon kb run` still works, because the
+    # kernel runs the vendored CLI, but a body that wants to read or diff its own KB is denied.
+    reads.add(k.home.root / "kb")
     for s in k.scopes():
         writes |= {Path(r) for r in s["roots"]}
         reads |= {Path(r) for r in s.get("read_roots") or []}   # U2: pooled roots are reads, never the pen

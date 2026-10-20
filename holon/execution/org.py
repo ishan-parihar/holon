@@ -43,6 +43,13 @@ class Org:
         """The autonomy policy for a department (slug or id), or the organization's when None."""
         return autonomy.policy(self.config, self.dept(dept)["slug"] if dept else None)
 
+    def classes_for(self, dept_slug: str | None) -> list[str]:
+        """The task classes a department's work may carry ([classes] `org` + the department's own);
+        empty = any. One definition, shared by the kernel's brief and by a hire's own record: a
+        class an employee holds is one the taxonomy carries."""
+        c = self.config.get("classes") or {}
+        return list(dict.fromkeys([*c.get("org", []), *(c.get(dept_slug, []) if dept_slug else [])]))
+
     def _event(self, entity: str, entity_id: str, frm: str | None, to: str | None, note: str | None = None) -> None:
         log_event(self.conn, entity, entity_id, frm, to, self.actor, note)
 
@@ -130,6 +137,19 @@ class Org:
         if not job_description.strip():
             raise OrgError("an employee needs a job description")
         d = self.dept(dept)
+        if task_classes:
+            # A class nobody holds is a class the employee may never claim: a typo would create a
+            # name the taxonomy does not carry, and the hire would be narrowed to nothing. The
+            # taxonomy is [classes]: `org` plus the department's own. An empty taxonomy declares
+            # no classes at all (any class is then allowed), so there is nothing to check against.
+            allowed = self.classes_for(d["slug"])
+            if allowed:
+                unknown = [c for c in task_classes if c not in allowed]
+                if unknown:
+                    raise OrgError(f"task class{'es' if len(unknown) > 1 else ''} "
+                                   f"{', '.join(repr(c) for c in unknown)} "
+                                   f"{'are' if len(unknown) > 1 else 'is'} not one of "
+                                   f"{d['slug']}'s {allowed} (see [classes] in holon.toml)")
         if reports_to is None:
             if head:
                 parent = self.conn.execute("SELECT head_id FROM departments WHERE id=?", (d["parent_id"],)).fetchone() \

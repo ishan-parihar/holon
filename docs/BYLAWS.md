@@ -36,6 +36,19 @@ library, and the autonomy policy. This page is the reference for all five and fo
 An employee may claim a stage only if one of its roles performs it. Approve stages are claimable
 only by their approver, and verify stages never by the employee who executed the work.
 
+**Task classes narrow the claim further.** `[classes]` names the classes a department's work may
+carry (`org` plus the department's own; empty = any). An employee's record may name a subset of
+them (`holon hr hire --task-classes`; a name the taxonomy does not carry is refused): such an
+employee may *pick up* a stage whose work carries one of *their* classes, and not one that carries
+another — work that names no class is anyone's. An employee whose record names no class is not
+narrowed.
+
+The gate narrows what an employee **chooses**, never what the Chair **directs**: work assigned to
+an employee stays theirs whatever its class, or it would strand — nobody else may claim assigned
+work. The gate is in the claim query, so it is atomic: two employees racing for the same stage
+cannot both win it. `holon doctor` reports a stage whose class no employee in reach holds
+(`classes.unstaffed`) rather than leaving it waiting forever.
+
 ## 2. Profiles
 
 A profile names a department's slots; a slot is the set of roles one employee fills. Profiles
@@ -328,6 +341,7 @@ process runs as the agent's own Unix user, an agent with a shell can read the Ch
 | broker (`holon broker`, a user service) | the kernel's user | answers agents' `holon` calls (and `holon mcp`'s): authenticates each by run token or employee key, never the Chair key; agent commands only; ignores `--home`; reads no file the client did not send |
 | run directories | the kernel's user, sticky, the agent granted by ACL | the agent reads its brief and writes `result.json`; it cannot replace what the kernel wrote |
 | ACLs (`holon isolation apply`) | the kernel's user | the agent may traverse only the directories leading to its trees (`[scope]` roots, `[isolation] grants`, harness homes), the kernel distribution and harness binaries; every other entry on the way, and every future one, is denied to it |
+| knowledge bases (`$HOLON_HOME/kb`) | the kernel's user, the agent granted **read** | the kernel is the KB's only writer (one verb, one commit, one seat), so the tree is a read and never a grant: an agent may read and diff the KB it is bound to, and may not write it |
 
 Both services listen on abstract Unix sockets and check the caller's uid. Set up, once:
 

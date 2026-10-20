@@ -176,6 +176,24 @@ class Isolated(KernelCase):
 
 
 class Setup(KernelCase):
+    def test_a_knowledge_base_is_readable_by_the_agent_user_but_never_writable(self):
+        """A KB is the kernel's writer (one verb, one commit, one seat) — so the tree is a read,
+        never a grant. Without it the agent user cannot read the KB it is bound to: `holon kb run`
+        still worked (the kernel runs the vendored CLI), but a body that wanted to read or diff
+        its own KB was denied the tree."""
+        kb_dir = self.home.root / "kb" / "pipeline"
+        kb_dir.mkdir(parents=True)
+        (kb_dir / "genome.toml").write_text("[genome]\n")
+        reach = isolation.reach(self.k)
+        kb_root = (self.home.root / "kb").resolve()
+        reads = [p.resolve() for p in reach["reads"]]
+        writes = [p.resolve() for p in reach["writes"]]
+        self.assertIn(kb_root, reads, "the KB tree is a read for the agent user")
+        self.assertTrue(any(kb_root == p or kb_root in p.parents for p in reads),
+                        "the KB tree is inside the agent user's read reach")
+        self.assertFalse(any(kb_root == p or kb_root in p.parents for p in writes),
+                         "the KB tree is never a write: the kernel is its writer")
+
     def test_the_agent_may_only_traverse_toward_what_it_needs(self):
         top = self.tmp / "home"
         (top / "projects" / "acme").mkdir(parents=True)

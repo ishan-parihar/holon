@@ -196,11 +196,18 @@ def run(k) -> list[dict]:
         add("error", "graph.approver", f"approval {r[0]} waits on {r[1]}, who is not active")
     # a ready stage nobody can claim waits forever: its assignee is out, or no one in reach performs it
     staff: dict[str | None, set[str]] = {}
-    for e in q("SELECT dept_id, roles FROM employees WHERE status IN ('active','probation')"):
-        staff.setdefault(e[0], set()).update(s for role in json.loads(e[1] or "[]") for s in vocab.ROLE_STAGES[role])
+    # an employee's record may narrow them to task classes (the class gate in the claim query):
+    # such an employee may pick up only work whose class is one of theirs
+    narrowed: dict[str | None, dict[str, set[str]]] = {}
+    for e in q("SELECT id, dept_id, roles, task_classes FROM employees WHERE status IN ('active','probation')"):
+        stages = {s for role in json.loads(e[2] or "[]") for s in vocab.ROLE_STAGES[role]}
+        staff.setdefault(e[1], set()).update(stages)
+        classes = json.loads(e[3] or "[]")
+        if classes:
+            narrowed.setdefault(e[1], {})[e[0]] = set(classes)
     working = {r[0] for r in q("SELECT id FROM employees WHERE status IN ('active','probation')")}
     exec_dept = (q("SELECT id FROM departments WHERE slug=?", vocab.EXECUTIVE) or [[None]])[0][0]
-    for r in q("SELECT id, stage, dept_id, assignee FROM tasks WHERE status='ready' AND stage IS NOT NULL "
+    for r in q("SELECT id, stage, dept_id, assignee, task_class FROM tasks WHERE status='ready' AND stage IS NOT NULL "
                "AND stage<>'approve'"):
         if r[3]:
             if r[3] not in working:
@@ -209,6 +216,17 @@ def run(k) -> list[dict]:
         reach = staff.get(r[2], set()) | (staff.get(exec_dept, set()) if r[2] is None or r[1] == "verify" else set())
         if r[1] not in reach:
             add("error", "graph.unstaffed", f"{r[1]} stage {r[0]}: no active employee who can claim it performs '{r[1]}'")
+            continue
+        if r[4]:
+            # the class gate: an employee narrowed to classes may pick up only work whose class is
+            # one of theirs. If no one in reach holds this class, the stage can never be claimed.
+            holders = {eid for eid, cls in narrowed.get(r[2], {}).items() if r[4] in cls}
+            holders |= {eid for eid, cls in narrowed.get(exec_dept, {}).items()
+                        if r[4] in cls and (r[2] is None or r[1] == "verify")}
+            if not holders:
+                add("error", "classes.unstaffed",
+                    f"{r[1]} stage {r[0]}: its task class {r[4]!r} is held by no active employee in reach — "
+                    "no one may claim it (give an employee that class, or change the work's class)")
 
     # separation of duties, in history
     for r in q("SELECT a.id, a.decided_by FROM tasks a JOIN task_needs n ON n.task_id=a.id JOIN outputs o "

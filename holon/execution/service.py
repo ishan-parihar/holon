@@ -289,7 +289,8 @@ class Kernel:
             raise TransitionError(f"employee {employee_id} is {e['status']}")
         ceo = self.org.ceo()
         return Claimant(id=e["id"], dept_id=e["dept_id"], is_head=e["is_head"], stages=tuple(e["stages"]),
-                        is_ceo=bool(ceo and ceo["id"] == e["id"]), in_executive=e["dept"] == EXECUTIVE), e
+                        is_ceo=bool(ceo and ceo["id"] == e["id"]), in_executive=e["dept"] == EXECUTIVE,
+                        task_classes=tuple(e["task_classes"]) if e.get("task_classes") else None), e
 
     def identity(self, employee_id: str) -> str:
         e = self.org.employee(employee_id)
@@ -1016,9 +1017,10 @@ class Kernel:
 
     def classes_for(self, dept_slug: str | None) -> list[str]:
         """The task classes a department's work may carry ([classes] org + <slug>); empty = any. A shared
-        taxonomy is what lets track records accrue, so earned authority and sampling can engage."""
-        c = self.config.get("classes") or {}
-        return list(dict.fromkeys([*c.get("org", []), *(c.get(dept_slug, []) if dept_slug else [])]))
+        taxonomy is what lets track records accrue, so earned authority and sampling can engage.
+        The rule lives in the organization, so a hire's own record is checked against the same
+        names the brief offers."""
+        return self.org.classes_for(dept_slug)
 
     def _check_org_refs(self, env: dict, work: dict | None = None) -> None:
         problems = []

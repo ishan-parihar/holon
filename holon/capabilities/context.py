@@ -155,6 +155,12 @@ def identity_card(employee: dict, manager: dict | None, authority: list[dict], r
                   predecessors: list[str] | None = None) -> str:
     """Who an employee is, in one page: what a harness puts in the system prompt (L1 of the injection)."""
     grants = ", ".join(f"G{a['max_grade']} on {a['task_class']}" for a in authority if a["max_grade"] >= 0) or "none yet"
+    classes = employee.get("task_classes")
+    if classes:
+        classes = (f"Task classes you perform: {', '.join(classes)}. Work in any other class is not yours to "
+                   f"pick up; work assigned to you is yours whatever its class.\n")
+    else:
+        classes = ""
     rec = ""
     if record:
         ex, pl = record.get("execution", {}), record.get("planning", {})
@@ -166,6 +172,7 @@ def identity_card(employee: dict, manager: dict | None, authority: list[dict], r
             + (f", reporting to {manager['name']} ({manager['title']})" if manager else ", reporting to the Chair")
             + f". Status: {employee['status']}.\n"
             f"Roles: {', '.join(employee['roles'])}. Stages you perform: {', '.join(employee['stages'])}.\n"
+            + classes +
             f"Approval authority: {grants}.{rec}\n"
             f"Memory scope: `emp:{employee['id']}`"
             + (f" (inherited from {', '.join(predecessors)})" if predecessors else "") + ".\n\n"

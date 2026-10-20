@@ -48,6 +48,87 @@ class Taxonomy(KernelCase):
         self.k.close()
         self.k = Kernel(self.home)
 
+    def test_an_employee_may_only_claim_the_task_classes_their_record_names(self):
+        """`hr hire --task-classes` was write-only: the employee's classes were stored and read by
+        nothing, so the `dept:class` namespace named a class without binding it to a gate. An
+        employee whose record names classes may pick up a stage whose work carries one of those
+        classes, and not one that carries another."""
+        self.configure('[classes]\norg = ["incident"]\neng = ["greeting", "docs"]\n')
+        # a specialist whose record names one class; the other engineers' records name none
+        spec = self.k.org.hire(name="Su", title="Greeting engineer", dept="eng", job_description="jd",
+                               roles=["planner"], driver="fake", reason="r", status="active",
+                               task_classes=["greeting"])["id"]
+        self.assertEqual(self.k.org.employee(spec)["task_classes"], ["greeting"])
+
+        # work in a class the specialist holds is claimable
+        self.add(dept="eng", task_class="greeting")
+        c = self.k.claim("plan", spec)
+        self.assertIsNotNone(c, "an employee may claim a stage in a class their record names")
+        self.k.submit(c.run["id"], self.plan_env(writes=[]))
+
+        # work in a class the specialist does not hold is not claimable by them
+        self.add(dept="eng", task_class="docs")
+        self.assertIsNone(self.k.claim("plan", spec),
+                          "an employee may not claim a stage in a class their record does not name")
+        # but Bo (no classes named on his record) may: the record has not narrowed him
+        self.assertIsNotNone(self.k.claim("plan", self.hod),
+                             "an employee whose record names no class may claim any stage")
+
+    def test_a_narrowed_employee_still_claims_the_work_assigned_to_them(self):
+        """The class gate narrows what an employee *picks up*, never what the Chair *directs*. If it
+        also blocked assigned work, a Chair's assignment to a specialist in a class they do not hold
+        would strand the work: nobody else may claim assigned work, so it would wait forever."""
+        self.configure('[classes]\norg = ["incident"]\neng = ["greeting", "docs"]\n')
+        spec = self.k.org.hire(name="Su", title="Greeting engineer", dept="eng", job_description="jd",
+                               roles=["planner"], driver="fake", reason="r", status="active",
+                               task_classes=["greeting"])["id"]
+        # the Chair assigns the specialist work in a class they do not hold
+        work = self.add(dept="eng", task_class="docs", assignee=spec)
+        c = self.k.claim("plan", spec)
+        self.assertIsNotNone(c, "work assigned to an employee stays theirs, whatever their classes")
+        self.assertEqual(c.task["parent_id"], work["id"])
+
+    def test_a_class_nobody_in_reach_holds_is_reported_not_left_waiting(self):
+        """A stage whose class no employee in reach holds can never be claimed. The kernel's own
+        doctor already reports a stage nobody can claim; it must know about the class gate too."""
+        from holon.integrity import doctor
+        self.configure('[classes]\norg = ["incident"]\neng = ["greeting"]\n')
+        # Bo is the only planner in eng, and his record names no class; the work carries one no
+        # employee holds — the class gate makes it unclaimable by everyone.
+        self.add(dept="eng", task_class="poetry")
+        findings = {f["check"] for f in doctor.run(self.k)}
+        self.assertIn("classes.unstaffed", findings,
+                      "a stage whose class no employee in reach holds is reported, not left waiting")
+
+    def test_a_hire_may_not_name_a_task_class_the_taxonomy_does_not_carry(self):
+        """A typo in `--task-classes` would narrow the employee to a class that exists nowhere:
+        they could claim nothing, and the error would be invisible. The hire is refused instead."""
+        from holon.execution.org import OrgError
+        self.configure('[classes]\norg = ["incident"]\neng = ["greeting", "docs"]\n')
+        with self.assertRaises(OrgError) as ctx:
+            self.k.org.hire(name="Su", title="Engineer", dept="eng", job_description="jd",
+                            roles=["planner"], driver="fake", reason="r", status="active",
+                            task_classes=["greetings"])
+        self.assertIn("greetings", str(ctx.exception))
+        # a class the taxonomy carries is accepted
+        e = self.k.org.hire(name="Su", title="Engineer", dept="eng", job_description="jd",
+                            roles=["planner"], driver="fake", reason="r", status="active",
+                            task_classes=["greeting"])
+        self.assertEqual(e["task_classes"], ["greeting"])
+
+    def test_an_employee_is_told_the_task_classes_they_hold(self):
+        """The class gate is only fair if the employee knows it: the identity card names the
+        classes they may pick up, and says that assigned work is theirs whatever its class."""
+        self.configure('[classes]\norg = ["incident"]\neng = ["greeting", "docs"]\n')
+        spec = self.k.org.hire(name="Su", title="Greeting engineer", dept="eng", job_description="jd",
+                               roles=["planner"], driver="fake", reason="r", status="active",
+                               task_classes=["greeting"])["id"]
+        card = self.k.identity(spec)
+        self.assertIn("greeting", card)
+        self.assertIn("whatever its class", card)
+        # an employee whose record names no class is not narrowed, and the card does not say so
+        self.assertNotIn("Task classes you perform", self.k.identity(self.hod))
+
     def test_agents_use_the_departments_task_classes(self):
         from holon.integrity import doctor
         self.configure('[classes]\norg = ["incident"]\neng = ["greeting", "docs"]\n')

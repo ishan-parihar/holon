@@ -54,6 +54,10 @@ class Claimant:
     is_ceo: bool = False
     in_executive: bool = False
     stages: tuple[str, ...] = vocab.STAGES
+    # The task classes this employee performs. None = no restriction (an unaffiliated worker, or
+    # an employee whose record names none). A named list is a claim filter: the employee may
+    # claim a stage whose work carries a task class, only if the class is one of theirs.
+    task_classes: tuple[str, ...] | None = None
 
     @property
     def ref(self) -> str | None:
@@ -425,13 +429,28 @@ class Work:
                 q += " AND NOT (t.stage='verify' AND coalesce(t.blocked_reason,'') IN (?,?))"
                 args: list = list(stages) + [HELD, CHECKING]
                 if who.id:
-                    q += (" AND ((t.stage='approve' AND t.approver=?) OR (t.stage<>'approve' AND (t.assignee=? OR"
-                          " (t.assignee IS NULL AND (t.dept_id=? OR (t.dept_id IS NULL AND ?)"
-                          "  OR (t.stage='verify' AND ?))))))"
+                    # The pool branch: work nobody is assigned to, that this employee may pick up.
+                    # The task-class gate lives here and nowhere else: it narrows what an employee
+                    # *chooses*, never what the Chair *directs*. A work assigned to this employee
+                    # stays theirs — otherwise the gate would strand it, since no one else may
+                    # claim assigned work.
+                    pool = ("t.assignee IS NULL AND (t.dept_id=? OR (t.dept_id IS NULL AND ?) OR "
+                            "(t.stage='verify' AND ?))")
+                    if who.task_classes:
+                        # the employee's record narrows them: they may pick up a stage whose work
+                        # names a task class only if that class is one of theirs (work that names
+                        # no class is anyone's). The filter is in the query, so the claim is atomic.
+                        pool += (f" AND (t.task_class IS NULL OR t.task_class IN "
+                                 f"({','.join('?' * len(who.task_classes))}))")
+                    q += (" AND ((t.stage='approve' AND t.approver=?) OR (t.stage<>'approve' AND (t.assignee=? OR ("
+                          + pool + "))))"
                           " AND NOT (t.stage='verify' AND EXISTS (SELECT 1 FROM task_needs n JOIN runs r"
                           "  ON r.task_id=n.needs_id WHERE n.task_id=t.id AND r.kind='execute' AND r.employee_id=?))")
                     args += [who.ref, who.id, who.dept_id, 1 if who.in_executive else 0,
-                             1 if who.in_executive else 0, who.id]
+                             1 if who.in_executive else 0]
+                    if who.task_classes:
+                        args += list(who.task_classes)
+                    args += [who.id]
                 else:
                     q += " AND t.stage<>'approve'"
                 if task_id:
