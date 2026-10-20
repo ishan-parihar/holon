@@ -263,6 +263,20 @@ reaches outside the organization) for the approver that grade names; on approval
 starts (`holon routine list`). With `--deliver`, each finished firing's result goes to the Chair
 through `[notify]` (a digest in the Chair's chat), retried by the heartbeat until it is sent.
 
+**Outside-reach has two witnesses.** The decision model judges it (the `external` question, held
+at G3 when `external_p ≥ [lanes] external_p_max`), and the **job's own words** name it: a title or
+intent that contains an outside-reach verb — *send, post, publish, apply, outreach, email, dm,
+reply, invoice, order, submit, follow-up* — is held at G3 whatever the model says, and at G4 in a
+`[pilot]` department. The words are a floor the model cannot lower: a model that is off,
+rate-limited or down has no opinion, and "no opinion" must never read as "internal" for a job that
+says *send*. It is not a ceiling — the model can still hold a job whose words name no verb.
+
+**An import fails closed.** A routine that arrives through `holon routine import` lands as a
+proposal, and it lands **disabled** when it is outside-reach *or when the kernel could not judge
+it* (no model opinion and no outside-reach verb in its words). One bulk approval is not per-job
+activation; the Chair enables each one with `holon schedule enable` after reading it. A routine the
+Chair wrote by hand is not affected: it is the Chair's own act and starts on approval.
+
 A routine may fire on **events** instead of a clock: `--on event:<pattern>` (no cron), e.g.
 `event:webhook:invoice.*`. The runtime that sees the event — a gateway, a webhook receiver —
 matches the published `api_triggers` patterns against it and calls

@@ -222,6 +222,7 @@ commit and run it again.
 | Dormant seam, 2026-10-17 | the external strategy stores' schemas lived only in the bundle's SELECTs — a drifted store would fail open and invisibly; a present store now must declare a known api_version and lint proves the contract columns | `test_a_present_external_store_declares_a_known_version` |
 | KB audit, 2026-10-20 | `scripts/genome` was re-pinned twice while `holon/vendor/genome.py` stayed on the previous release, so a knowledge base could pass `holon kb run ... lint` and fail the distribution's own `scripts/genome lint` — two copies of one CLI, two rulesets | `test_the_vendored_cli_is_the_same_build_as_scripts_genome` |
 | Capability layer, 2026-10-20 | the manifest directory was renamed `genome/units` → `bylaws/units`, but a manifest left at the old path is invisible to the kernel, so `holon bylaws sync` emptied the units tables with no error and no lint finding — one command from losing the whole capability layer | `test_a_manifest_outside_the_manifest_directory_never_empties_the_capability_layer` |
+| Import fidelity, 2026-10-20 | the "an outside-reach import lands OFF" guard read outside-reach from the decision model alone, so when the model was off or rate-limited every import read as internal and the outreach fleet landed enabled with a clock — one bulk approval lit it | `test_an_outside_reach_import_starts_disabled_with_the_decision_model_down` |
 
 ## Reading order for a new agent
 

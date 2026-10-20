@@ -434,6 +434,48 @@ class ImportFidelity(LaneCase):
                                    (self.k.work.plan_for_approval(a2["id"])["id"],)).fetchone()[0]
         self.assertTrue(self.k.schedules.get(sid)["enabled"], "an internal import starts on approval, as before")
 
+    def test_an_outside_reach_import_starts_disabled_with_the_decision_model_down(self):
+        """The guard must not depend on a model that can be off, rate-limited or down.
+
+        The decision model is an external dependency. When it has no opinion, `external_p` is
+        None, which used to read as "internal" — so an imported outreach job landed ENABLED with
+        a next run time, and one bulk approval lit the fleet. The kernel now decides outside-reach
+        from the job's own words, and an import it could not judge at all fails closed.
+        """
+        self.fake.status = 500          # the model is down: every request fails
+        a = self.k.add_routine("p4-outreach: DM the founders", "send each lead a message",
+                               dept="eng", cron="0 9 * * *", workdir=str(self.workdir), imported=True)
+        self.assertGreaterEqual(a["grade"], 3, "the job's own words name an outside-reach verb: floor G3")
+        self.k.approve(a["id"])
+        sid = self.k.wconn.execute("SELECT id FROM schedules WHERE template_id=?",
+                                   (self.k.work.plan_for_approval(a["id"])["id"],)).fetchone()[0]
+        s = self.k.schedules.get(sid)
+        self.assertFalse(s["enabled"], "the outreach routine starts OFF even with no model to ask")
+        self.assertIsNone(s["next_run_at"], "OFF means no clock either")
+
+    def test_an_import_the_kernel_cannot_judge_fails_closed(self):
+        """No model opinion and no verb named: the kernel cannot tell whether the job reaches
+        outside, so an import lands OFF and the Chair enables it per job. Fail closed."""
+        self.fake.status = 500          # the model is down: every request fails
+        a = self.k.add_routine("Rebuild the index", "reindex the local stores", dept="eng", cron="0 9 * * *",
+                               workdir=str(self.workdir), imported=True)
+        self.k.approve(a["id"])
+        sid = self.k.wconn.execute("SELECT id FROM schedules WHERE template_id=?",
+                                   (self.k.work.plan_for_approval(a["id"])["id"],)).fetchone()[0]
+        self.assertFalse(self.k.schedules.get(sid)["enabled"],
+                         "an unjudged import lands OFF: the Chair enables it per job")
+
+    def test_a_hand_written_routine_is_not_disabled_by_the_unjudged_rule(self):
+        """The fail-closed rule is about IMPORTS: a hand-written routine is the Chair's own act
+        and keeps its behaviour (it starts on approval)."""
+        self.fake.status = 500          # the model is down: every request fails
+        a = self.k.add_routine("Rebuild the index", "reindex the local stores", dept="eng", cron="0 9 * * *",
+                               workdir=str(self.workdir))
+        self.k.approve(a["id"])
+        sid = self.k.wconn.execute("SELECT id FROM schedules WHERE template_id=?",
+                                   (self.k.work.plan_for_approval(a["id"])["id"],)).fetchone()[0]
+        self.assertTrue(self.k.schedules.get(sid)["enabled"], "a hand-written routine starts on approval")
+
 
 class PilotFloor(LaneCase):
     """I5: the standing rule "pilot work never sends outreach" as a grade floor, not a hope.

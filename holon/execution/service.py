@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -1139,6 +1140,21 @@ class Kernel:
     def _external(self, cls: dict) -> bool:
         return (cls.get("external_p") or 0) >= float(self.config["lanes"]["external_p_max"])
 
+    def _external_by_name(self, title: str, intent: str) -> tuple[bool, str]:
+        """Outside-reach, decided by the job's own words rather than by a model.
+
+        The decision model is an external dependency: it is off by default, it rate-limits, and
+        it fails. When it has no opinion, `external_p` is None and every job reads as internal —
+        which for an IMPORT means the job lands enabled and scheduled. The verbs that reach
+        people outside the organization are named in the job itself, so the kernel can decide
+        without asking anyone. This is a floor, not a ceiling: the model can still say "outside"
+        for a job whose words do not name a verb.
+        """
+        text = f"{title}\n{intent}".lower()
+        hits = sorted({v for v in vocab.OUTSIDE_REACH_VERBS
+                       if re.search(rf"\b{re.escape(v)}\b", text)})
+        return bool(hits), ", ".join(hits)
+
     def intake_lane(self, title: str, intent: str, requested: str | None = None) -> tuple[str, dict]:
         """The lane for one-off work: the requested one, or the classifier's when it is sure. A job it judges
         deterministic still runs fast (one-off work has no approved command); one that reaches outside the
@@ -1204,6 +1220,23 @@ class Kernel:
         if why:
             notes.append(f"lane chosen by the Chair over the classifier: {why}")
         external = self._external(cls)
+        # Outside-reach has two witnesses: the decision model, and the job's own words. The model
+        # may be off, rate-limited or down — and then it has no opinion, which used to read as
+        # "internal", which for an IMPORT meant the job landed enabled and scheduled. The words
+        # are always available, so they are a floor the model cannot lower (I1).
+        by_name, verbs = self._external_by_name(title, intent)
+        if by_name and not external:
+            external = True
+            reasons_by_name = f"its own words name an outside-reach verb ({verbs}): floor G3"
+        else:
+            reasons_by_name = ""
+        if imported and cls.get("external_p") is None and not by_name:
+            # No opinion from anywhere and no verb named: the kernel cannot tell whether this job
+            # reaches outside, so an import lands OFF. Fail closed: the Chair enables it per job
+            # (`holon schedule enable`), which is a decision, not a default.
+            unjudged = True
+        else:
+            unjudged = False
         floor = max(2, grading.RISK_FLOOR.get(risk, 1), 3 if external else 0)
         reasons = ["a routine runs unattended on a schedule: floor G2"]
         pilot = self.config.get("pilot", {}).get("depts") or []
@@ -1211,8 +1244,14 @@ class Kernel:
             floor = max(floor, 4)   # I5: in a pilot department the Chair approves outside-reach, job by job
             reasons.append(f"pilot department '{dept}': outside-reach is the Chair's call (G4)")
         if external:
-            reasons.append(f"the classifier judges it reaches outside the organization (p={cls['external_p']}): "
-                           "floor G3")
+            if cls.get("external_p") is not None:
+                reasons.append(f"the classifier judges it reaches outside the organization "
+                               f"(p={cls['external_p']}): floor G3")
+            if reasons_by_name:
+                reasons.append(reasons_by_name)
+        if unjudged:
+            reasons.append("the decision model had no opinion and the job names no outside-reach verb: "
+                           "an import lands OFF until the Chair enables it")
         if grading.RISK_FLOOR.get(risk, 1) > 2:
             reasons.append(f"risk={risk}: floor G{grading.RISK_FLOOR[risk]}")
         dept_id = self.org.dept(dept)["id"]
@@ -1228,8 +1267,10 @@ class Kernel:
         return self.work.propose(
             title=f"Routine: {title}", intent=intent, steps=steps,
             apply={"kind": "routine", "cron": cron, "event": event,
-                   "starts_disabled": bool(imported and floor >= 3)},   # I1: an outside-reach import
-            #      lands OFF; the Chair enables it per job after review
+                   # I1: an outside-reach import — or one the kernel could not judge — lands OFF;
+                   # the Chair enables it per job after review. One bulk approval must never
+                   # light an outreach fleet.
+                   "starts_disabled": bool(imported and (floor >= 3 or unjudged))},
             approver=approver, grade=floor, task_class=task_class, dept=dept_id, author=self.actor,
             reasons=reasons + notes, body={"lane": lane, "rubric": list(rubric or []), "classification": cls,
                                            "playbook": playbooks.for_routine(title), "deliver": bool(deliver),

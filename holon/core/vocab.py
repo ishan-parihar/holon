@@ -33,6 +33,18 @@ PRIORITIES = (0, 1, 2, 3, 4)
 # session plans and acts on routine work (fast); the full pipeline of separate stages (full)
 LANES = ("script", "fast", "full")
 
+# The verbs that reach people outside the organization: the kernel names them so it can decide
+# outside-reach from a job's own words, without asking a decision model that may be off, rate-limited
+# or down. A job whose title or intent names one of these is held at G3 (and G4 in a pilot
+# department) whatever the model says. It is a floor, not a ceiling: the model can still hold a job
+# whose words name no verb.
+OUTSIDE_REACH_VERBS = (
+    "apply", "applications", "blitz", "cold-email", "cold-outreach", "comment", "dm", "email",
+    "emailing", "followup", "follow-up", "invoice", "mail", "message", "messageing", "order",
+    "outreach", "post", "post-job", "posting", "publish", "replies", "reply", "send", "sending",
+    "submit", "tweet",
+)
+
 # stage outcomes (tasks.outcome on a finished stage)
 OUTCOMES = {
     "research": ("mapped",),
