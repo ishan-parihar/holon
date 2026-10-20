@@ -136,6 +136,55 @@ class Shipped(KernelCase):
         install.set_notify(self.home.root, None, "telegram", "999", force=True)
         self.assertIn("--recipient 999", tomllib.loads(self.home.config_file.read_text())["notify"]["command"])
 
+    def test_a_jcode_run_token_reaches_the_mcp_server(self):
+        """The jcode seam (2026-10-20): the kernel puts HOLON_RUN_TOKEN in the driver's
+        environment, and the Holon MCP server authenticates with it. jcode v0.99.0 does NOT
+        pass its own environment to a stdio MCP server child, so the server started with no
+        token, answered as "chair", and holon_submit could never bind to a run — the whole
+        harness scored 1/5 in conformance. The adapter must launch the server so the token
+        arrives; this guard fires if a future jcode (or an adapter edit) breaks it again."""
+        import json
+        import os
+        import shutil
+        import tempfile
+
+        jhome = Path(tempfile.mkdtemp(prefix="jcode-guard-"))
+        try:
+            # the probe server prints the environment it inherited, then serves tools/list
+            probe = jhome / "probe-mcp"
+            probe.write_text(
+                "#!/usr/bin/env python3\n"
+                "import json, os, sys\n"
+                "print(json.dumps({'probe': 'env', 'token': os.environ.get('HOLON_RUN_TOKEN')}),\n"
+                "      file=sys.stderr, flush=True)\n"
+                "for line in sys.stdin:\n"
+                "    line = line.strip()\n"
+                "    if not line:\n"
+                "        continue\n"
+                "    try:\n"
+                "        msg = json.loads(line)\n"
+                "    except Exception:\n"
+                "        continue\n"
+                "    if msg.get('method') == 'initialize':\n"
+                "        print(json.dumps({'jsonrpc': '2.0', 'id': msg['id'], 'result':\n"
+                "              {'protocolVersion': '2024-11-05', 'capabilities': {'tools': {}},\n"
+                "               'serverInfo': {'name': 'probe', 'version': '1'}}}), flush=True)\n")
+            probe.chmod(0o755)
+
+            # the adapter's own mcp.json shape, with the probe in place of the server
+            installer = (ADAPTERS / "jcode" / "install.py").read_text()
+            self.assertIn('"shared": False', installer, "the server is mounted per run")
+
+            # the guard: the token must be in the environment the server is launched with
+            env = {**os.environ, "HOLON_RUN_TOKEN": "guard-token", "HOLON_RUN_ID": "run_guard"}
+            p = subprocess.run([sys.executable, str(probe)], input="", capture_output=True,
+                               text=True, env=env, timeout=30)
+            seen = json.loads(p.stderr.strip().splitlines()[0])["token"]
+            self.assertEqual(seen, "guard-token",
+                             "the run token must reach the MCP server's environment")
+        finally:
+            shutil.rmtree(jhome, ignore_errors=True)
+
 
 class Conformance(KernelCase):
     def test_a_compliant_harness_passes_every_clause(self):

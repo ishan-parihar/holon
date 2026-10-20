@@ -18,6 +18,8 @@ Six packs. Each finding is {severity: error | warning, rule, where, message}; er
             that exists; a copy that drops one is an error, not silence
   EXTSTORE  the dormant external strategy stores (trajectory, logbook) match CONTRACT §9a; the
             bundle's SELECTs name the contract columns, so drift cannot fail open invisibly
+  BOUNDARY  the two stacks stay two (AGENTS.md law 10): a doc that calls Holon + the genome
+            governance layer and the Chair's production venture runtime one system is an error
 """
 
 from __future__ import annotations
@@ -34,7 +36,8 @@ from pathlib import Path
 from holon.core import contract, vocab
 from holon.core.db import checksum, migration_files
 
-PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "bylaws", "drift", "extstore")
+PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "bylaws", "drift", "extstore",
+         "boundary")
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
@@ -673,6 +676,62 @@ def pack_extstore(k, f: Findings) -> None:
             f.add("error", "extstore.contract", "capabilities/context.py",
                   f"the {table} SELECT does not name contract columns {missing}; a schema change "
                   "crosses the seam only with a CONTRACT §9a version bump")
+
+
+# ── BOUNDARY ────────────────────────────────────────────────────────────────
+# The two stacks (AGENTS.md law 10): Holon + the project-genome governance layer is A;
+# the Chair's production venture runtime is B. They share vocabulary and nothing else.
+# A doc that calls them one system is the defect this pack catches — the conflation
+# that made A's own gaps look like B's work (2026-10-20).
+#
+# The B markers are the *system* names, never a harness name: law 2 forbids naming a
+# harness under holon/, and a harness is not what makes the two stacks distinct. The
+# system's own agent runtime is named in the docs, and any sentence that merges the
+# stacks names the system with it.
+B_MARKERS = ("paperclip", "organism")
+A_MARKERS = ("holon", "genome")
+# The identity verbs that assert one system. "for" is deliberately absent: it is far too
+# common ("a plan for X", "the reading order for an agent") and produced a false positive
+# on a STATUS paragraph that merely listed files.
+IDENTITY = re.compile(
+    r"\b(?:is|are|was|were|runs?|running|built on|powered by|part of|lives in|sits on|host of)\b"
+    r"[^.\n]{0,80}\b(?:paperclip|organism)\b[^.\n]{0,80}\b(?:holon|genome)\b"
+    r"|\b(?:holon|genome)\b[^.\n]{0,80}"
+    r"\b(?:is|are|was|were|runs?|running|built on|powered by|part of|lives in|sits on|host of)\b"
+    r"[^.\n]{0,80}\b(?:paperclip|organism)\b",
+    re.I,
+)
+# A doc that separates them is allowed to name both in one sentence: it says "A is not B".
+SEPARATION = re.compile(
+    r"\b(?:separate|separately|distinct|different|never conflate|not the same|independent of|"
+    r"never one system|two stacks|two infrastructures|two programs|not a dependency)\b",
+    re.I,
+)
+
+
+def pack_boundary(k, f: Findings) -> None:
+    """The two stacks are separate programs (AGENTS.md law 10, INTENT design law 7).
+
+    A doc that merges A and B into one system is the defect: it sends an agent to
+    report A's gaps as B's work, or to wait on B for A. The check fires on an identity
+    claim that spans both stacks and is not accompanied by an explicit separation.
+    """
+    docs = [p for p in (DIST / "docs").rglob("*.md") if p.exists()]
+    docs += [p for p in (DIST / "AGENTS.md", DIST / "README.md") if p.exists()]
+    for doc in docs:
+        if doc.name == "2026-10-20-the-a-side-program-boundary-and-solutions.md":
+            continue  # the record that states the boundary names both by design
+        text = doc.read_text(encoding="utf-8", errors="replace")
+        for para in re.split(r"\n\s*\n", text):
+            low = para.lower()
+            if not any(w in low for w in B_MARKERS) or not any(w in low for w in A_MARKERS):
+                continue
+            if SEPARATION.search(para):
+                continue  # the paragraph separates them; naming both is the point
+            if IDENTITY.search(para):
+                snippet = " ".join(para.split())[:120]
+                f.add("error", "boundary.conflated", _rel(doc),
+                      f"this paragraph asserts one system across the two stacks (AGENTS.md law 10): {snippet}")
 
 
 def run(k, packs: list[str] | None = None) -> list[dict]:

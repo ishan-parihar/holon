@@ -144,6 +144,32 @@ class Lint(KernelCase):
         self.assertTrue(any(f["rule"] == "api.version" for f in lint.run(self.k, ["api"])),
                         "a version this Holon does not know is an error, not silence")
 
+    def test_the_boundary_lint_pack_catches_a_conflated_doc(self):
+        """The two stacks are separate programs (AGENTS.md law 10). A doc that calls Holon and
+        the Chair's production venture runtime one system is the defect that made A's own gaps
+        read as B's work (2026-10-20). The pack must fire on that and stay quiet on a doc that
+        separates them, on a doc about one stack only, and on a historical contrast."""
+        pkg = Path(holon_cli.__file__).parent
+        docs = pkg.parent / "docs"
+        self.assertEqual(lint.run(self.k, ["boundary"]), [])
+        probe = docs / "boundary-probe.md"
+        cases = [
+            ("Holon is the operating system that runs the Paperclip organism's ventures.", True),
+            ("Holon runs Paperclip routines as its departments.", True),
+            ("Holon and the organism are separate systems; Holon never runs the Paperclip routines.", False),
+            ("Holon is an agentic operating system that runs as an organization.", False),
+            ("Paperclip schedules the venture routines on the VPS.", False),
+            ("The Paperclip contrast red-team found three gaps in Holon.", False),
+        ]
+        try:
+            for text, should_fire in cases:
+                probe.write_text(text + "\n")
+                found = lint.run(self.k, ["boundary"])
+                fired = any(f["rule"] == "boundary.conflated" for f in found)
+                self.assertEqual(fired, should_fire, f"{text!r} fired={fired} findings={found}")
+        finally:
+            probe.unlink(missing_ok=True)
+
 
 class Doctor(KernelCase):
     def test_a_healthy_instance_is_clean_once_the_chair_key_exists(self):

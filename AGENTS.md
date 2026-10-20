@@ -50,6 +50,14 @@ agent is at the end.
 7. **Every org term binds to a mechanism** in the INTENT and BYLAWS tables.
 8. **Every command declares its actor class** in the registry.
 9. **Tests first** for any change to the graph, the contract, security or drivers.
+10. **Two stacks, never one system.** This repository — the `holon` kernel, this overlay and the
+    `project-genome` skill — is **A**. The Chair's production venture runtime (Paperclip, ZeroClaw,
+    the Hermes organism, the VPS) is **B**. They share vocabulary ("departments", "routines",
+    "employees", "ventures") and **nothing else**. A finding about one is never evidence about the
+    other: a gap in A is A's to close, an outage in B is B's, and A's work never waits on B. The
+    bridge between them (the ventures import) is a **separate, Chair-gated program**, not A's
+    critical path. Read `docs/design/2026-10-20-the-a-side-program-boundary-and-solutions.md`
+    before reporting anything about "the organism", "the ventures" or "the migration".
 
 ## Verify a change
 
@@ -220,9 +228,8 @@ commit and run it again.
 | Read surfaces, 2026-10-17 | synthesis was push-only: no joined answer existed across memory, episodes, skills, playbooks and gold standards | `test_recall_joins_memory_skills_and_verified_results` |
 | Read surfaces, 2026-10-17 | the law layer was unreachable at runtime, so agents operated from possibly-stale distilled copies with no source to consult | `test_law_show_serves_the_distributions_own_docs` |
 | Dormant seam, 2026-10-17 | the external strategy stores' schemas lived only in the bundle's SELECTs — a drifted store would fail open and invisibly; a present store now must declare a known api_version and lint proves the contract columns | `test_a_present_external_store_declares_a_known_version` |
-| KB audit, 2026-10-20 | `scripts/genome` was re-pinned twice while `holon/vendor/genome.py` stayed on the previous release, so a knowledge base could pass `holon kb run ... lint` and fail the distribution's own `scripts/genome lint` — two copies of one CLI, two rulesets | `test_the_vendored_cli_is_the_same_build_as_scripts_genome` |
-| Capability layer, 2026-10-20 | the manifest directory was renamed `genome/units` → `bylaws/units`, but a manifest left at the old path is invisible to the kernel, so `holon bylaws sync` emptied the units tables with no error and no lint finding — one command from losing the whole capability layer | `test_a_manifest_outside_the_manifest_directory_never_empties_the_capability_layer` |
-| Import fidelity, 2026-10-20 | the "an outside-reach import lands OFF" guard read outside-reach from the decision model alone, so when the model was off or rate-limited every import read as internal and the outreach fleet landed enabled with a clock — one bulk approval lit it | `test_an_outside_reach_import_starts_disabled_with_the_decision_model_down` |
+| Two-stack conflation, 2026-10-20 | the docs that stated "never conflate them" were design records an agent reads *after* forming a model, so A's own gaps were reported as B's work and A's completion was read as the ventures' migration; the boundary is now a law (`AGENTS.md` law 10, `INTENT.md` design law 7) and lint's `boundary` pack fails a doc that asserts one system | `test_the_boundary_lint_pack_catches_a_conflated_doc` |
+| jcode seam, 2026-10-20 | the jcode adapter's README claimed an MCP server sees the run's environment — true on jcode v0.93, false on v0.99.0, where the run token never reaches the server and `holon_submit` can never bind to a run | `test_a_jcode_run_token_reaches_the_mcp_server` |
 
 ## Reading order for a new agent
 

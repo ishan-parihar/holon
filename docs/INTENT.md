@@ -85,3 +85,13 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
    each metric paired with a counter-metric.
 6. **The organization changes itself only through its own pipeline**, under the same approvals as
    any other work.
+7. **Two stacks, never one system.** Holon is a *whole* organization, not a component of someone
+   else's. It does not run, embed, extend or depend on any other agent runtime: the Chair's
+   production venture runtime (its own scheduler, its own agent org, its own delivery channels) is
+   a **separate program**. They use the same words — "departments", "routines", "employees",
+   "ventures" — and that shared vocabulary is not shared infrastructure. **A finding about one is
+   never evidence about the other**, a gap in Holon is Holon's to close, and Holon's work never
+   waits on the other program's state. Where a document describes Holon as the operating system
+   *for* another system's ventures, that is a **proposal awaiting a decision**, never a fact about
+   what is running today. The scope statement and the A-side gap list:
+   `docs/design/2026-10-20-the-a-side-program-boundary-and-solutions.md`.
