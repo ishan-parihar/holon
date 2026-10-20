@@ -126,6 +126,24 @@ def spawn_message(brief: dict) -> str:
 _PLAIN_TOKEN = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*")
 
 
+def deadline_for(driver: "Driver", stage: str) -> float:
+    """How long this harness may take on this stage.
+
+    A driver declares one flat `timeout_s`, and the kernel leases each stage for `LEASE_S[stage]`.
+    When the driver's timeout exceeds the lease — every shipped driver declares 3600s while a
+    `plan` stage leases 1800s and a `verify` one 1200s — the lease sweep recovers the work while
+    the harness is still running, so the stage returns to ready under a run nobody has closed: the
+    next employee claims it, the old harness writes its result at the same path, and two bodies
+    fight over one result.json.
+
+    The lease is the real bound, so the driver takes the smaller of the two. The sweep then fires
+    only when a dispatcher has actually died, which is what it is for; and a harness that reaches
+    its budget is stopped by the driver's own timeout while its lease is still live, which is the
+    only state in which its output can still be written and read.
+    """
+    return min(driver.timeout_s, vocab.LEASE_S.get(stage, driver.timeout_s))
+
+
 def render(driver: Driver, brief: dict) -> tuple[str, str]:
     stage = brief["stage"]
     values = {
@@ -212,14 +230,20 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive
     if not Path(cwd).is_dir():
         cwd = str(Path(brief["brief_md"]).parent)
     log_path = Path(brief["brief_md"]).parent / "driver.log"
+    # A harness that buffers its stdout when the pipe is not a terminal loses everything it had
+    # written when it is killed before a flush — which is exactly the output a stall must leave.
+    # Set on both paths: the child sees it whether the kernel spawns it or the runner does.
     if isolation:
         from holon.execution import isolation as iso
-        env = {**run_env(home, brief, token, isolation["broker"]), **driver_env(driver, brief)}
-        exit_code, stdout, stderr = iso.run(isolation["runner"], cmd, cwd, env, driver.timeout_s, alive, alive_every_s)
+        env = {**run_env(home, brief, token, isolation["broker"]), **driver_env(driver, brief),
+               "PYTHONUNBUFFERED": "1"}
+        exit_code, stdout, stderr = iso.run(isolation["runner"], cmd, cwd, env,
+                                            deadline_for(driver, brief["stage"]), alive, alive_every_s)
     else:
         clean = {k: v for k, v in os.environ.items() if k not in ("HOLON_CHAIR_KEY", "HOLON_KEY")}
-        env = {**clean, **run_env(home, brief, token), **driver_env(driver, brief)}
-        exit_code, stdout, stderr = execute(cmd, cwd, env, driver.timeout_s, alive, alive_every_s)
+        env = {**clean, **run_env(home, brief, token), **driver_env(driver, brief), "PYTHONUNBUFFERED": "1"}
+        exit_code, stdout, stderr = execute(cmd, cwd, env,
+                                            deadline_for(driver, brief["stage"]), alive, alive_every_s)
     log_path.write_text(f"$ {cmd}\n[cwd] {cwd}\n[exit] {exit_code}\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}\n")
     envelope = None
     outer = extract_last_json(stdout) if driver.result == "stdout-json" else None
@@ -244,7 +268,16 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive
 
 def execute(cmd: str, cwd: str, env: dict, timeout_s: float, alive=None, alive_every_s: float = 15.0
             ) -> tuple[int, str, str]:
-    """Run a shell command in its own process group as this user; (exit code, stdout, stderr)."""
+    """Run a shell command in its own process group as this user; (exit code, stdout, stderr).
+
+    `timeout_s` is the hard wall-clock bound. Two ways out, and they are different: a harness that
+    finished its work and was told to stop goes quietly, while one that ran out of budget is killed
+    with the reason recorded on stderr so the kernel can tell "the body stopped early" from "the
+    body died" — the difference decides whether its remaining output is worth salvaging.
+
+    `PYTHONUNBUFFERED` is set for the child (by `run`, above): a Python harness buffers its stdout
+    when the pipe is not a terminal, so a harness killed before it flushed loses everything it had
+    reasoned, which is exactly the output a stall needs to leave behind."""
     proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                             text=True, start_new_session=True)
     deadline = time.monotonic() + timeout_s

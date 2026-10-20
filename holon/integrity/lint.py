@@ -41,7 +41,8 @@ PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "bylaws", "
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
-SUBSTITUTED = {"run_id", "task_id", "work_id", "stage", "context_md", "result_path", "workdir", "holon"}
+SUBSTITUTED = {"run_id", "task_id", "work_id", "stage", "context_md", "result_path", "workdir",
+               "holon", "envelope_path"}
 SKILL_SECTIONS = {"protocol": ("## Protocol", "## Always"), "role": ("## Principles",),
                   "operation": ("## Protocol",), "playbook": ("## Objective", "## Protocol")}
 SKILL_WORDS = (120, 700)

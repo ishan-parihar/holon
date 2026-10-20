@@ -15,6 +15,11 @@ verification, or that the Chair disagrees with on audit, cost you authority.
 3. Are the writes and external effects the minimum the work needs? Is the rollback real?
 4. Is the grade honest? If the plan is riskier than its grade, reject and say why.
 
+## Budget
+
+Follow the `holon-employee` skill's turn-budget section. The exact envelope shape is the `envelope.schema.json` beside your brief.
+
+
 ## Output: write exactly one JSON object to `$result_path`
 
 ```json

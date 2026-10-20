@@ -16,6 +16,11 @@ on what you write, and so will every later task in this area: write it to last.
    its output, URL). Mark uncertain items `"confidence": "low"`.
 4. Put unknowns that block planning in `open_questions`, not in the terrain.
 
+## Budget
+
+Follow the `holon-employee` skill's turn-budget section. The exact envelope shape is the `envelope.schema.json` beside your brief.
+
+
 ## Output: write exactly one JSON object to `$result_path`
 
 ```json

@@ -116,6 +116,87 @@ class PushMode(KernelCase):
         self.assertTrue(out["breach"])
         self.assertIn("trust me", self.k.work.last_execute_output(out["work"]["id"])["documentation"])
 
+    def test_a_stalling_body_records_that_it_produced_nothing(self):
+        """Both harnesses failed the same way (2026-10-20): the body reasoned its way to
+        `holon_submit`, kept exploring, and was killed by the timeout having written no result at
+        all. The run failed, the stage recycled, and nothing in the work graph said why or what it
+        had been doing — the operator's only evidence was driver.log. A stall is now a recorded
+        event, so a repeated stall is visible instead of a stage that silently keeps recycling."""
+        from pathlib import Path
+        from holon.execution import briefs
+        # a short deadline so the test runs in seconds: a stall lasts as long as the driver is
+        # allowed, and the real plan lease (1800s) is asserted separately above
+        self.install_fake_driver("fake", mode="stall", timeout_s=2)
+        t = self.add(dept="eng")
+        out = self.k.dispatch(self.hod, "plan")
+        self.assertTrue(out["breach"], "a body that writes no result still breaches the contract")
+        self.assertEqual(self.status(t), "open", "the stage is recycled for another attempt")
+        run = self.k.wconn.execute("SELECT id FROM runs WHERE kind='plan'").fetchone()[0]
+        log = (self.home.run_dir(run) / "driver.log").read_text()
+        self.assertIn("holon_submit", log, "the body's own reasoning is preserved for review")
+        notes = [r[0] for r in self.k.wconn.execute(
+            "SELECT note FROM events WHERE entity='run' AND entity_id=?", (run,))]
+        self.assertTrue(any("no envelope" in n for n in notes),
+                        "a body that produced nothing says so in the audit trail")
+
+    def test_the_runs_brief_names_the_schema_it_must_write(self):
+        """The one artifact a body needs to answer correctly is the envelope's exact shape. It was
+        rendered nowhere into the run and pointed at inside the distribution, which was also in the
+        agent's read reach and simultaneously forbidden by the brief ("Holon's own source code is
+        not an input") — so an operant body spent 66 tool calls hunting for a schema that existed
+        and was visible. The schema is now written into the run, and every brief names it."""
+        from pathlib import Path
+        from holon.execution import briefs
+        self.add(dept="eng")
+        c = self.k.claim("plan", self.hod)
+        d = briefs.load(self.home, c.run["id"])
+        schema = Path(d["envelope"])
+        self.assertTrue(schema.is_file(), "the run carries its envelope schema")
+        body = json.loads(schema.read_text())
+        self.assertEqual(body["$id"], "holon:plan-result", "rendered from the contract, not copied")
+        self.assertIn("findings", json.dumps(body))
+        brief = Path(d["brief_md"]).read_text()
+        self.assertIn("envelope.schema.json", brief, "the brief names the schema it must write")
+        self.assertIn("## Budget", brief, "the brief names the exploration budget")
+        # the budget's rule lives in the one skill every employee loads, not in seven copies
+        # of the brief — the distribution's own rubric flagged those as duplication and was right
+        self.assertIn("How to spend your turn budget", self.k.invoke_skill("holon-employee")["text"])
+
+    def test_a_drivers_deadline_never_exceeds_the_stages_lease(self):
+        """Every shipped driver declares 3600s while a `plan` stage leases 1800s and a `verify` one
+        1200s. With the driver slower than the lease, the sweep recovered the work while the harness
+        was still running: the stage returned to ready under a live run, and two bodies then
+        contended for one result.json. The lease is the real bound, so the driver takes the smaller.
+        """
+        from holon.execution import drivers
+        drv = drivers.Driver(name="t", command="true", timeout_s=3600)
+        self.assertEqual(drivers.deadline_for(drv, "plan"), 1800)
+        self.assertEqual(drivers.deadline_for(drv, "verify"), 1200)
+        self.assertEqual(drivers.deadline_for(drv, "execute"), 3600,
+                         "a stage whose lease exceeds the driver's timeout keeps the driver's")
+        tight = drivers.Driver(name="t2", command="true", timeout_s=300)
+        self.assertEqual(drivers.deadline_for(tight, "execute"), 300,
+                         "a driver tighter than every lease is honoured")
+
+    def test_a_stalled_body_is_stopped_while_its_lease_is_still_live(self):
+        """A body that overruns is stopped by the driver's own deadline, not by a lease sweep: the
+        run is still open when it is killed, which is the only state in which its remaining output
+        can be attributed to it. Before this, the kill (3600s) outlasted the plan lease (1800s), so
+        the sweep recovered the work under a live run and two bodies contended for one
+        result.json."""
+        import time
+        self.install_fake_driver("fake", mode="stall", timeout_s=2)
+        work = self.add(dept="eng")
+        t0 = time.monotonic()
+        out = self.k.dispatch(self.hod, "plan")
+        self.assertLess(time.monotonic() - t0, 1500, "the harness is killed, not waited out")
+        run = self.k.wconn.execute("SELECT id FROM runs WHERE kind='plan'").fetchone()[0]
+        log = (self.home.run_dir(run) / "driver.log").read_text()
+        self.assertIn("[exit] 124", log, "stopped by the driver's own deadline")
+        self.assertIn("holon_submit", log, "its exploration is what the log keeps")
+        self.assertEqual(self.status(work), "open",
+                         "the stage is still the organization's, with a claim released and retried")
+
     def test_a_running_harness_keeps_its_lease_and_a_hung_one_is_killed(self):
         import sys
         import time

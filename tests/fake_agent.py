@@ -2,6 +2,7 @@
   ok (default)    every stage answers sensibly; execute writes hello.txt
   dirty-planner   observe stages write into the workdir (must be rejected by the read-only guard)
   garbage         prints junk, writes no result.json
+  stall           explores and reasons, writes no result, never submits (the real harness failure)
   stdout          prints the envelope on stdout instead of writing result.json
   fail            executor reports outcome=failure
   self-submit     the agent submits its own result with its run token (pull-in-push)
@@ -16,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 brief = json.loads((Path(os.environ["HOLON_BRIEF_DIR"]) / "brief.json").read_text())
@@ -30,6 +32,13 @@ assert "HOLON_CHAIR_KEY" not in os.environ, "the Chair key must never reach an a
 
 if mode == "garbage":
     print("I did some things, trust me")
+    sys.exit(0)
+if "stall" in modes:
+    # A body that never submits: it explores, reasons, and runs out of budget without writing the
+    # result — the observed failure of both harnesses (36 and 66 tool calls, zero submits).
+    print("No write/edit/apply_patch tool... so I should call holon_submit")
+    print("Let me verify the remaining facts first")
+    time.sleep(120)
     sys.exit(0)
 if "dirty-planner" in modes and os.environ["HOLON_POSTURE"] == "observe":
     (workdir / "scribble.txt").write_text("an observer should not write")

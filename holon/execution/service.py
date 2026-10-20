@@ -1533,6 +1533,16 @@ class Kernel:
                     **post, "work": self.work.work_of(claimed.node["id"])}
         if changed:
             return self._contract_breach(self.work.get_run(claimed.run["id"]), [breach], out, out["exit_code"])
+        if out.get("envelope") is None:
+            # The body produced no envelope. A harness that printed its answer but never wrote the
+            # file — the observed failure is a body that reasons its way to `holon_submit` and then
+            # keeps exploring until the timeout takes it — leaves the run with nothing at all, so
+            # the stage is recycled with no record of what it tried. Record the stall: a kernel
+            # event says so, surfaced to the Chair, and a guard test below keeps it from regressing.
+            self.work._event("run", claimed.run["id"], None, None,
+                            "no envelope: the body produced no result (kept exploring until its "
+                            "budget ran out); its output is in driver.log",
+                            actor=f"emp:{claimed.employee['id']}" if claimed.employee else None)
         return self.submit(claimed.run["id"], out["envelope"], out["exit_code"], driver_output=out)
 
     def chair_channels(self) -> set[str]:

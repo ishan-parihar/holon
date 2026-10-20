@@ -15,6 +15,11 @@ You are executing work **$work_id** according to its approved plan.
 4. Ask a colleague when you need something from their department
    (`$holon msg send emp:<id> "..." --task $work_id`).
 
+## Budget
+
+Follow the `holon-employee` skill's turn-budget section. The exact envelope shape is the `envelope.schema.json` beside your brief.
+
+
 ## Output: write exactly one JSON object to `$result_path`
 
 ```json

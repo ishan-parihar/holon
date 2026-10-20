@@ -12,6 +12,11 @@ You are independently verifying work **$work_id**. You did not do it; judge it.
 3. Read-only: fix nothing. A `fail` sends the work back for another attempt.
 4. `fail` when a criterion is unmet or a claim is false; name which one.
 
+## Budget
+
+Follow the `holon-employee` skill's turn-budget section. The exact envelope shape is the `envelope.schema.json` beside your brief.
+
+
 ## Output: write exactly one JSON object to `$result_path`
 
 ```json

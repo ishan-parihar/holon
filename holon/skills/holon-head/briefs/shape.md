@@ -17,6 +17,11 @@ can plan and a verifier can judge, or send it where it belongs.
 
 Read-only: you change the work's fields through your result, nothing else.
 
+## Budget
+
+Follow the `holon-employee` skill's turn-budget section. The exact envelope shape is the `envelope.schema.json` beside your brief.
+
+
 ## Output: write exactly one JSON object to `$result_path`
 
 ```json

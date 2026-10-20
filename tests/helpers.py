@@ -67,10 +67,10 @@ class KernelCase(unittest.TestCase):
                 os.environ[k] = v
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def install_fake_driver(self, name, result="file", mode="ok", extra=""):
+    def install_fake_driver(self, name, result="file", mode="ok", extra="", timeout_s=60):
         self.home.drivers_dir.mkdir(parents=True, exist_ok=True)
         (self.home.drivers_dir / f"{name}.toml").write_text(
-            f'name = "{name}"\ncommand = "{sys.executable} {FAKE_AGENT}"\ntimeout_s = 60\n'
+            f'name = "{name}"\ncommand = "{sys.executable} {FAKE_AGENT}"\ntimeout_s = {timeout_s}\n'
             f'result = "{result}"\n{extra}\n[env]\nFAKE_MODE = "{mode}"\nPYTHONPATH = "{REPO}"\n')
 
     def add(self, title="Write hello", **kw):

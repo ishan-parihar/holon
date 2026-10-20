@@ -37,6 +37,7 @@ For each run the kernel writes `$HOLON_HOME/execution/runtime/runs/<run_id>/`:
 | `brief.json` | kernel | run, stage and work ids, role, posture, employee, every path below, the run's exported skills (`skills`), the run token (mode 0600) |
 | `identity.md` | kernel | the employee's identity card, for harnesses that put it in the system prompt |
 | `context.md` | kernel | the compiled context: role, work, earlier stages' outputs, memory, lineage; for a plan, the kernel-computed grade floor and approver |
+| `envelope.schema.json` | kernel | this stage's exact result schema, rendered from the contract at claim — local, so a body never has to hunt for it inside the distribution |
 | `result.json` | **agent** | the result envelope (§2) |
 | `driver.log` | kernel | command, exit code, stdout and stderr (push mode) |
 
@@ -54,6 +55,7 @@ Environment in push mode:
 | `HOLON_RUN_DIR`, `HOLON_RESULT_PATH` | this run's directory (where `policy.json`, `trajectory.json`, `usage.json` and refusals live) and where the result goes; `HOLON_BRIEF_DIR` is an alias of `HOLON_RUN_DIR` |
 | `HOLON_RUN_TOKEN` | authenticates this employee for this run only (§6) |
 | `HOLON_BROKER` | set under isolation (BYLAWS §11): the broker's address; `holon` sends every call there |
+| `PYTHONUNBUFFERED` | set for the child: a harness that buffers its stdout loses everything it had written when it is stopped, which is the output a stopped run is judged on |
 
 The kernel never passes `HOLON_CHAIR_KEY` to a harness. Under isolation the harness gets only these
 variables and the driver's `[env]`, added to the agent user's own environment, never the kernel's.

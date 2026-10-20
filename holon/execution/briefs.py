@@ -64,7 +64,8 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
     holon = holon_command(home)
     variables = dict(
         run_id=run["id"], task_id=node["id"], work_id=node["parent_id"] or node["id"], stage=stage,
-        context_md=str(d / "context.md"), result_path=str(result_path), workdir=workdir, holon=holon)
+        context_md=str(d / "context.md"), result_path=str(result_path), workdir=workdir, holon=holon,
+        envelope_path=str(d / "envelope.schema.json"))
     md = lib.render(lib.read(skill, file, dept), variables)
     if scope and (scope["roots"] or scope.get("read_roots") or scope["commands"] or scope["act_commands"]):
         cmds = scope["commands"] + (scope["act_commands"] if vocab.POSTURE[stage] == "act" else [])
@@ -81,6 +82,13 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
     # Deliberately not registered with the harness exports: a run's snapshot is written once,
     # before the body runs, and is never refreshed underneath it.
     lib.export(d / "skills", variables, dept=dept)
+    # The envelope's schema, written beside the brief rather than pointed at in the distribution.
+    # A body that has to know the exact shape it must write was previously told "do not read
+    # Holon's source" while the distribution — which holds schemas/ — was in its read reach, so the
+    # one artifact it needed was both visible and forbidden and it spent its budget hunting for it.
+    # Rendered from the contract (the one writer of the rules, law 5), so it can never drift.
+    from holon.core import contract as _contract
+    (d / "envelope.schema.json").write_text(_contract.schema_text(stage))
     if policy:
         (d / "policy.json").write_text(json.dumps(policy, indent=2))
         try:
@@ -97,7 +105,7 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
         "skills": str(d / "skills"),
         "identity_md": str(d / "identity.md") if identity_md else None, "result_path": str(result_path),
         "workdir": workdir, "holon": holon, "lease_until": run.get("lease_until"), "token": token,
-        "envelope": f"schemas/{stage}-result.schema.json", "skill": skill, "scope": scope or {"name": "org"},
+        "envelope": str(d / "envelope.schema.json"), "skill": skill, "scope": scope or {"name": "org"},
         "policy": str(d / "policy.json") if policy else None,
         "secrets": secrets or {},   # G8: dept key files, resolved at claim; 0600 like the token above
         "created_at": now()}, indent=2))

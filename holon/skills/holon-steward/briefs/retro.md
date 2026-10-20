@@ -17,6 +17,11 @@ cause and turn it into changes.
    other. Say how you will know the change worked.
 4. Read-only: you change nothing directly.
 
+## Budget
+
+Follow the `holon-employee` skill's turn-budget section. The exact envelope shape is the `envelope.schema.json` beside your brief.
+
+
 ## Output: write exactly one JSON object to `$result_path`
 
 ```json
