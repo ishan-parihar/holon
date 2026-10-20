@@ -26,7 +26,7 @@ GENOME = Path(__file__).resolve().parent.parent / "vendor" / "genome.py"
 # The vendored CLI and the distribution's own scripts/genome are the SAME build: a KB's verbs and the
 # repo's own lint must agree, or a KB can pass `holon kb run ... lint` and fail `scripts/genome lint`.
 # The pin is the guard for that (a test asserts the two files are byte-identical).
-GENOME_SHA256 = "449dfe61c94d494fc7b65e6289b725564d79999bea78b10bf4f66c5fbb587ae6"  # genome 2026.10.20-1
+GENOME_SHA256 = "fb3c96e6f489e2c27f2db09911a59ad9d56771e3bf877465aefb5de99d5d4704"  # genome 2026.10.20-2
 READ_VERBS = ("find", "view", "ask", "wake", "show", "lint")
 WRITE_VERBS = ("new", "move", "set", "link")
 JSON_VERBS = ("find", "ask", "show", "new")  # the verbs with a --json form
