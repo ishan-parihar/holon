@@ -92,29 +92,30 @@ def migrate(conn: sqlite3.Connection, db_name: str) -> list[str]:
             continue
         text = f.read_text()
         try:
+            # Each migration runs in exactly one transaction, whether it is a .py or a .sql file,
+            # and this loop owns it. A caller may arrive with a transaction already open (a
+            # pre-graph instance's test setup inserts its rows and never commits), and BEGIN
+            # IMMEDIATE inside a transaction is an error — so anything open is committed here.
+            if conn.in_transaction:
+                conn.commit()
+            # Foreign keys are off for the duration, exactly as the .py branch does: a migration
+            # that rebuilds a table drops the old one while another table still references it, and
+            # SQLite checks that at the statement rather than at the commit (deferring them is not
+            # enough — the check still fires mid-rebuild). Each migration ends with its own
+            # integrity check where that matters; `PRAGMA foreign_key_check` runs in doctor.
+            conn.execute("PRAGMA foreign_keys=OFF")
             if f.name.endswith(".py"):
                 ns: dict = {}
                 exec(compile(text, f.name, "exec"), ns)
-                conn.execute("PRAGMA foreign_keys=OFF")
                 conn.execute("BEGIN IMMEDIATE")
                 ns["up"](conn)
                 conn.execute("INSERT INTO schema_migrations VALUES (?,?,?)", (f.name, now(), checksum(text)))
                 conn.execute("COMMIT")
-                conn.execute("PRAGMA foreign_keys=ON")
             else:
                 sql = "" if ".fts." in f.name and not fts else text  # FTS is optional; search falls back to LIKE
-                # A .sql migration may rebuild a table others reference (SQLite cannot alter a CHECK
-                # in place), and its DROP fails the FK checks at that statement. Deferring them for
-                # the transaction is what a .py migration does with foreign_keys=OFF. The pragma must
-                # NOT be prepended to this script: a migration's trigger bodies contain their own
-                # `BEGIN … END`, so a leading BEGIN IMMEDIATE would nest inside one and fail. It is
-                # set on the connection, and re-set after, so it covers the statements that need it.
-                conn.execute("PRAGMA defer_foreign_keys = ON")
-                try:
-                    conn.executescript(f"BEGIN IMMEDIATE;\n{sql}\nINSERT INTO schema_migrations VALUES "
-                                       f"('{f.name}', '{now()}', '{checksum(text)}');\nCOMMIT;")
-                finally:
-                    conn.execute("PRAGMA defer_foreign_keys = OFF")
+                conn.executescript(f"BEGIN IMMEDIATE;\n{sql}\nINSERT INTO schema_migrations VALUES "
+                                   f"('{f.name}', '{now()}', '{checksum(text)}');\nCOMMIT;")
+            conn.execute("PRAGMA foreign_keys=ON")
         except BaseException:
             if conn.in_transaction:
                 conn.execute("ROLLBACK")
