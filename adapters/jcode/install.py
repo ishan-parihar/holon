@@ -29,6 +29,9 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
+sys.path.insert(0, str(HERE.parent))
+import install_lib  # noqa: E402  (the shared installer seam: R3 of the 2026-10-20 bridge plan)
+
 BEGIN, END = "# ── Holon: jcode features off for employees ──", "# ── end Holon ──"
 BLOCK = f"""{BEGIN}
 [features]
@@ -44,7 +47,7 @@ enabled = false       # no unapproved proactive work
 
 def strip_block(text: str) -> str:
     """The config without any copy of BLOCK: `jcode provider add` rewrites the file and can drop the BEGIN line."""
-    return re.sub(rf"(?:{re.escape(BEGIN)}\n)?\[features\]\n.*?{re.escape(END)}\n*", "", text, flags=re.S)
+    return install_lib.strip_block(text, BEGIN, END)
 
 
 def main() -> int:
@@ -59,11 +62,14 @@ def main() -> int:
 
     home = Path(a.holon_home).expanduser().resolve()
     jhome = home / "adapters" / "jcode" / "home"
-    found = a.jcode or shutil.which("jcode")
-    if not found and not a.dry_run:
-        print("no jcode on PATH; pass --jcode", file=sys.stderr)
+    # R3: the pin is taken through the seam, which refuses a binary that cannot start —
+    # a jcode that cannot run cannot serve a stage, and a driver that names it is worse
+    # than no driver at all.
+    try:
+        jcode = install_lib.pin_binary("jcode", a.jcode, required=not a.dry_run, check=not a.dry_run)
+    except install_lib.InstallError as e:
+        print(f"jcode: {e}", file=sys.stderr)
         return 2
-    jcode = os.path.abspath(os.path.expanduser(found)) if found else "jcode"  # the launcher, not a build dir
     driver = (HERE / "driver.toml").read_text().replace('command = "jcode run', f'command = "{jcode} run', 1)
     driver = driver.rstrip() + f'\nJCODE_HOME = "{jhome}"\n'
     tomllib.loads(driver)
@@ -89,19 +95,17 @@ def main() -> int:
     cfg.write_text(strip_block(cfg.read_text()).rstrip() + "\n\n" + BLOCK)
     tomllib.loads(cfg.read_text())
     (jhome / "mcp.json").write_text(json.dumps(mcp, indent=2))
-    p = subprocess.run([sys.executable, "-m", "holon", "--home", str(home), "skill", "export", "--to",
-                        str(jhome / "skills")], capture_output=True, text=True, cwd=str(REPO))
-    print("skills: " + ("exported" if p.returncode == 0 else "export FAILED: " + (p.stdout + p.stderr)[-300:]))
-    if p.returncode != 0:
+    try:
+        install_lib.export_skills(home, jhome / "skills")
+    except install_lib.InstallError as e:
+        print(f"skills: export FAILED — {e}", file=sys.stderr)
         return 1
-    drivers = home / "config" / "drivers"
-    drivers.mkdir(parents=True, exist_ok=True)
-    (drivers / "jcode.toml").write_text(driver)
-    print(f"driver: {drivers / 'jcode.toml'}")
-    p = subprocess.run([jcode, "--version"], capture_output=True, text=True, env=env)
-    print(f"verify: {(p.stdout or p.stderr).strip()}")
+    print("skills: exported")
+    path = install_lib.write_driver(home, "jcode", driver)
+    print(f"driver: {path}")
+    print(f"verify: {install_lib.verify(home, jcode)}")
     print("next: `holon adapter test jcode` runs the conformance suite against this harness")
-    return 0 if p.returncode == 0 else 1
+    return 0
 
 
 if __name__ == "__main__":

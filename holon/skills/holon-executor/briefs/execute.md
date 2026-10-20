@@ -37,5 +37,7 @@ Follow the `holon-employee` skill's turn-budget section. The exact envelope shap
 When the approved plan lists `skill:<skill>/<file>` in its writes, put the new file in
 `"skill_changes": [{"skill": "...", "file": "SKILL.md", "content": "<the whole file>", "why": "..."}]`
 instead of editing skill files: the kernel writes it into your department's layer once the work is
-verified. `documentation` is the result the Chair reads. No file-write tool? Call the `holon_submit` tool
+verified. `documentation` is the result the Chair reads. **Budget.** Read the context and your skill, then consult at most three more sources. The result shape is here — do not search for a schema, a template or a reference file. When the budget is spent, hand in what you have: a thin result is rework, an unfinished run is nothing.
+
+No file-write tool? Call the `holon_submit` tool
 with it, or end your final message with that JSON object.

@@ -29,6 +29,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
+sys.path.insert(0, str(HERE.parent))
+import install_lib  # noqa: E402  (the shared installer seam: R3 of the 2026-10-20 bridge plan)
 
 
 def render_driver(a) -> str:
@@ -59,29 +61,34 @@ def main() -> int:
     ap.add_argument("--api-key-file", help="file holding that endpoint's key, read at run time (keep it 0600)")
     ap.add_argument("--stall-timeout", type=int, default=300,
                     help="seconds without streamed tokens before Hermes retries a model call (default 300)")
+    ap.add_argument("--hermes", help="the hermes binary (default: the first on PATH); its path is pinned")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     home = Path(a.holon_home).expanduser().resolve()
     skills_dir = Path(a.hermes_home).expanduser() / "skills" / "holon"
+    # R3: the pin is taken through the seam, which refuses a binary that cannot start.
+    try:
+        hermes = install_lib.pin_binary("hermes", getattr(a, "hermes", None),
+                                        required=not a.dry_run, check=not a.dry_run)
+    except install_lib.InstallError as e:
+        print(f"hermes: {e}", file=sys.stderr)
+        return 2
     drivers_dir = home / "config" / "drivers"
     print(f"skills: {skills_dir}\ndriver: {drivers_dir / 'hermes.toml'}")
     if a.dry_run:
         print("dry run: no changes written\n" + render_driver(a))
         return 0
-    if not shutil.which("hermes"):
-        print("hermes is not on PATH", file=sys.stderr)
-        return 2
-    p = subprocess.run([sys.executable, "-m", "holon", "--home", str(home), "skill", "export", "--to", str(skills_dir)],
-                       capture_output=True, text=True, cwd=str(REPO))
-    print(f"skills: {'exported' if p.returncode == 0 else 'export FAILED — ' + (p.stdout + p.stderr)[-300:]}")
-    if p.returncode != 0:
+    try:
+        install_lib.export_skills(home, skills_dir)
+    except install_lib.InstallError as e:
+        print(f"skills: export FAILED — {e}", file=sys.stderr)
         return 1
-    drivers_dir.mkdir(parents=True, exist_ok=True)
-    (drivers_dir / "hermes.toml").write_text(render_driver(a))
-    p = subprocess.run(["hermes", "--version"], capture_output=True, text=True)
-    print(f"verify: {(p.stdout or p.stderr).strip().splitlines()[0] if p.returncode == 0 else 'hermes --version failed'}")
+    print("skills: exported")
+    path = install_lib.write_driver(home, "hermes", render_driver(a))
+    print(f"driver: {path}")
+    print(f"verify: {install_lib.verify(home, hermes)}")
     print("next: `holon adapter test hermes` runs the conformance suite against this harness")
-    return 0 if p.returncode == 0 else 1
+    return 0
 
 
 if __name__ == "__main__":

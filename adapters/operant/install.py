@@ -41,6 +41,8 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[1]
+sys.path.insert(0, str(HERE.parent))
+import install_lib  # noqa: E402  (the shared installer seam: R3 of the 2026-10-20 bridge plan)
 
 # operant tool names (crates/operant-core/src/tools/builtin.rs) that mutate the machine, the
 # organization's records, or reach a human. An observer gets none of them.
@@ -197,11 +199,16 @@ def main() -> int:
 
     home = Path(a.holon_home).expanduser().resolve()
     ohome = home / "adapters" / "operant" / "home"
-    found = a.operant or shutil.which("operant")
-    if not found and not a.dry_run:
-        print("no operant on PATH; pass --operant", file=sys.stderr)
+    # R3: the pin is taken through the seam, which refuses a binary that cannot start.
+    # The live instance's driver named a stale root-owned `operant` built against a
+    # different ONNX Runtime than this repo pins, so every run died in the loader and
+    # the error text pointed at the library — which was correct. The check that would
+    # have caught it: the binary must pass its own `--version` before it is pinned.
+    try:
+        operant = install_lib.pin_binary("operant", a.operant, required=not a.dry_run, check=not a.dry_run)
+    except install_lib.InstallError as e:
+        print(f"operant: {e}", file=sys.stderr)
         return 2
-    operant = os.path.abspath(os.path.expanduser(found)) if found else "operant"
     key = Path(a.api_key_file).expanduser().read_text().strip() if a.api_key_file else None
     native = not a.dry_run and carries_native_tools(operant)
 
@@ -229,20 +236,17 @@ def main() -> int:
         f.write_text(text)
         if key:
             f.chmod(0o600)  # the key rides the config, so the config is private
-    p = subprocess.run([sys.executable, "-m", "holon", "--home", str(home), "skill", "export", "--to",
-                        str(skills_dir)], capture_output=True, text=True, cwd=str(REPO))
-    print("skills: " + ("exported" if p.returncode == 0 else "export FAILED: " + (p.stdout + p.stderr)[-300:]))
-    if p.returncode != 0:
+    try:
+        install_lib.export_skills(home, skills_dir)
+    except install_lib.InstallError as e:
+        print(f"skills: export FAILED — {e}", file=sys.stderr)
         return 1
-    drivers = home / "config" / "drivers"
-    drivers.mkdir(parents=True, exist_ok=True)
-    (drivers / "operant.toml").write_text(driver)
-    print(f"driver: {drivers / 'operant.toml'}")
-    p = subprocess.run([operant, "--version"], capture_output=True, text=True,
-                        env={**os.environ, "HERMES_HOME": str(ohome)})
-    print(f"verify: {(p.stdout or p.stderr).strip()}")
+    print("skills: exported")
+    path = install_lib.write_driver(home, "operant", driver)
+    print(f"driver: {path}")
+    print(f"verify: {install_lib.verify(home, operant)}")
     print("next: `holon adapter test operant` runs the conformance suite against this harness")
-    return 0 if p.returncode == 0 else 1
+    return 0
 
 
 if __name__ == "__main__":

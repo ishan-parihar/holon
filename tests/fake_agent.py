@@ -11,6 +11,9 @@
   wrapped         prints a harness summary {"text": <reply>, "usage": {...}} (jcode, Claude Code style)
   env-probe       execute's documentation appends probe: IMAP_KEY=… (G8: prove a dept secret reached
                   the body's environment, push lane and broker lane)
+  final-message   the body prints the envelope as its final output but writes no result.json
+                  (R1 of the 2026-10-20 bridge plan: the kernel must salvage it). Combined with
+                  `+ok` it writes result.json first, so precedence can be tested.
 """
 
 import json
@@ -87,6 +90,24 @@ if mode == "wrapped":
 elif mode == "stdout":
     print("some chatter before the answer")
     print(json.dumps(env))
+elif "final-message" in modes:
+    # R1: the body reasons its way to the answer, prints it as its final message, and
+    # never writes result.json — the shape both real harnesses end in when they do not
+    # stop (jcode prints a {"text": ...} summary; a body that keeps exploring never gets
+    # to print even that). `+ok` writes the file too, so result.json's precedence is
+    # testable, and `+wrapped` uses the {"text": ...} shape a real harness ends with.
+    print("[trace] token_usage input=900 output=40", file=sys.stderr, flush=True)
+    if "ok" in modes:
+        Path(brief["result_path"]).write_text(json.dumps(env))
+    if "wrapped" in modes:
+        # the shape a real harness ends with: a JSON summary whose reply is its final
+        # message, with the envelope inside the reply rather than at the top level
+        print("## Result\n\nI have read the brief and the context.\n\n"
+              + json.dumps({"text": "I have read the brief and the context.\n\n" + json.dumps(env),
+                            "usage": {"input_tokens": 900, "output_tokens": 40}}))
+    else:
+        print("The work is understood. Here is the result I will hand in.")
+        print(json.dumps(env))
 elif "linger" in modes:
     print("[trace] token_usage input=900 output=40", file=sys.stderr, flush=True)
     print("[trace] token_usage input=1100 output=60", file=sys.stderr, flush=True)

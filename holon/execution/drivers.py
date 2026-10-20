@@ -253,17 +253,37 @@ def run(home: Home, driver: Driver, brief: dict, token: str | None = None, alive
         envelope = json.loads(text) if text is not None else None
     except (ValueError, OSError, RuntimeError):
         envelope = None
+    # Where the envelope came from, recorded on the run's log so a reader can tell a
+    # harness that submitted from one the kernel recovered. `result.json` is the body's
+    # own hand-in and always wins; the stdout paths are fallbacks, in this order:
+    #   "final message"  the body ended with the JSON object and wrote no result.json —
+    #                    the path the brief names ("end your final message with that
+    #                    JSON object") and the shape both real harnesses end in when
+    #                    they do not stop (measured 2026-10-20: jcode 36 tool calls / 0
+    #                    submits; operant 66 tool calls / 40 iterations / 0 — both cut
+    #                    holding a well-formed result, and both discarded it).
+    #   "stdout-json"    a bare JSON summary with no reply field inside it.
+    # A body that printed no JSON at all stays a contract breach: nothing here
+    # manufactures an envelope, and the log records which path each run took.
+    source = "result.json" if envelope is not None else None
     if envelope is None and outer is not None:
         envelope = outer
         reply = next((outer[k] for k in ("result", "text") if isinstance(outer.get(k), str)), None)
         if reply is not None:
-            # harnesses that wrap the model reply in {"result": "..."} or {"text": "..."}: look inside it
-            envelope = extract_last_json(reply) or envelope
+            # harnesses that wrap the model reply in {"result": "..."} or {"text": "..."}
+            envelope, source = extract_last_json(reply) or envelope, "final message"
+        else:
+            source = "stdout-json"
+    elif envelope is None and driver.result == "stdout-json" and extract_last_json(stdout) is not None:
+        envelope, source = extract_last_json(stdout), "final message"
+    if source and source != "result.json":
+        log_path.write_text(log_path.read_text() + f"\n[envelope from] {source}\n")
+
     usage, calls = usage_of(outer), usage_from_lines(driver.usage_line, stdout + "\n" + stderr)
     if calls:  # every call, counted the harness's way (some count cached input inside input, some apart)
         usage = {**calls, "cost": (usage or {}).get("cost")}
     return {"exit_code": exit_code, "envelope": envelope, "log_path": str(log_path), "stdout_tail": stdout[-4000:],
-            "stderr_tail": stderr[-2000:], "usage": usage}
+            "stderr_tail": stderr[-2000:], "usage": usage, "envelope_source": source or "none"}
 
 
 def execute(cmd: str, cwd: str, env: dict, timeout_s: float, alive=None, alive_every_s: float = 15.0

@@ -31,6 +31,8 @@ import tomllib
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parent))
+import install_lib  # noqa: E402  (the shared installer seam: R3 of the 2026-10-20 bridge plan)
 REPO = HERE.parents[1]
 BEGIN = "# ── Holon (agentic OS) employees"
 END = "# ── end Holon ──"
@@ -117,18 +119,23 @@ def main() -> int:
     a = ap.parse_args()
 
     home = Path(a.holon_home).expanduser().resolve()
-    found = a.zeroclaw or shutil.which("zeroclaw")
-    if found:
-        zc = str(Path(found).expanduser().resolve())
+    # R3: the pin is taken through the seam, which refuses a binary that cannot start.
+    # zeroclaw's own `agent -a` check stays: a binary that lacks the alias cannot run a
+    # stage either, and it is a different failure from "cannot start".
+    try:
+        zc = install_lib.pin_binary("zeroclaw", a.zeroclaw, required=not a.dry_run, check=not a.dry_run)
+    except install_lib.InstallError as e:
+        print(f"zeroclaw: {e}", file=sys.stderr)
+        return 2
+    # zeroclaw's own `agent -a` check — a binary that lacks the alias cannot run a stage.
+    # It is a different failure from "cannot start", so the seam's check does not cover it.
+    # It runs whenever a real binary was resolved (a dry run with no --zeroclaw resolves
+    # none, and there is nothing to ask).
+    if zc != "zeroclaw":
         rc, out = sh([zc, "agent", "--help"])
         if "--agent" not in out and " -a" not in out:
             print(f"{zc} does not support `agent -a` (too old?); pass --zeroclaw with a current binary", file=sys.stderr)
             return 2
-    elif a.dry_run:
-        zc = "zeroclaw"
-    else:
-        print("no zeroclaw on PATH; pass --zeroclaw", file=sys.stderr)
-        return 2
     config_dir = Path(a.config_dir).expanduser() if a.config_dir else Path("~/.zeroclaw").expanduser()
     cfg_path = config_dir / "config.toml"
     if not cfg_path.exists():
@@ -192,10 +199,12 @@ def main() -> int:
         return 0
 
     holon = [sys.executable, "-m", "holon", "--home", str(home)]
-    rc, out = sh(holon + ["skill", "export", "--to", str(skills_dir)], cwd=str(REPO))
-    print(f"skills: {'exported' if rc == 0 else 'export FAILED — ' + out[-300:]}")
-    if rc != 0:
+    try:
+        install_lib.export_skills(home, skills_dir)
+    except install_lib.InstallError as e:
+        print(f"skills: export FAILED — {e}", file=sys.stderr)
         return 1
+    print("skills: exported")
     if new_text is not None:
         backup = cfg_path.with_name(f"{cfg_path.name}.bak.holon.{int(time.time())}")
         shutil.copy2(cfg_path, backup)
@@ -212,16 +221,18 @@ def main() -> int:
         print("notify: " + set_notify(home, config_dir if a.config_dir else None, a.notify_channel,
                                       a.notify_recipient, a.force, zc))
 
-    drivers_dir = home / "config" / "drivers"
-    drivers_dir.mkdir(parents=True, exist_ok=True)
     driver = (HERE / "driver.toml").read_text().replace('scope_fingerprint = ""',
                                                        f'scope_fingerprint = "{sc["fingerprint"]}"')
     driver = driver.replace('command = "zeroclaw agent', f'command = "{zc}' + (
         f" --config-dir {config_dir}" if a.config_dir else "") + " agent")
-    (drivers_dir / "zeroclaw.toml").write_text(driver)
-    print(f"driver: {drivers_dir / 'zeroclaw.toml'}")
+    path = install_lib.write_driver(home, "zeroclaw", driver)
+    print(f"driver: {path}")
 
     base = [zc] + (["--config-dir", str(config_dir)] if a.config_dir else [])
+    # R3: the seam's verify runs the harness's own version command; zeroclaw's extra
+    # check — that the Holon aliases are visible to it — stays, because it is a
+    # harness-specific fact the version line cannot state.
+    print("verify: " + install_lib.verify(home, zc, version_args=("--version",)))
     rc, out = sh(base + ["agents", "list"])
     missing = [x for x in aliases if x not in out]
     print("verify: " + (f"all {len(aliases)} holon aliases are visible to zeroclaw" if rc == 0 and not missing
