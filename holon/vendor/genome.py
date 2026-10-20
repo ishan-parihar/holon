@@ -112,12 +112,12 @@ TOMBSTONE = re.compile(r"<!--\s*kb: tombstone target=\"([^\"]+)\"")
 ZONE_RE = re.compile(r"<!-- genome:zone (\S+) sha=([0-9a-f]+) -->\n(.*?)<!-- genome:end \1 -->", re.S)
 ERR = 2
 MIN_CHUNK = 5  # lines; `ask` hits narrower than this point at a lead line without its content
-VERSION = "2026.10.19-3"
+VERSION = "2026.10.20-1"
 # every key genome reads: an unknown key is a typo that would silently switch a check off (E017)
 CONFIG_KEYS = {
     "genome": {"modules", "schema_version"},
     "card": {"intent", "architecture", "operate", "decisions", "status", "purpose", "privacy", "components", "status_into"},
-    "federation": {"repos", "cache", "status_into"},
+    "federation": {"repos", "cache", "status_into", "exclude"},
     "index": {"embed"},
     "drift": {"mode", "paths", "warn_until"},
     "core": {"append_window", "archive_form", "ask_days", "ask_globs", "ask_index", "budgets", "checklist", "dated_pattern",
@@ -130,6 +130,15 @@ CONFIG_KEYS = {
             "dir_requires", "stale_terms", "stale_exempt", "external_ok"},
 }
 STALE_DOCS = ("*.md", "*.yaml", "*.yml", "*.toml", "*.txt", "*.rst")  # stale paths matter where people read
+# The root files an ordinary software repo carries, and that no role points at.
+# Each is an ecosystem convention, not a genome role: a repo that keeps one
+# keeps it for the same reason every other repo does.
+CONVENTIONAL_ROOT_DOCS = {
+    "AGENTS.md", "CLAUDE.md", "README.md", "TODO.md",
+    "CONTRIBUTING.md", "CHANGELOG.md", "SECURITY.md", "CODE_OF_CONDUCT.md",
+    "GOVERNANCE.md", "MAINTAINERS.md", "SUPPORT.md", "AUTHORS.md",
+    "NOTICE.md", "SKILL.md",
+}
 SEVERITIES = ("Critical", "High", "Medium", "Low")
 STOP = set("the and for what where which how does did are was were this that with from into when who why "
            "should can its it's our your about have has not any all in is it of on or to we an as at by do if "
@@ -1038,6 +1047,7 @@ def cmd_ask(args) -> None:
 def lint_core(cfg: Cfg) -> list[str]:
     out: list[str] = [f"E017 genome.toml: unknown key {k} (a typo here switches a check off silently)"
                       for k in cfg.unknown]
+    out += lint_layout(cfg)   # root placement is a core invariant, not an ops option
     out += [f"W507 [paths] {k} is retired (no role uses it); `genome migrate` removes it" for k in RETIRED_PATHS
             if k in cfg.declared]
     if cfg.schema_version < 2:  # the one-dialect change: say what `genome migrate` will rewrite
@@ -1417,7 +1427,7 @@ def lint_ops(cfg: Cfg) -> list[str]:
                 todo |= refs(f) - seen
         out += [f"E304 {f} is reachable from no live surface — archive it or cite it from its owner" for f in
                 sorted(set(code) - seen)]
-    out += lint_layout(cfg) + lint_external(cfg)
+    out += lint_external(cfg)
     # tracked bulk
     bulk, big = cfg.get("ops", "bulk_globs", []), cfg.get("ops", "max_bytes", 0)
     allow = set(cfg.get("ops", "bulk_allow", []))
@@ -1452,21 +1462,81 @@ def lint_external(cfg: Cfg) -> list[str]:
     return out
 
 
+def misplaced_paths(cfg) -> list[str]:
+    """Root files that no role points at.
+
+    With an explicit ops.root_files the rule is the strict allow-list it has
+    always been. With the derived default the rule is scoped to documents,
+    because a Cargo.toml, a LICENSE and a genome.toml are the repo's own
+    machinery and flagging them would train the agent to ignore the check.
+    """
+    legal = legal_root_files(cfg)
+    derived = cfg.get("ops", "root_files") is None
+    out = []
+    for f in sh(cfg.root, "git", "ls-files", "-co", "--exclude-standard", "-z").split("\0"):
+        if not f or "/" in f:
+            continue
+        if not (cfg.root / f).is_file():
+            continue    # a staged deletion is not a file in the wrong place
+        name = f.rsplit("/", 1)[-1]
+        if name.startswith(".") or name in legal:
+            continue
+        if derived and not name.lower().endswith((".md", ".markdown")):
+            continue
+        out.append(f)
+    return sorted(out)
+
+
+def legal_root_files(cfg) -> set[str]:
+    """The root-level files this repo may have.
+
+    Derived when the repo has not said otherwise: the conventional root docs
+    plus every role this repo has moved to the root. ops.root_files, when set,
+    REPLACES the derived set, so an existing config keeps exactly the behaviour
+    it was written for.
+    """
+    explicit = cfg.get("ops", "root_files")
+    if explicit is not None:
+        return set(explicit)
+    out = set(CONVENTIONAL_ROOT_DOCS)
+    for role in cfg.paths:
+        if cfg.form(role)[0] != "file":
+            continue
+        p = cfg.paths[role].split("#", 1)[0]
+        if "/" not in p:
+            out.add(p)
+    return out
+
+
+def lint_root_placement(cfg: Cfg) -> list[str]:
+    """A file may only live where a role points at.
+
+    One source of truth: `misplaced_paths` decides, this reports. The lint and
+    `close` must agree — a file the lint calls misplaced and a file `close`
+    refuses to name for commit are the same set, or the lint is advisory.
+    """
+    return [f"E306 {f}: no role points here — move it under docs/, or give it a role"
+            for f in misplaced_paths(cfg)]
+
+
 def lint_layout(cfg: Cfg) -> list[str]:
     """Where files may live: root allow-list, per-directory suffixes, required per-directory files, stale terms."""
     out = []
     roots, suf = cfg.get("ops", "root_files"), cfg.get("ops", "dir_suffixes", {})
     req, stale = cfg.get("ops", "dir_requires", {}), cfg.get("ops", "stale_terms", [])
-    if not (roots or suf or req or stale):
-        return out
+    # the root-placement check needs no config: the legal set is derived, so it
+    # runs on every repo. the ops-only checks stay gated on their keys.
+    if not (suf or req or stale):
+        return lint_root_placement(cfg)
+    # and it runs even when the ops-only checks do: the placement findings
+    # come from the same function `close` uses, so the two can never disagree
+    out += lint_root_placement(cfg)
     files = [f for f in sh(cfg.root, "git", "ls-files", "-co", "--exclude-standard", "-z").split("\0") if f]
     files = [f for f in files if (cfg.root / f).is_file()]
     for f in files:
         name = f.rsplit("/", 1)[-1]
         if "truncated" in name or name.startswith("..."):
             out.append(f"E306 {f}: named like a truncation artefact")
-        if roots is not None and "/" not in f and not name.startswith(".") and name not in roots:
-            out.append(f"E306 {f}: not in ops.root_files (root litter)")
         key = max((d for d in suf if f.startswith(d.rstrip("/") + "/")), key=len, default=None)
         if key is not None and suf[key] != "*" and not f.endswith(tuple(suf[key])):
             out.append(f"E306 {f}: suffix not allowed under {key} ({', '.join(suf[key])})")
@@ -1960,6 +2030,10 @@ def cmd_close(args) -> None:
     staged_gone = {p for st, p in changed_paths(cfg) if st == "D "}  # `git add` on it fails the whole line
     named = [p for p in paths if not any(gmatch(p, g, cfg) for g in never) and not p.startswith(".genome/")
              and p not in staged_gone]
+    # a path the layout check rejects is never named for commit: the tooling
+    # must not produce the litter it is reporting
+    misplaced = set(misplaced_paths(cfg))
+    named = [p for p in named if p not in misplaced]
     print("\njudgement ([x] checked here, [?] yours to confirm):")
     checks = []
     if cfg.has("state"):
@@ -1982,6 +2056,11 @@ def cmd_close(args) -> None:
         checks.append((item, None))
     for text, ok in checks:
         print(f"  [{'x' if ok else ' ' if ok is False else '?'}] {text}")
+    if misplaced:
+        print("\nnot committed — these are in no role's location:")
+        for p in sorted(misplaced):
+            print(f"  {p}")
+        print("  move it, or give it a role, then run close again")
     if named:
         shown = collapse_paths(named, [p for p in paths if p not in named]) if len(named) > 12 else named
         print("\ncommit named paths:\n  git add -- " + " ".join(shlex.quote(p) for p in shown))
@@ -2779,6 +2858,7 @@ def agents_tpl(mods: list[str], gate: str) -> str:
     rows_ = [("what is this / how to build / the rules (for agents)", "this file"),
              ("what is this, how do I install and run it (for readers)", "`README.md`"),
              ("how does it work, in depth (for readers)", "`docs/`"),
+             ("how the pieces fit together (the architecture)", "this file § Architecture"),
              ("where does the project stand right now", "`docs/handoff/STATE.md`"),
              ("what does a fresh agent read, in order", "`docs/handoff/README.md`"),
              ("what is left to do, and what was decided about each item", "`TODO.md`"),
@@ -2811,6 +2891,11 @@ end every iteration with `genome close`.
 ## What this project is
 
 (one paragraph)
+
+## Architecture
+
+(how the pieces fit together: the parts, what each is for, and how they connect.
+The card's `architecture` class points here until a repo names a different owner.)
 
 ## Gate
 
@@ -4261,13 +4346,56 @@ def cards_dir(cfg: Cfg | None = None) -> Path:
     return Path(v).expanduser()
 
 
+ROLE_FORMS = ("overlay:", "native:")
+
+CLASS_ROLES = {
+    "intent": "readme",
+    "operate": "runbook",
+    "decisions": "records_index",
+    "status": "state",
+}
+# a class with no role of its own falls back to the agent contract, which every repo has:
+# the intent is what it says it is, the architecture is how it says it is built
+CLASS_FALLBACK = {"intent": ("agents", ""), "architecture": ("agents", "Architecture")}
+
+
+def role_form_path(cfg: Cfg, raw: str) -> str:
+    """The file a role form names, when it names one this repo actually has.
+
+    A role may be written as `overlay:<path>` or `native:<path>` to say the answer
+    lives outside the distributed tree, or `native:<prose>` when the answer is a
+    description rather than a file. Only the file form resolves to a doc; a prose
+    form resolves to nothing, and the class stays empty because there is no
+    document to point at.
+    """
+    for prefix in ROLE_FORMS:
+        if not raw.startswith(prefix):
+            continue
+        tail = raw[len(prefix):].split(" ", 1)[0].strip()
+        if tail and (cfg.root / tail).exists():
+            return tail
+        return ""
+    return raw
+
+
 def card_class_path(cfg: Cfg, cls: str) -> str:
     """Where a doc class lives: [card] override, else the role that answers it."""
     v = cfg.get("card", cls)
     if v:
         return v
-    role = {"intent": "readme", "operate": "runbook", "decisions": "records_index", "status": "state"}.get(cls)
-    return cfg.paths[role] if role and cfg.has(role) else ""
+    role = CLASS_ROLES.get(cls)
+    if role and role in cfg.paths:
+        raw = cfg.paths[role]
+        if raw.startswith(ROLE_FORMS):        # a role form names a doc this repo may hold
+            return role_form_path(cfg, raw)
+        if (cfg.root / raw.split("#", 1)[0]).exists():
+            return raw
+    fb = CLASS_FALLBACK.get(cls)
+    if fb and fb[0] in cfg.paths:
+        raw = cfg.paths[fb[0]]
+        if not raw.startswith(ROLE_FORMS) and (cfg.root / raw.split("#", 1)[0]).exists():
+            return f"{raw}#{fb[1]}" if fb[1] else raw
+    return ""
 
 
 def head_sha(cfg: Cfg, short: bool = True) -> str:
@@ -4440,11 +4568,19 @@ def cmd_card(args) -> None:
 
 
 def federation_repos(cfg: Cfg) -> list[Path]:
+    """The federation's members: every directory the globs reach that holds a genome,
+    minus the ones the operator excludes by name.
+
+    Membership would otherwise be an accident of how deep a directory sits: a glob
+    that reaches one level too deep also reaches a fixture. `[federation] exclude`
+    names the directories to skip, so membership is a decision.
+    """
     seen = []
+    skip = set(cfg.get("federation", "exclude", []))
     for g in cfg.get("federation", "repos", ["*", "*/*"]):
         for d in sorted(cfg.root.glob(g)):
             if d.is_dir() and d != cfg.root and (d / "genome.toml").is_file() and d not in seen \
-                    and not any(x in d.relative_to(cfg.root).parts for x in HEAVY_DIRS):
+                    and not any(x in d.relative_to(cfg.root).parts for x in HEAVY_DIRS | skip):
                 seen.append(d)
     return seen
 

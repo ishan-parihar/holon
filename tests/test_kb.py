@@ -1,11 +1,13 @@
 """Knowledge bases (plan docs/plans/2026-10-19-holon-knowledge-layer.md, K1 to K4): seeding, the seat policy,
 commits, drafts, the CLI and MCP surfaces, and the department's context section."""
 
+import hashlib
 import io
 import json
 import os
 import subprocess
 import threading
+import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -140,3 +142,28 @@ class KnowledgeBases(KernelCase):
         self.assertIn("holon_kb_run", names)
         self.assertNotIn("holon_kb_seed", names)
         self.assertNotIn("holon_kb_blueprint_promote", names)
+
+
+class GenomePin(unittest.TestCase):
+    """The vendored CLI a KB runs and the distribution's own scripts/genome must be the same build.
+
+    They drifted once: scripts/genome was re-pinned twice while holon/vendor/genome.py stayed on the
+    previous release, so `holon kb run <slug> lint` linted with older rules than `scripts/genome lint`
+    — a KB could pass Holon's check and fail the repo's own gate. The checksum pin catches a
+    hand-edited vendored copy; this test catches the two copies drifting apart.
+    """
+
+    def test_the_vendored_cli_is_the_same_build_as_scripts_genome(self):
+        repo = Path(__file__).resolve().parents[1]
+        vendored = repo / "holon" / "vendor" / "genome.py"
+        shipped = repo / "scripts" / "genome"
+        self.assertTrue(vendored.exists(), "the vendored CLI is missing")
+        self.assertTrue(shipped.exists(), "scripts/genome is missing")
+        self.assertEqual(vendored.read_bytes(), shipped.read_bytes(),
+                         "holon/vendor/genome.py and scripts/genome are different builds: "
+                         "copy the newer one over the other and re-pin GENOME_SHA256")
+
+    def test_the_pinned_checksum_matches_the_vendored_cli(self):
+        digest = hashlib.sha256(kb.GENOME.read_bytes()).hexdigest()
+        self.assertEqual(digest, kb.GENOME_SHA256,
+                         f"the vendored CLI's checksum moved: update GENOME_SHA256 (now {digest})")

@@ -220,6 +220,7 @@ commit and run it again.
 | Read surfaces, 2026-10-17 | synthesis was push-only: no joined answer existed across memory, episodes, skills, playbooks and gold standards | `test_recall_joins_memory_skills_and_verified_results` |
 | Read surfaces, 2026-10-17 | the law layer was unreachable at runtime, so agents operated from possibly-stale distilled copies with no source to consult | `test_law_show_serves_the_distributions_own_docs` |
 | Dormant seam, 2026-10-17 | the external strategy stores' schemas lived only in the bundle's SELECTs — a drifted store would fail open and invisibly; a present store now must declare a known api_version and lint proves the contract columns | `test_a_present_external_store_declares_a_known_version` |
+| KB audit, 2026-10-20 | `scripts/genome` was re-pinned twice while `holon/vendor/genome.py` stayed on the previous release, so a knowledge base could pass `holon kb run ... lint` and fail the distribution's own `scripts/genome lint` — two copies of one CLI, two rulesets | `test_the_vendored_cli_is_the_same_build_as_scripts_genome` |
 
 ## Reading order for a new agent
 

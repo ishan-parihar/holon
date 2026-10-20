@@ -23,7 +23,10 @@ from pathlib import Path
 from holon.core.paths import Home
 
 GENOME = Path(__file__).resolve().parent.parent / "vendor" / "genome.py"
-GENOME_SHA256 = "e22a07ae4a282de488b0e7a9b41369fdcea418db12997fac355fb7ef35d175c2"  # genome 2026.10.19-3
+# The vendored CLI and the distribution's own scripts/genome are the SAME build: a KB's verbs and the
+# repo's own lint must agree, or a KB can pass `holon kb run ... lint` and fail `scripts/genome lint`.
+# The pin is the guard for that (a test asserts the two files are byte-identical).
+GENOME_SHA256 = "449dfe61c94d494fc7b65e6289b725564d79999bea78b10bf4f66c5fbb587ae6"  # genome 2026.10.20-1
 READ_VERBS = ("find", "view", "ask", "wake", "show", "lint")
 WRITE_VERBS = ("new", "move", "set", "link")
 JSON_VERBS = ("find", "ask", "show", "new")  # the verbs with a --json form
