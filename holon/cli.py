@@ -643,10 +643,32 @@ def cmd_routine_fire(args, k):
         return NOTHING
 
 
+# The keys the importer reads as a routine field. Everything else the protocol carries
+# is provenance: read, recorded, never silently dropped (M1, the 2026-10-20 bridge plan).
+_READ_KEYS = ("name", "schedule", "description", "no_agent", "script", "deliver", "status")
+# The keys that are the routine's *protocol* rather than its metadata: they become the
+# routine's playbook (a versioned protocol with a rubric), not prose in the intent.
+_PROTOCOL_KEYS = ("skills", "enabled_toolsets")
+
+
 def legacy_cron(path: Path) -> dict:
     """A legacy cron-job protocol (`cron-jobs/<job>.md`: YAML-ish frontmatter and a markdown body)
     as routine fields. The frontmatter subset those files use: `key: value`, quoted values, indented
-    continuation lines, and `- item` lists."""
+    continuation lines, and `- item` lists.
+
+    **Nothing is silently dropped** (M1). The importer read 7 of the 33 fields the 62
+    venture protocols carry; the other 26 were discarded, and the loss that mattered was
+    `skills` — every protocol carries it, and without it "run the resume-system skill
+    on this input" became "summarise the inbox", a different job imported as the same
+    one. So every key the protocol carries is now read and recorded, in three places:
+
+    - the fields the kernel has a home for become routine fields (`skills` and
+      `enabled_toolsets` are the routine's protocol, and a routine already carries a
+      **playbook** — versioned, rubric-bearing, refined by the kernel's own loop);
+    - everything else is written into the routine's intent as a provenance line, so a
+      reader can see exactly what the protocol said and a later mechanism can read it;
+    - and `provenance` names every key read, so a test can assert that none was lost.
+    """
     text = path.read_text()
     meta: dict = {}
     body = text
@@ -666,11 +688,33 @@ def legacy_cron(path: Path) -> dict:
     script = None
     if str(meta.get("no_agent")).lower() == "true" and meta.get("script"):
         script = pool / "scripts" / meta["script"]  # the pool's copy is canonical; lint flags it if missing
-    return {"title": meta.get("name") or path.stem, "cron": meta.get("schedule", ""),
-            "intent": ((meta.get("description") or "") + "\n\n" + body.strip())[:20000].strip(),
+    title = meta.get("name") or path.stem
+    skills = [s for s in (meta.get("skills") or []) if s] if isinstance(meta.get("skills"), list) \
+        else ([meta["skills"]] if meta.get("skills") else [])
+    toolsets = [s for s in (meta.get("enabled_toolsets") or []) if s] \
+        if isinstance(meta.get("enabled_toolsets"), list) else ([meta["enabled_toolsets"]] if meta.get("enabled_toolsets") else [])
+    # the provenance line: every key the protocol carried, so nothing is lost
+    carried = {k: v for k, v in meta.items() if k not in _READ_KEYS}
+    # the protocol line: the routine's *protocol* — the skills it runs and the tools it may
+    # use. It is the first thing the routine's playbook says, so a body that loads the
+    # playbook knows which skills are the protocol and which tools it may reach.
+    protocol = ""
+    if skills or toolsets:
+        protocol = ("\n\n**Protocol.** This routine runs the "
+                    + (", ".join(f"`{s}`" for s in skills) if skills else "no named skill")
+                    + ("; it may use " + ", ".join(f"`{t}`" for t in toolsets) if toolsets else "")
+                    + ". Load them before the work; they are the protocol, not a suggestion.")
+    provenance = (f"\n\n---\nimported from `{path}`\n"
+                  + "".join(f"{k}: {json.dumps(v, ensure_ascii=False) if not isinstance(v, str) else v}\n"
+                            for k, v in sorted(carried.items())))
+    intent = ((meta.get("description") or "") + protocol + "\n\n" + body.strip() + provenance)[:20000].strip()
+    return {"title": title, "cron": meta.get("schedule", ""),
+            "intent": intent,
             "command": (f"python3 {script}" if str(script).endswith(".py") else str(script)) if script else None,
             "deliver": bool(meta.get("deliver")), "workdir": str(pool), "paused": meta.get("status") != "active",
-            "source": str(path)}
+            "source": str(path),
+            "skills": skills, "enabled_toolsets": toolsets,
+            "provenance": {"source": str(path), "fields": dict(carried), "dropped": []}}
 
 
 @command("routine import", "chair", "propose routines from legacy cron-job protocols (cron-jobs/*.md); a dry "
