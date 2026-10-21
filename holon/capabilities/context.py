@@ -82,15 +82,27 @@ def _lineage(home: Home, project_ref: str | None, bundle: Bundle) -> None:
 
 
 def _kb(home: Home, dept: str | None, bundle: Bundle) -> None:
-    """The department's knowledge bases, each as its `genome wake` cut to kb.WAKE_CAP (plan K4)."""
-    if not dept:
-        return
+    """The knowledge bases in reach, each as its `genome wake` cut to kb.WAKE_CAP (plan K4).
+
+    Two families, in one section: the department's own KBs, and the organization's — whose `wake`
+    is the register's open items and the repo's health, computed for free by the tooling and
+    previously absent from every brief (F6, 2026-10-21 reachability audit). A body working in this
+    repository now sees what this repository knows about its own state beside its department's."""
+    parts = []
     try:
-        text = kb.wake_for_dept(home, dept)
+        if dept:
+            dept_text = kb.wake_for_dept(home, dept)
+            if dept_text:
+                parts.append(dept_text)
+        org_text = kb.wake_for_org(home)
+        if org_text:
+            parts.append(org_text)
+        if not parts:
+            return
     except (ValueError, OSError) as e:  # KbError and a malformed registry are both ValueErrors
         bundle.degraded.append(f"knowledge bases unavailable: {e}")
         return
-    bundle.add("Knowledge bases (your department)", text)
+    bundle.add("Knowledge bases (your department, then the organization)", "\n\n".join(parts))
 
 
 def _logbook(home: Home, text: str, bundle: Bundle, limit: int = 5) -> None:

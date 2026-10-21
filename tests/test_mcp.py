@@ -31,6 +31,77 @@ class Protocol(KernelCase):
                          "holon_events", "holon_skill_path"} <= names,
                         "the kernel's synthesis commands belong in the agent fence (KB-2, KB-3)")
 
+    def test_the_allowlist_is_derived_from_the_actor_class_not_hand_listed(self):
+        """F1: the fence was a hand-maintained tuple and drifted from the law the registry already
+        states. `task list` was missing, so a mounted employee could not discover the work it was
+        meant to claim. The list is now derived, and this proves the derivation round-trips: every
+        exposed tool's actor class is one an employee may act under, and no chair or kernel command
+        is reachable through `call` even though it is in the registry."""
+        from holon.mcp import agent_commands, MCP_ONLY
+        for c in REGISTRY:
+            if c.path in agent_commands():
+                self.assertIn(c.actor, ("any", "employee"),
+                              f"holon {' '.join(c.path)} (actor {c.actor}) is in the agent fence")
+        exposed = set(agent_commands())
+        for c in REGISTRY:
+            if c.actor not in ("chair", "kernel") or " ".join(c.path) in mcp.AGENT_BLOCKLIST:
+                continue
+            self.assertNotIn(c.path, exposed,
+                             f"holon {' '.join(c.path)} (actor {c.actor}) must not be exposed")
+        for name in mcp.AGENT_BLOCKLIST:
+            self.assertNotIn(tuple(name.split()), exposed, f"{name} is on the blocklist")
+
+    def test_a_command_the_registry_declares_any_reaches_the_fence(self):
+        """The drift guard's positive half: a command registered `any` is agent-visible the day it
+        is registered, with no hand-listed step to forget. `task list` is the one the omission hid."""
+        names = {t["name"] for t in mcp.tools()}
+        for c in REGISTRY:
+            if c.actor in ("any", "employee") and " ".join(c.path) not in mcp.AGENT_BLOCKLIST:
+                self.assertIn(mcp._tool_name(c.path), names,
+                              f"holon {' '.join(c.path)} is {c.actor} but has no tool")
+        self.assertIn("holon_task_list", names, "the work a mounted employee must claim is discoverable")
+
+    def test_no_exposed_tool_takes_an_argument_it_cannot_obtain(self):
+        """F2: two of the exposed tools were unusable as shipped — `claim` and `run show` each take
+        an id no exposed tool could produce, so the capability was inert rather than absent. Every
+        required positional must now be obtainable from a lister the fence also exposes, or be
+        supplied by identity (`whoami`) or be free text. This is the guard that makes F2 permanent."""
+        exposed = {mcp._tool_name(c.path) for c in REGISTRY if c.path in mcp.agent_commands()}
+        # the id-bearing field each exposed lister puts in its rows, so a required positional can be
+        # checked against what an agent can actually obtain
+        listers = {"holon_task_list": {"id", "root_id", "stage"},
+                   "holon_emp_list": {"id", "employee"},
+                   "holon_dept_list": {"slug", "id"},
+                   "holon_plan_queue": {"id", "plan"},
+                   "holon_kb_list": {"slug"},
+                   "holon_schedule_list": {"id"},
+                   "holon_routine_list": {"id"},
+                   "holon_playbook_list": {"name"},
+                   "holon_events": {"id"}}
+        self.assertTrue(listers.keys() <= exposed, "every id lister the fence promises is exposed")
+        # a required positional is obtainable when a lister emits a row field that names it: the
+        # argparse dest (`task_id`, `employee`, `slug`, `ref`) against the row key (`id`, `employee`,
+        # `slug`). `ref` and `objective_id` come from `plan queue` / `objective` rows.
+        obtainable = {"id", "task_id", "employee", "slug", "dept", "ref", "objective_id",
+                      "stage", "root_id"}
+        for c in REGISTRY:
+            if c.path not in mcp.agent_commands():
+                continue
+            for a, kw in c.args:
+                if not a or a[0].startswith("-") or kw.get("nargs") in ("?", "*"):
+                    continue
+                kind = a[0]
+                # identity supplies the run id; free text (a question, a query, a path) is the caller's own
+                if kind in ("query", "question", "title", "path", "doc", "to", "body", "name", "verb",
+                            "tokens", "run_id"):
+                    continue
+                # an id is obtainable when a lister emits it. `memory search` returns item rows
+                # carrying `id`, so `item_id` counts even though no command is called `memory list`.
+                aliases = {"item_id": "id"}
+                self.assertIn(aliases.get(kind, kind), obtainable,
+                              f"holon {' '.join(c.path)} requires {kind}, which no exposed lister emits")
+
+
     def test_handshake_and_unknown_methods(self):
         init = mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize",
                            "params": {"protocolVersion": "2024-11-05"}})
@@ -79,6 +150,23 @@ class OverStdio(KernelCase):
                                     ("holon_msg_send", {"to": "dept:eng", "body": "hello"}))
         self.assertTrue(err)
         self.assertIn("is for the employee actor class", text)
+
+
+    def test_an_employee_can_read_an_exposed_command_whose_write_is_the_chairs_alone(self):
+        """F-A's safety proof: the derivation exposes `charter authority` (actor `any`) although it
+        `mutates`, because the write path inside the command checks the principal. An employee must
+        read the authority table and be refused the write, through the same MCP path a harness uses."""
+        self.k.auth.init_chair_key()
+        self.add(dept="eng")
+        c = self.k.claim("plan", self.hod)
+        env = {"HOLON_RUN_TOKEN": c.token, "HOLON_CHAIR_KEY_FILE": str(self.tmp / "absent.key")}
+        (is_err, read), = self.session(env, ("holon_charter_authority", {}))
+        self.assertFalse(is_err, read)
+        self.assertIn("emp:", read)
+        (is_err, refused), = self.session(env, ("holon_charter_authority",
+                                                {"set_for": self.hod, "task_class": "*", "max_grade": "G9"}))
+        self.assertTrue(is_err, "an employee must not widen its own authority through the fence")
+        self.assertIn("only the Chair", refused)
 
 
 class SubmitSchema(KernelCase):

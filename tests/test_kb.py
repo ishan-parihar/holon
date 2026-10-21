@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 import os
+import shutil
 import subprocess
 import threading
 import unittest
@@ -106,7 +107,8 @@ class KnowledgeBases(KernelCase):
     def test_context_adds_the_section_and_degrades_on_a_broken_registry(self):
         bundle = context.Bundle()
         context._kb(self.home, "eng", bundle)
-        self.assertEqual([t for t, _ in bundle.sections], ["Knowledge bases (your department)"])
+        self.assertEqual([t for t, _ in bundle.sections],
+                         ["Knowledge bases (your department, then the organization)"])
         broken = Path(self.home.root / "kb" / "registry.json")
         broken.write_text("{")
         bundle = context.Bundle()
@@ -119,7 +121,7 @@ class KnowledgeBases(KernelCase):
         stage = self.k.work.stages(t["id"])[0]
         md, meta = context.compile_context(self.home, self.k.work, self.k.memory, stage["id"])
         self.assertIn(f"### kb/{self.slug}", md)
-        self.assertIn("Knowledge bases (your department)", meta["sections"])
+        self.assertIn("Knowledge bases (your department, then the organization)", meta["sections"])
 
     def test_the_instance_backup_carries_the_kbs(self):
         out = backup.backup(self.k, str(self.tmp / "backups"))["path"]
@@ -185,3 +187,110 @@ class GenomePin(unittest.TestCase):
             self.assertIn(verb, text, f"the plan does not name the verb {verb!r}")
         # and the plan's own claims about the seat policy hold
         self.assertIn("The seat policy", text)
+
+
+class OrgScope(KernelCase):
+    """F5 and F6 (2026-10-21 reachability audit): the organization's own knowledge base.
+
+    A KB bound to no department is the distribution's law and history rather than one department's
+    material. Every employee must be able to read it — a rule an agent is judged against but cannot
+    read is the defect F3 measured — and none may write it, because what every employee reads as law
+    is the Chair's to widen.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.chair = Principal("chair")
+        self.cy = Principal("employee", self.dev1)  # eng
+        self.ada = Principal("employee", self.ceo)  # executive: another department entirely
+
+    def seed_org(self, slug="org"):
+        return kb.seed(self.k, self.chair, "software", slug, None)
+
+    def test_an_org_scoped_kb_is_readable_by_every_employee_and_writable_by_none(self):
+        self.seed_org()
+        entry = kb._entry(self.home, "org")
+        self.assertIsNone(entry["dept"], "an organization KB binds to no department")
+        # every principal reads it: the read verb returns without a PermissionError
+        for who in (self.cy, self.ada, self.chair):
+            kb.run(self.k, who, "org", "ask", ["scope"])
+        # and an employee may not write it, at any write verb
+        with self.assertRaises(PermissionError):
+            kb.run(self.k, self.cy, "org", "new", ["note", "title", "body"])
+
+    def test_an_employee_may_not_write_the_organizations_kb(self):
+        self.seed_org()
+        for verb in kb.WRITE_VERBS:
+            with self.subTest(verb=verb):
+                try:
+                    kb.run(self.k, self.cy, "org", verb, ["x", "y"])
+                except PermissionError as e:
+                    self.assertIn("Chair", str(e))
+                else:
+                    self.fail(f"{verb} on an org KB must be the Chair's alone")
+
+    def test_a_department_kb_stays_bound_to_its_department(self):
+        """The fix is scoped, not a widening: a department's KB is still invisible to other
+        departments. Widening the org scope must not have widened a department's."""
+        kb.seed(self.k, self.chair, "software", "eng", "eng")
+        with self.assertRaises(PermissionError):
+            kb.run(self.k, self.ada, "eng", "ask", ["scope"])
+        kb.run(self.k, self.cy, "eng", "ask", ["scope"])   # its own department, fine
+
+    def test_a_unique_slug_prefix_resolves_so_one_call_is_enough(self):
+        """F3's second half: `kb run org ask "…"` must be one call. The resolution is a unique
+        prefix, and an ambiguous one is refused rather than silently picking."""
+        self.seed_org()
+        self.assertEqual(kb._entry(self.home, "o")["blueprint"], "software")
+        self.assertEqual(kb._entry(self.home, "org")["blueprint"], "software")
+        kb.seed(self.k, self.chair, "software", "ops-notes", "eng")
+        with self.assertRaises(kb.KbError):
+            kb._entry(self.home, "o")   # org and ops-notes both start with `o`
+        with self.assertRaises(LookupError):
+            kb._entry(self.home, "nope")
+
+    def test_the_brief_carries_the_organizations_own_wake(self):
+        """F6: `genome wake`'s register and health line — the highest-value context for a body
+        working in this repository — was computed for free and carried by no brief."""
+        self.seed_org()
+        bundle = context.Bundle()
+        context._kb(self.home, "eng", bundle)
+        titles = [t for t, _ in bundle.sections]
+        self.assertTrue(any("the organization" in t for t in titles), titles)
+        body = dict(bundle.sections)["Knowledge bases (your department, then the organization)"]
+        self.assertIn(f"### kb/org", body)
+
+    def test_recall_joins_the_law_the_distribution_states(self):
+        """F3: `recall` joined memory, episodes, skills, playbooks and gold standards, and reached
+        none of the documents that state the rules an agent is audited against. It now answers both
+        halves of one question in one call."""
+        self.seed_org()
+        docs = self.home.root / "kb" / "org" / "docs"
+        docs.mkdir(parents=True, exist_ok=True)
+        src = Path(__file__).resolve().parents[1] / "docs" / "BYLAWS.md"
+        shutil.copyfile(src, docs / "BYLAWS.md")
+        # `ask` scans the files the agent contract points at, so the KB names its law there
+        agents = self.home.root / "kb" / "org" / "AGENTS.md"
+        agents.write_text("| what a department may reach | `docs/BYLAWS.md` |\n")
+        hits = self.k.kb_search("what a department may reach")
+        self.assertTrue(hits, "the KB search found nothing")
+        self.assertIn("docs/BYLAWS.md:", hits[0])
+        self.assertRegex(hits[0], r"\d+-\d+")
+        # and through the CLI surface an agent actually calls
+        from holon import cli
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli.main(["--home", str(self.home.root), "--json", "recall", "what a department may reach"])
+        markdown = json.loads(out.getvalue())["markdown"]
+        self.assertIn("Knowledge bases", markdown)
+        self.assertIn("BYLAWS.md:", markdown)
+
+    def test_recall_degrades_to_silence_when_no_kb_is_seeded(self):
+        """A KB is optional context, never a dependency: recall must still answer from memory,
+        episodes and skills with none seeded, and with none it says so."""
+        self.assertEqual(self.k.kb_search("anything"), [])
+        from holon import cli
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli.main(["--home", str(self.home.root), "--json", "recall", "greeting"])
+        self.assertNotIn("Knowledge bases", out.getvalue())

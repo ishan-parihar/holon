@@ -99,7 +99,7 @@ is not in this file fails `holon lint` — so this file can never drift from the
 | `holon kb blueprint promote` <name> | chair | promote a passing draft into the catalog: the Chair's ruling |
 | `holon kb list` | any | the knowledge bases you can see |
 | `holon kb run` <slug> <verb> <tokens> | any | one genome verb in a knowledge base: kb run SLUG VERB [ARGS...] |
-| `holon kb seed` `--dept` <blueprint> <slug> | chair | create a knowledge base from a blueprint, bound to one department |
+| `holon kb seed` `--dept` <blueprint> <slug> | chair | create a knowledge base from a blueprint, bound to a department or to the organization |
 | `holon memory add` `--as` `--scope` `--kind` `--content` `--provenance` `--confidence` `--pin` `--literal` | employee | add to institutional memory |
 | `holon memory context` `--as` `--budget` <task_id> | any | preview the context bundle a stage would receive |
 | `holon memory episodes` `--scope` `--limit` <query> | any | search past run digests for problems like this |

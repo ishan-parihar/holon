@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from holon.capabilities import decisions, playbooks
+from holon.capabilities import decisions, kb as kb_mod, playbooks
 from holon.capabilities.context import DEFAULT_BUDGET_CHARS, compile_context, identity_card
 from holon.capabilities.decisions import Decider, choice, noul, p_yes, picked
 from holon.capabilities.memory import Memory
@@ -1153,6 +1153,37 @@ class Kernel:
             self.work._event("skill", f"{name}/{file}", None, layer, f"invoked ({dept or 'org'})",
                              actor=f"emp:{emp['id']}" if emp else self.actor)
         return {"skill": name, "file": file, "layer": layer, "path": str(path), "text": text}
+
+    def kb_search(self, question: str, limit: int = 4) -> list[str]:
+        """The other half of `recall`: `genome ask` over every knowledge base this principal may see,
+        rendered as its `path:lines` hits.
+
+        F3 (2026-10-21 reachability audit): the kernel joined memory, episodes, skills, playbooks and
+        gold standards, and the law — INTENT, BYLAWS, CONTRACT, AGENTS — lived in the knowledge bases
+        with no query that joined them, so a body was judged against rules it had no way to read.
+        Every source is a read the kernel already owns; a missing or unseeded KB is silence, never an
+        error, because recall must still answer from what it has.
+        """
+        chair = security.Principal("chair")
+        try:
+            entries = kb_mod.listing(self, chair)
+        except Exception:   # no KBs, or a malformed registry: recall degrades, never dies
+            return []
+        out: list[str] = []
+        for slug in sorted(entries):
+            try:
+                text = kb_mod.run(self, chair, slug, "ask", [question])
+                hits = json.loads(text).get("hits") or []
+            except Exception:
+                continue
+            for h in hits:
+                path = h.get("path", "?")
+                lines = f"{h.get('start')}-{h.get('end')}" if h.get("start") else "?"
+                head = (h.get("heading") or "").split(" › ")[0][:80]
+                out.append(f"kb/{slug} — {path}:{lines} § {head}")
+                if len(out) >= limit:
+                    return out
+        return out
 
     # ── lanes: the cheapest way to do each job, chosen at intake and enforced (docs/BYLAWS.md §10) ──
     def _ask(self, why: str, state: str, questions: dict, patient: bool = False) -> dict | None:

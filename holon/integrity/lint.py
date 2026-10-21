@@ -37,7 +37,7 @@ from holon.core import contract, vocab
 from holon.core.db import checksum, migration_files
 
 PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "bylaws", "drift", "extstore",
-         "boundary", "reference")
+         "boundary", "reference", "genome")
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
@@ -762,6 +762,42 @@ def pack_boundary(k, f: Findings) -> None:
                 snippet = " ".join(para.split())[:120]
                 f.add("error", "boundary.conflated", _rel(doc),
                       f"this paragraph asserts one system across the two stacks (AGENTS.md law 10): {snippet}")
+
+
+def pack_genome(k, f: Findings) -> None:
+    """The distribution's own genome checks, run by the kernel's own lint.
+
+    F7 (2026-10-21 reachability audit): `scripts/genome lint` and `holon lint --strict` were two
+    gates over one repository with two rubrics, and they disagreed — the repo's own gate reported an
+    unlinked page (W009) that the strict lint was silent about. An agent running one of the two
+    believed it was clean. The kernel's lint now runs the distribution's genome checks too, so
+    `holon lint --strict` reports what the repo's own gate reports, and a page no gate can reach is
+    no longer a distinction without a difference.
+
+    The genome CLI is the distribution's own script; it is optional, so a checkout without it skips
+    this pack silently rather than failing an otherwise-clean instance.
+    """
+    script = DIST / "scripts" / "genome"
+    if not (script).exists():
+        return
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, str(script), "lint"], cwd=DIST, capture_output=True, text=True)
+    text = (r.stdout or "") + (r.stderr or "")
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.match(r"^(E\d+|W\d+)\s+(\S+)\s*(.*)$", line)
+        if not m:
+            continue
+        code, where, msg = m.groups()
+        if code.startswith("E"):
+            f.add("error", f"genome.{code}", where, msg)
+        else:
+            f.add("warning", f"genome.{code}", where, msg)
+    if r.returncode not in (0, 2):
+        f.add("error", "genome.run", "scripts/genome", f"genome lint exited {r.returncode}: {text[:200]}")
 
 
 def run(k, packs: list[str] | None = None) -> list[dict]:

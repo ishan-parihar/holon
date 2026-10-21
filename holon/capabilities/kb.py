@@ -32,6 +32,9 @@ WRITE_VERBS = ("new", "move", "set", "link")
 JSON_VERBS = ("find", "ask", "show", "new")  # the verbs with a --json form
 WAKE_CAP = 1500  # chars of `genome wake` per KB in a context bundle; measured in tests/test_kb.py
 SLUG = re.compile(r"^[a-z][a-z0-9-]{1,39}$")
+# A KB bound to this sentinel has no department: it is the organization's own knowledge base, the
+# one every employee reads and none writes (F3/F5, 2026-10-21 reachability audit).
+ORG_SCOPE = "org"
 
 
 class KbError(ValueError):
@@ -84,15 +87,34 @@ def _save_registry(home: Home, reg: dict) -> None:
 
 
 def _entry(home: Home, slug: str) -> dict:
+    """One KB's registry entry. A unique prefix of a slug resolves to it, so `kb run org ask "…"`
+    is one call rather than a lookup plus a call (F3's second half, 2026-10-21 audit): the agent
+    that wants the organization's knowledge names it the way it thinks of it, not the way the
+    registry spelled it. An ambiguous prefix is refused loudly rather than picking one arbitrarily."""
     reg = _registry(home)
-    if slug not in reg:
-        raise LookupError(f"no knowledge base {slug}")
-    return reg[slug]
+    if slug in reg:
+        return reg[slug]
+    hits = sorted(s for s in reg if s.startswith(slug))
+    if len(hits) == 1:
+        return reg[hits[0]]
+    if len(hits) > 1:
+        raise KbError(f"'{slug}' matches {len(hits)} knowledge bases: {', '.join(hits)}; name one")
+    raise LookupError(f"no knowledge base {slug}")
 
 
 def _may_see(k, principal, entry: dict) -> None:
-    """The Chair, or an employee of the KB's department. Nothing else."""
+    """The Chair, or an employee of the KB's department. Nothing else.
+
+    A KB bound to no department (`dept` is null) is the organization's own knowledge base — the
+    distribution's law and history, rather than one department's material. Every principal may read
+    it, because a law an employee cannot read is a law it is judged against without having seen
+    (F3/F5, 2026-10-21 reachability audit). It stays read-only for employees: `run` gates writes
+    on `_require_seat`, and `org`-scope drafts are never permitted, so nobody but the Chair widens
+    what every employee then reads.
+    """
     if principal.kind == "chair":
+        return
+    if not entry.get("dept"):   # the organization's own KB: readable by all, writable by the Chair
         return
     if principal.kind == "employee" and k.org.employee(principal.employee_id)["dept"] == entry["dept"]:
         return
@@ -140,10 +162,14 @@ def _blueprint_ref(home: Home, name: str) -> str:
     return name
 
 
-def seed(k, principal, blueprint: str, slug: str, dept_ref: str) -> dict:
+def seed(k, principal, blueprint: str, slug: str, dept_ref: str | None) -> dict:
+    """Seed a KB from a blueprint. Bound to a department, or to the organization itself when
+    `dept_ref` is empty — the organization's own knowledge base is readable by every employee and
+    writable by no one (see `_may_see` and `run`)."""
     if not SLUG.match(slug):
         raise KbError(f"slug {slug!r}: lowercase letters, digits and hyphens")
-    dept = k.org.dept(dept_ref)
+    org_scope = not dept_ref or dept_ref == ORG_SCOPE
+    dept = None if org_scope else k.org.dept(dept_ref)
     home = k.home
     if slug in _registry(home) or (_root(home) / slug).exists():
         raise KbError(f"knowledge base {slug} already exists")
@@ -163,13 +189,15 @@ def seed(k, principal, blueprint: str, slug: str, dept_ref: str) -> dict:
         shutil.rmtree(repo, ignore_errors=True)
         raise
     reg = _registry(home)
-    reg[slug] = {"dept": dept["slug"], "blueprint": blueprint,
+    reg[slug] = {"dept": dept["slug"] if dept else None, "blueprint": blueprint,
                  "created": datetime.now(timezone.utc).isoformat(timespec="seconds")}
     _save_registry(home, reg)
-    k.memory.add_item(f"dept:{dept['slug']}", "artifact",
-                      f"Knowledge base {slug} ({blueprint}), bound to dept {dept['slug']}: kb/{slug}",
+    k.memory.add_item("org" if not dept else f"dept:{dept['slug']}", "artifact",
+                      f"Knowledge base {slug} ({blueprint}), bound to "
+                      f"{dept['slug'] if dept else 'the organization'}: kb/{slug}",
                       provenance=principal.actor, confidence="high")
-    return {"slug": slug, "blueprint": blueprint, "dept": dept["slug"], "path": str(repo), "commit": commit}
+    return {"slug": slug, "blueprint": blueprint, "dept": dept["slug"] if dept else None,
+            "path": str(repo), "commit": commit}
 
 
 def listing(k, principal) -> dict:
@@ -189,6 +217,10 @@ def run(k, principal, slug: str, verb: str, tokens: list[str]) -> str:
     home = k.home
     entry = _entry(home, slug)
     _may_see(k, principal, entry)
+    if verb in WRITE_VERBS and not entry.get("dept"):
+        # the organization's KB is read by every employee and written by the Chair: a body must not
+        # widen what every other body then reads as law
+        _require_chair(principal)
     if verb not in READ_VERBS + WRITE_VERBS:
         raise PermissionError(f"`{verb}` is not a knowledge-base verb; use one of {READ_VERBS + WRITE_VERBS}")
     if any(_is_human_flag(t) for t in tokens):
@@ -268,6 +300,22 @@ def wake_for_dept(home: Home, dept: str, cap: int = WAKE_CAP) -> str:
     parts = []
     for slug, e in sorted(_registry(home).items()):
         if e["dept"] == dept and (_root(home) / slug / "genome.toml").exists():
+            text = _run(_root(home) / slug, "wake").stdout.strip()
+            parts.append(f"### kb/{slug}\n{text[:cap]}")
+    return "\n\n".join(parts)
+
+
+def wake_for_org(home: Home, cap: int = WAKE_CAP) -> str:
+    """`genome wake` of each organization-scope KB, cut to `cap` chars.
+
+    This is the orientation the distribution already computes for free — its register's open items
+    and its own health — and it was absent from every employee's brief (F6, 2026-10-21
+    reachability audit): a body working in this repository could not see what this repository knew
+    about its own state, in the same place it saw its department's.
+    """
+    parts = []
+    for slug, e in sorted(_registry(home).items()):
+        if not e.get("dept") and (_root(home) / slug / "genome.toml").exists():
             text = _run(_root(home) / slug, "wake").stdout.strip()
             parts.append(f"### kb/{slug}\n{text[:cap]}")
     return "\n\n".join(parts)

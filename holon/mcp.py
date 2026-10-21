@@ -23,12 +23,33 @@ from pathlib import Path
 from holon import __version__
 
 PROTOCOL = "2025-06-18"
-# the commands an employee needs while working; chair-only and kernel commands are never exposed
-AGENT_COMMANDS = ("emp card", "org", "dept roles", "task show", "task tree", "plan show", "memory search",
-                  "memory add", "memory context", "memory episodes", "memory show", "recall", "law show",
-                  "msg send", "msg inbox", "msg request", "skill list", "skill show", "skill path", "skill invoke",
-                  "playbook list", "playbook show", "events", "run show", "run heartbeat", "metrics", "claim",
-                  "classify", "routine list", "kb list", "kb run", "kb blueprint draft", "kb blueprint check")
+
+# The agent-facing surface is DERIVED from the registry's own actor class, never hand-listed.
+# The actor class is the law (vocab.ACTOR_CLASSES, law 8 in AGENTS.md): a command an employee may
+# run with no approval is one an MCP employee may call, and a chair-only or kernel-only command
+# is never exposed however useful it looks. A hand-maintained tuple silently drifted from that law
+# — 23 `any` commands were unreachable, including `task list`, so a mounted employee could not
+# discover the work it was meant to claim (2026-10-21 reachability audit, F1/F8). Deriving the list
+# makes that class of omission a test failure instead of a runtime surprise.
+AGENT_ACTORS = ("any", "employee")
+# The short list of exceptions, each with its reason, because derivation has to stay closed:
+#   mcp   — the server itself; exposing it would let a harness spawn a nested server
+#   help  — the registry dump; `mcp.tools()` already publishes the schema of every exposed tool
+#   lint  — instance lint is the kernel's self-check on artifacts; an employee runs `doctor`
+#   whoami|submit — MCP-only tools with typed arguments, published separately below
+#   skill check — validates the library, which an employee may read but not author
+#   contract schemas — its `--write DIR` publishes the schemas to a directory an agent names, which
+#                     is a file write outside the workdir: the actor class is `any`, but the write
+#                     reaches where a body must not reach (test_agents_reach_only_agent_commands)
+AGENT_BLOCKLIST = ("mcp", "help", "lint", "whoami", "submit", "skill check", "contract schemas")
+MCP_ONLY = ("whoami", "submit")
+
+
+def agent_commands() -> list[tuple[str, ...]]:
+    """Every registry command an employee may call, derived from its actor class."""
+    from holon.cli import REGISTRY
+    return sorted(c.path for c in REGISTRY
+                  if c.actor in AGENT_ACTORS and " ".join(c.path) not in AGENT_BLOCKLIST)
 
 
 def _tool_name(path: tuple[str, ...]) -> str:
@@ -161,8 +182,8 @@ def tools() -> list[dict]:
          "inputSchema": {"type": "object", "required": ["result"], "properties": {
              "result": _result_schema(), "run_id": {"type": "string", "description": "default: the run your token belongs to"}}}},
     ]
-    for p in AGENT_COMMANDS:
-        c = by_path[p]
+    for p in agent_commands():
+        c = by_path[" ".join(p)]
         props, required = {}, []
         for a, kw in c.args:
             spec = _arg_schema(a, kw)
@@ -222,7 +243,9 @@ def call(name: str, arguments: dict) -> tuple[bool, str]:
         finally:
             os.unlink(fh.name)
         return rc != 0, out.strip() or err.strip()
-    cmd = next((c for c in REGISTRY if _tool_name(c.path) == name and " ".join(c.path) in AGENT_COMMANDS), None)
+    # an unknown tool and a chair-only command are the same answer: the allowlist is the boundary,
+    # so a name outside it is refused rather than served from the full registry
+    cmd = next((c for c in REGISTRY if _tool_name(c.path) == name and c.path in agent_commands()), None)
     if cmd is None:
         return True, f"unknown tool {name}"
     argv, opts = list(cmd.path), []

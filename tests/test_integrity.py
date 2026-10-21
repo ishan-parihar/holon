@@ -533,3 +533,35 @@ class ApiMemoryDrift(KernelCase):
         self.assertNotIn("0004_api_memory_view_repair.sql", applied,
                          "a fresh instance already carries the right view: no churn")
         self.assertEqual(lint.run(self.k, ["api"]), [])
+
+    def test_the_kernels_lint_carries_the_distributions_own_genome_checks(self):
+        """F7: `holon lint --strict` and `scripts/genome lint` were two gates over one repository
+        with two rubrics, and they disagreed — the repo's own gate reported an unlinked page that the
+        strict lint was silent about, so an agent running either believed it was clean. The kernel's
+        lint now runs the distribution's genome checks as a pack, so the two cannot disagree about a
+        page no gate can reach."""
+        self.assertEqual(lint.run(self.k, ["genome"]), [], "the distribution's own genome checks pass")
+        self.assertIn("genome", lint.PACKS, "the genome pack is registered")
+        # and a page the repo's gate cannot reach is now reported by the kernel's lint too
+        readme = ROOT / "README.md"
+        original = readme.read_text()
+        try:
+            readme.write_text(original.replace("[ARCHITECTURE](docs/ARCHITECTURE.md) (how\n"
+                                                "the kernel, the instance and the agents fit together) ", "x "))
+            found = lint.run(self.k, ["genome"])
+            self.assertTrue(any(f["rule"] == "genome.W009" for f in found),
+                            f"an unlinked page is reported by the kernel's lint: {found}")
+        finally:
+            readme.write_text(original)
+
+    def test_the_genome_pack_fails_loudly_when_the_distributions_lint_errors(self):
+        """A pack that silently swallows a failing gate is worse than no pack: it would report clean
+        on a distribution that is not. The pack turns the repo's own error codes into errors."""
+        from unittest import mock
+        import subprocess
+        bad = subprocess.CompletedProcess([], 2, stdout="E017 genome.toml: unknown key\n",
+                                          stderr="")
+        with mock.patch("subprocess.run", return_value=bad):
+            found = lint.run(self.k, ["genome"])
+        self.assertEqual([f["rule"] for f in found], ["genome.E017"], found)
+        self.assertEqual(found[0]["severity"], "error")

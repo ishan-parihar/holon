@@ -1158,6 +1158,13 @@ def cmd_recall(args, k):
     hits = k.skills.search(q, limit=args.limit, dept=dept)
     if hits:
         out.append("## Skills and playbooks (protocol + rubric)\n\n" + "\n".join(f"- {h}" for h in hits))
+    # F3: the law lived in the other store and no query joined them. `recall` already joins memory,
+    # episodes, skills, playbooks and gold standards; the knowledge bases — the distribution's own
+    # INTENT, BYLAWS, CONTRACT and AGENTS — join it too, as their `ask` hits with path:lines, so one
+    # call answers both "what did we learn" and "what is the rule" (2026-10-21 reachability audit).
+    law = k.kb_search(q, limit=max(2, args.limit // 2))
+    if law:
+        out.append("## Knowledge bases (the distribution's own law, by path:lines)\n\n" + "\n".join(f"- {h}" for h in law))
     gold = []
     try:
         from holon.capabilities.memory import fts_query
@@ -1631,13 +1638,16 @@ def cmd_help(args, k):
 
 
 # ── knowledge bases (holon/capabilities/kb.py; plan docs/plans/2026-10-19-holon-knowledge-layer.md) ──
-@command("kb seed", "chair", "create a knowledge base from a blueprint, bound to one department",
+@command("kb seed", "chair",
+         "create a knowledge base from a blueprint, bound to a department or to the organization",
          arg("blueprint", help="a catalog or built-in blueprint name"), arg("slug"),
-         arg("--dept", required=True, help="the department slug or id"))
+         arg("--dept", help="the department slug or id; omit, or `org`, for the organization's own KB "
+                            "(readable by every employee, writable by the Chair)"))
 def cmd_kb_seed(args, k):
     from holon.capabilities import kb
     r = kb.seed(k, args.principal, args.blueprint, args.slug, args.dept)
-    _out(args, r, f"seeded kb/{r['slug']} from {r['blueprint']}, bound to dept {r['dept']} ({r['commit']})")
+    bound = f"dept {r['dept']}" if r["dept"] else "the organization (every employee reads, only you write)"
+    _out(args, r, f"seeded kb/{r['slug']} from {r['blueprint']}, bound to {bound} ({r['commit']})")
 
 
 @command("kb list", "any", "the knowledge bases you can see", mutates=False)
@@ -1776,8 +1786,11 @@ def main(argv: list[str] | None = None, broker: dict | None = None) -> int:
         from holon.execution import isolation
         return isolation.forward(list(sys.argv[1:] if argv is None else argv), os.environ["HOLON_BROKER"])
     if broker is not None:
-        from holon.mcp import AGENT_COMMANDS
-        if " ".join(cmd.path) not in (*AGENT_COMMANDS, *BROKER_EXTRA):
+        # the same derived fence the MCP server publishes: a second hand-maintained list here is
+        # how `task list` reached the broker through BROKER_EXTRA while being absent from
+        # AGENT_COMMANDS — one rule, two lists, and a body that could not claim what it could see.
+        from holon.mcp import agent_commands
+        if tuple(cmd.path) not in agent_commands() and " ".join(cmd.path) not in BROKER_EXTRA:
             print(f"holon: `{' '.join(cmd.path)}` is not available to agents", file=sys.stderr)
             return FORBIDDEN
         _FILES = broker.get("files") or {}
