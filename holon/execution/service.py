@@ -155,6 +155,35 @@ class Claimed:
         return self.node
 
 
+def _disk_refusals(run_dir) -> list[dict]:
+    """The refusals the harness recorded on its own, in `<run dir>/refusals.jsonl`.
+
+    Measured 2026-10-21: harnesses write this file (one JSON object per refused call) and the
+    kernel read nothing — `grep -rn refusals.jsonl holon/` returns zero readers. So a body that
+    refused a call and recorded it the harness's way lost the refusal entirely, and with it the
+    blocker H-03 promises the verifier. The envelope's own `refusals[]` still wins; this is the
+    fallback, and it is read through the same agent-file reader (no symlink hop, bounded size) as
+    every other artifact the body leaves.
+    """
+    from holon.execution import isolation
+    try:
+        text = isolation.read_agent_file(Path(run_dir) / "refusals.jsonl")
+    except (isolation.IsolationError, OSError, ValueError):
+        return []
+    out = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            one = json.loads(line)
+        except ValueError:
+            continue  # a truncated last line is not a reason to lose the rest
+        if isinstance(one, dict) and one.get("tool"):
+            out.append(one)
+    return out
+
+
 class KernelRules(Rules):
     """The department bylaws deciding which optional stages a piece of work goes through, and the
     feedback loops that fire when work goes wrong."""
@@ -674,10 +703,16 @@ class Kernel:
         # H-03: refusals the harness recorded under policy.json are blockers, and they must be in the
         # stored result before anything judges it — an execute that succeeded only by shrinking from
         # its plan never verifies clean without a decision on what it refused.
-        if stage == "execute" and env.get("outcome") == "success" and env.get("refusals"):
-            env = {**env, "blockers": [*env.get("blockers", []),
+        #
+        # The same seam as below: the disk file is the fallback for a body that recorded its
+        # refusals the harness's own way, and the envelope still wins.
+        disk_refusals = _disk_refusals(self.home.run_dir(run_id))
+        if stage == "execute" and env.get("outcome") == "success" and (env.get("refusals") or disk_refusals):
+            all_of = env.get("refusals") or disk_refusals
+            env = {**env, "refusals": all_of,
+                   "blockers": [*env.get("blockers", []),
                    *[f"refused: {r.get('tool', '?')} under policy" + (f" ({r['rule']})" if r.get("rule") else "")
-                     for r in env["refusals"]]]}
+                     for r in all_of]]}
         if stage == "research":
             out = self.work.submit_research(run_id, env, exit_code)
         elif stage == "shape":
@@ -731,7 +766,13 @@ class Kernel:
         # H3: refusals the harness recorded under policy.json are blockers, never
         # breaches — surface them on the run's event trail and in the submit output so
         # rework/retro sees why the stage shrank from its plan.
-        refusals = env.get("refusals") or []
+        #
+        # The envelope is the body's own hand-in and stays authoritative. Measured 2026-10-21:
+        # `refusals.jsonl` is written by harnesses into the run directory and read by nothing in
+        # the kernel, so a body that records a refusal the harness's own way — and does not mirror
+        # it into its envelope — has it silently dropped, and the blocker H-03 promises never
+        # reaches the verifier. Read the file when the envelope has nothing to say.
+        refusals = env.get("refusals") or disk_refusals
         if refusals:
             note = "; ".join(f"{r.get('tool', '?')}: {r.get('reason', '?')}" for r in refusals)[:400]
             with write_txn(self.wconn):

@@ -531,6 +531,38 @@ class RefusalBlockers(KernelCase):
         self.assertFalse(out.get("breach"))
         self.assertEqual(self.k.work.last_execute_output(t["id"])["body"].get("blockers", []), [])
 
+    def test_a_refusal_the_body_wrote_only_to_disk_is_not_lost(self):
+        """Measured 2026-10-21: `refusals.jsonl` is written by the harness into the run directory
+        and read by nothing in the kernel (grep: zero readers). The contract routes refusals through
+        `result.refusals[]`, and H-03 turns them into blockers — so a body that records a refusal
+        the harness's own way, and does not mirror it into its envelope, has it silently dropped.
+        That is the same silence as the importers' swallowed skip, one layer down: the kernel must
+        read what the body actually wrote, wherever it wrote it."""
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        # the harness's own record, in the run dir, with the envelope saying nothing
+        (c.brief_dir / "refusals.jsonl").write_text(
+            '{"tool": "terminal", "reason": "rm -rf denied by policy", "rule": "no-destructive"}\n')
+        out = self.k.submit(c.run["id"], self.exec_env())
+        self.assertIn("refusals", out, "the on-disk refusals reach the submit output")
+        body = self.k.work.last_execute_output(t["id"])["body"]
+        self.assertIn("refused: terminal under policy (no-destructive)", body.get("blockers", []),
+                      "a refusal the body wrote to disk is a blocker, not lost")
+
+    def test_the_envelopes_refusals_win_and_nothing_is_doubled(self):
+        """The envelope is the body's own hand-in and stays authoritative; the disk file is a
+        fallback for a body that recorded it the harness's way. One list, never both."""
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        (c.brief_dir / "refusals.jsonl").write_text(
+            '{"tool": "terminal", "reason": "the disk copy", "rule": "r"}\n')
+        out = self.k.submit(c.run["id"], self.exec_env(
+            refusals=[{"tool": "terminal", "reason": "the envelope copy", "rule": "r"}]))
+        self.assertEqual([r["reason"] for r in out["refusals"]], ["the envelope copy"],
+                         "the envelope wins; the disk copy is not added alongside it")
+
 
 class UsageEveryStage(KernelCase):
     """H-04 (integration audit): usage is recorded for every stage, not just execute; what the
