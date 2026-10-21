@@ -30,4 +30,4 @@ Follow the `holon-employee` skill's turn-budget section. The exact envelope shap
  "priority": 2, "assignee": "emp_… (optional)", "dept": "slug (redirect only)", "research": false}
 ```
 
-No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.
+Hand it in per the employee skill: `holon_submit`, or the JSON as your final message.

@@ -27,6 +27,10 @@ to parse output. `references/organization.md` explains how the organization fits
      ready stage your roles perform. Exit code 3 means there is nothing to do: stop.
 3. **Load your role skill** for that stage: `$holon skill invoke holon-<role>`. It says what good
    work looks like for your role; the brief says what to return.
+   **How to hand it in.** Under a lockdown seat `result.json` is not writable, so the
+   `holon_submit` tool — or the JSON object as your final message — is the *primary* route,
+   not the fallback. If a write was refused, do not retry it: submit instead.
+
 4. **Hand in exactly one JSON result.** Write it to the `result.json` path in the brief (pull mode:
    then `$holon submit <run_id>`). If your harness lists Holon tools (`holon_whoami`,
    `holon_submit`, …), you may call `holon_submit` with the result instead; with neither, make the

@@ -30,4 +30,4 @@ Follow the `holon-employee` skill's turn-budget section. The exact envelope shap
  "learnings": ["lessons for your own memory"], "proposals": ["improvements to the department or the OS"]}
 ```
 
-Every terrain item is saved to the department's knowledge base. No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.
+Every terrain item is saved to the department's knowledge base. Hand it in per the employee skill: `holon_submit`, or the JSON as your final message.

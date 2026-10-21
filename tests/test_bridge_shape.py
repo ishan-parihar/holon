@@ -144,3 +144,37 @@ class SubmitToolPublishesTheContract(KernelCase):
         result = tool["inputSchema"]["properties"]["result"]
         self.assertIn("brief", result.get("description", "").lower(),
                       "the fallback must point the body at the brief's Output section")
+
+
+class ContentOnlyProposalIsAccepted(KernelCase):
+    """A proposal the body wrote as {"content": ...} becomes {title, intent}.
+
+    Measured 2026-10-21: a real jcode verifier produced three genuinely good improvement
+    proposals as content-only objects; the kernel rejected the whole verify result with six
+    field complaints, and a correct pass verdict was lost over a shape the brief never
+    taught. The repair splits the content — the first clause becomes the title, the whole
+    text stays the intent — and nothing is invented.
+    """
+
+    def test_a_content_only_proposal_is_repaired_not_rejected(self):
+        env = {"verdict": "pass", "note": "the artifact is exactly right",
+               "learnings": [], "proposals": [
+                   {"content": "Derive the summary and documentation from one source. Route-level drift weakens the report."}]}
+        out = self.k.submit  # not used; validate directly
+        from holon.core import contract
+        v = contract.validate("verify", env)
+        self.assertEqual(v["proposals"][0]["title"], "Derive the summary and documentation from one source")
+        self.assertIn("drift", v["proposals"][0]["intent"])
+
+    def test_a_titled_proposal_is_untouched(self):
+        from holon.core import contract
+        env = {"verdict": "pass", "note": "ok",
+               "proposals": [{"title": "one summary source", "intent": "derive both from one source"}]}
+        v = contract.validate("verify", env)
+        self.assertEqual(v["proposals"][0]["title"], "one summary source")
+
+    def test_a_plain_string_proposal_still_passes(self):
+        from holon.core import contract
+        env = {"verdict": "pass", "note": "ok", "proposals": ["derive both from one source"]}
+        v = contract.validate("verify", env)
+        self.assertEqual(v["proposals"], ["derive both from one source"])

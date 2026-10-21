@@ -43,4 +43,4 @@ Follow the `holon-employee` skill's turn-budget section. The exact envelope shap
 or `{"kind": "decompose", "rationale": "...", "grade": "G2", "children": [{"title": "...", "intent": "...", "acceptance": "...", "dept": "ops", "after": [0]}]}`
 or `{"kind": "needs_input", "question": "..."}`
 
-No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.
+Hand it in per the employee skill: `holon_submit`, or the JSON as your final message.

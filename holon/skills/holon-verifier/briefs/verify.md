@@ -24,4 +24,10 @@ Follow the `holon-employee` skill's turn-budget section. The exact envelope shap
  "learnings": [], "proposals": []}
 ```
 
-No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.
+A `proposals` item is one of: a plain string (one sentence), or an object with **both** a
+`"title"` (a few words) and an `"intent"` (what the work would do). An object with only a
+`"content"` key is **not** accepted — if you write one improvement, either
+`"proposals": ["derive the summary and documentation from one source"]` or
+`"proposals": [{"title": "one summary source", "intent": "derive the executor's summary and documentation from one source so they cannot drift"}]`.
+
+Hand it in per the employee skill: `holon_submit`, or the JSON as your final message.

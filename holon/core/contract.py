@@ -296,6 +296,23 @@ def _repair_untyped_lists(env: dict) -> dict:
         elif isinstance(value, str) and not value.strip():
             # a blank string for a list field means "no items" — the body said "none"
             out[key] = []
+    # A proposal the body wrote as {"content": ...} is split into the {title, intent} the
+    # contract wants. Measured 2026-10-21: a real verifier produced three genuinely good
+    # improvement proposals as content-only objects; the kernel rejected the whole verify
+    # result with six field complaints and the verdict was lost over a shape the brief never
+    # taught. The first clause of the content becomes the title; the whole content stays the
+    # intent (a proposal's meaning is in its text, and nothing here invents one).
+    fixed = []
+    for item in out.get("proposals") or []:
+        if isinstance(item, dict) and "title" not in item and "intent" not in item:
+            text = item.get("content") or item.get("text") or item.get("note") or ""
+            if isinstance(text, str) and text.strip():
+                head = text.strip().split(". ", 1)[0].rstrip(".").strip()
+                fixed.append({"title": head[:80], "intent": text.strip()})
+                continue
+        fixed.append(item)
+    if fixed:
+        out["proposals"] = fixed
     return out
 
 

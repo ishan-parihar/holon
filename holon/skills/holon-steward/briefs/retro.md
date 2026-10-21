@@ -31,4 +31,4 @@ Follow the `holon-employee` skill's turn-budget section. The exact envelope shap
  "actions": [{"title": "…", "intent": "the change and how we will know it worked", "acceptance": "…", "task_class": "improvement"}]}
 ```
 
-No file-write tool? Call the `holon_submit` tool with it, or end your final message with that JSON object.
+Hand it in per the employee skill: `holon_submit`, or the JSON as your final message.
