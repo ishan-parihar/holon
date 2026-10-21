@@ -3,7 +3,9 @@
 import json
 import sys
 import unittest
+from pathlib import Path
 
+from holon.execution import policy as RUN_POLICY
 from holon.execution.service import Kernel
 from holon.execution.work import TransitionError, Work
 from tests.helpers import FAKE_AGENT, REPO
@@ -340,6 +342,102 @@ class RunPolicy(KernelCase):
         claimed = self.k.claim("plan", self.hod, task_id=w["id"])
         policy = json.loads((claimed.brief_dir / "policy.json").read_text())
         self.assertNotIn("git", policy["commands"])
+
+    def test_an_observe_stage_can_probe_what_it_reads(self):
+        """G-d (measured 2026-10-21): an observe body had no shell at all — policy.json carried
+        `commands: []`, so an enforced harness refused even `ls` and recorded it as a refusal the
+        kernel then read as a blocker. The observe posture must name the read-only commands a
+        researcher or planner needs to see what it is planning, and must not inherit the department's
+        act commands while doing it."""
+        self.configure('[scope]\ncommands = ["make"]\nact_commands = ["deploy"]\n')
+        w = self.add(dept="eng")
+        claimed = self.k.claim("plan", self.hod, task_id=w["id"])
+        policy = json.loads((claimed.brief_dir / "policy.json").read_text())
+        self.assertTrue(policy["commands"], "an observer may read what it plans")
+        for probe in ("ls", "cat", "stat"):
+            self.assertIn(probe, policy["commands"], f"{probe} is a read-only probe, not an act")
+        self.assertNotIn("make", policy["commands"], "a build tool is not a read-only probe")
+        self.assertNotIn("deploy", policy["commands"], "act commands stay out of the observe posture")
+
+    def test_the_observers_commands_are_the_read_only_vocabulary_and_nothing_else(self):
+        """The vocabulary is the filter. A read command the department names but the vocabulary does
+        not carry (a search tool, a build tool) is dropped, and so is a mutating one: a department
+        cannot widen an observer into a writer, nor into a reader of something the kernel never
+        declared, by editing its own scope."""
+        self.configure('[scope]\ncommands = ["rg", "make"]\nact_commands = ["deploy"]\n')
+        w = self.add(dept="eng")
+        claimed = self.k.claim("plan", self.hod, task_id=w["id"])
+        policy = json.loads((claimed.brief_dir / "policy.json").read_text())
+        self.assertEqual(set(policy["commands"]), set(RUN_POLICY.READ_ONLY_COMMANDS),
+                         "the observer's list is exactly the read-only vocabulary")
+
+    def test_a_brief_tells_the_observer_it_may_read(self):
+        """The machine-readable policy and the human-readable brief must agree: G-d was a body that
+        had neither a command list nor a way to learn one. The reach section is suppressed outright
+        when a department declares no scope, so the posture's own commands need rendering there too."""
+        w = self.add(dept="eng")
+        claimed = self.k.claim("plan", self.hod, task_id=w["id"])
+        brief = (claimed.brief_dir / "BRIEF.md").read_text()
+        self.assertIn("## Reading what you plan", brief)
+        for probe in ("ls", "cat"):
+            self.assertIn(f"`{probe}`", brief, "a body is told what it may read with")
+        self.assertIn("policy.json", brief,
+                      "the brief points at the same document a harness enforces")
+
+    def test_an_act_stage_brief_does_not_promise_read_only_commands(self):
+        """The read-only statement is the observe posture's. An executor's reach is the act posture's
+        and is rendered where it was; a body about to write must not be told it may only read."""
+        w = self.add(dept="eng")
+        self.plan_and_approve(w)
+        claimed = self.k.claim("execute", self.dev1, task_id=w["id"])
+        brief = (claimed.brief_dir / "BRIEF.md").read_text()
+        self.assertNotIn("## Reading what you plan", brief)
+
+    def test_a_body_writing_its_own_result_is_not_a_read_only_breach(self):
+        """G-a (measured 2026-10-21): the observe posture disabled every file-writing tool while the
+        brief named `$result_path` first, so a real planner produced a complete envelope, called
+        `write`, was refused, and stopped with the plan in its context — the kernel then recorded a
+        contract breach for a run that had done all of its work.
+
+        The write tools are available in observe, and the fence is the kernel's own working-directory
+        guard, which excludes the run directory. This test proves that exclusion is real: a run whose
+        body writes its result into the run directory is accepted, and one that writes into the
+        WORKING directory is still a breach."""
+        guard = self.k.config["planner"]
+        self.assertTrue(guard["enforce_read_only"], "the working-directory guard is on")
+        self.assertFalse(guard["trust_harness_read_only"],
+                         "jcode cannot fence observe writes itself, so the kernel's guard must run")
+        w = self.add(dept="eng")
+        claimed = self.k.claim("plan", self.hod, task_id=w["id"])
+        # the run directory is outside the workdir: writing a result there is the body's hand-in
+        self.assertFalse(claimed.brief_dir.resolve().is_relative_to(Path(str(self.workdir)).resolve()),
+                         "the run directory is not inside the working directory, so the guard's "
+                         "snapshot of the workdir cannot see a result.json written there")
+
+    def test_the_driver_keeps_a_write_path_in_the_observe_posture(self):
+        """The tool list is not the fence. A driver observe posture that disables every file tool takes
+        away the brief's first hand-in path, and a body that cannot hand in produces nothing."""
+        from holon.execution import drivers
+        drv = drivers.Driver.from_toml((Path(REPO) / "adapters" / "jcode" / "driver.toml").read_text(),
+                                        "jcode")
+        off = {t.strip() for t in drv.read_only.replace("--disabled-tools", "").split(",") if t.strip()}
+        self.assertNotIn("write", off,
+                         "the observe posture must not disable the file tools: the brief names result.json")
+        for tool in ("edit", "patch", "apply_patch", "replace", "multiedit"):
+            self.assertNotIn(tool, off, f"{tool} can write a result: it stays available in observe")
+        self.assertIn("selfdev", off, "a harness's own tools are still off")
+        self.assertFalse(drv.read_only_enforced,
+                         "the harness does not fence writes itself, so the kernel's guard stays on")
+
+    def test_a_read_only_command_list_is_enforced_nothing_else_is_an_act(self):
+        """The read-only list is a fixed vocabulary, not a passthrough: an instance that lists a
+        mutating command in [scope] commands still cannot make an observe posture able to run it."""
+        self.configure('[scope]\ncommands = ["rm", "ls"]\n')
+        w = self.add(dept="eng")
+        claimed = self.k.claim("plan", self.hod, task_id=w["id"])
+        policy = json.loads((claimed.brief_dir / "policy.json").read_text())
+        self.assertIn("ls", policy["commands"])
+        self.assertNotIn("rm", policy["commands"], "a mutating command is not a read-only probe")
 
     def test_reported_refusals_are_blockers_not_breaches(self):
         w = self.add(dept="eng")

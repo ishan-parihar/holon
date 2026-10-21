@@ -58,6 +58,55 @@ def _arg_schema(a: tuple, kw: dict) -> tuple[str, dict, bool, bool] | None:
     return name, s, required, positional
 
 
+def _properties_of(stage: str) -> dict:
+    """The properties `contract.json_schema(stage)` describes, in the flat form a client needs.
+
+    A stage is either one shape (a plain object of properties) or several (a `oneOf` over its
+    variants, each keyed by `kind`). Both are the same contract — the renderer differs, not the
+    rules — so both are flattened here: a field any variant declares is published with the type it
+    declared. The stage's `kind` discriminator is kept, because a client that cannot type `kind`
+    cannot choose a variant."""
+    from holon.core import contract
+    schema = contract.json_schema(stage)
+    props: dict = {}
+    for variant in (schema.get("oneOf") or [schema]):
+        for name, spec in (variant.get("properties") or {}).items():
+            props.setdefault(name, spec)
+    return {k: v for k, v in props.items() if k != "kind"} | {"kind": {"type": "string"}}
+
+
+# The union of every stage's published properties, for a server that cannot tell which stage it is
+# serving. A stage-less tool that publishes nothing tells the client nothing, and a client that
+# guesses wraps its lists (measured 2026-10-20: a real plan, lost to a shape it never chose).
+ALL_STAGE_PROPERTIES: dict[str, dict] | None = None
+
+
+def _all_properties() -> dict:
+    global ALL_STAGE_PROPERTIES
+    if ALL_STAGE_PROPERTIES is None:
+        from holon.core import vocab
+        merged: dict = {}
+        for stage in vocab.STAGES:
+            try:
+                for name, spec in _properties_of(stage).items():
+                    merged.setdefault(name, spec)
+            except Exception:  # a stage with no schema yet adds nothing; it never erases a type
+                continue
+        ALL_STAGE_PROPERTIES = merged
+    return ALL_STAGE_PROPERTIES
+
+
+def _result_schema_for_stage(stage: str | None) -> dict:
+    """The envelope schema to publish for `stage` (None = the server cannot tell)."""
+    props = _properties_of(stage) if stage else _all_properties()
+    if not props:
+        return {"type": "object", "description": "the result envelope (see the brief's Output section)"}
+    which = f"the {stage} result envelope" if stage else "the result envelope"
+    return {"type": "object",
+            "description": f"{which} (the exact shape the brief describes; lists are arrays)",
+            "properties": props}
+
+
 def _result_schema() -> dict:
     """The envelope schema for THIS run's stage, published to the client.
 
@@ -72,29 +121,12 @@ def _result_schema() -> dict:
     `envelope.schema.json`. Publishing it here means the tool and the brief agree, and a
     coercing client has the types it needs.
 
-    The stage comes from the run the token belongs to; if it cannot be read, the schema
-    is the generic object — the kernel's own tolerance (contract._repair_untyped_lists)
-    is what keeps that from voiding a result.
+    The stage comes from the run the token belongs to. When it cannot be read — a server started
+    by hand, a probe, a harness that mounts the server outside a run — the published schema is the
+    union of every stage's, not a free-form object. The tolerance that makes a shape repair safe
+    (`contract._repair_untyped_lists`) is a floor, not a reason to leave the client blind.
     """
-    generic = {"type": "object", "description": "the result envelope (see the brief's Output section)"}
-    stage = _run_stage()
-    if not stage:
-        return generic
-    try:
-        from holon.core import contract
-        schema = contract.json_schema(stage)
-    except Exception:
-        return generic
-    # the JSON Schema for a stage is a oneOf over its variants; the properties of the
-    # first variant carry the field types a client needs
-    props = {}
-    for variant in (schema.get("oneOf") or []):
-        props.update(variant.get("properties") or {})
-    if not props:
-        return generic
-    props = {k: v for k, v in props.items() if k not in ("kind",)}
-    return {"type": "object", "description": f"the {stage} result envelope (the exact shape the brief describes)",
-            "properties": props}
+    return _result_schema_for_stage(_run_stage())
 
 
 def _run_stage() -> str | None:

@@ -26,6 +26,7 @@ from pathlib import Path
 from holon.capabilities.skills import Library
 from holon.core.db import now
 from holon.core.paths import Home
+from holon.execution import policy as run_policy
 
 from holon.core import vocab
 
@@ -93,6 +94,18 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
             + " — pooled units are their owners' work; ask through `msg request`.\n" if scope.get("read_roots") else "") + (
             "Commands granted to your department: " + ", ".join(f"`{c}`" for c in cmds) + ".\n" if cmds else "") + \
             "Anything else is outside your department's scope: say so in your result instead of working around it.\n"
+    # G-d (measured 2026-10-21): the observe posture's own commands were compiled into policy.json
+    # and rendered nowhere, so a body that could read policy.json saw a list it had been told
+    # nothing about — and a body that could not had no shell at all. The reach section is where a
+    # body learns what it may run; state the posture's own list here, once, for every stage, so the
+    # machine-readable policy and the human-readable brief cannot disagree.
+    if vocab.POSTURE[stage] == "observe":
+        md = md.rstrip() + "\n\n## Reading what you plan\n\n" + (
+            "You may run these read-only commands (they are in this run's `policy.json`): "
+            + ", ".join(f"`{c}`" for c in run_policy.observe_commands()) + ".\n\n"
+            "Use them to see the current state before you plan it. Anything that would change state "
+            "is not yours at this stage: the executor runs with a different reach, so plan the "
+            "change and let it make it.\n")
     (d / "BRIEF.md").write_text(md)
     # R-09: the run carries the department-resolved library, so a body that loads skills from
     # disk sees one copy of every skill — a department fork is the only version it is offered.

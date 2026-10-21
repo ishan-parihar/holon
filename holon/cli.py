@@ -1674,11 +1674,56 @@ def _allowed(cmd: Command, principal) -> bool:
     return cmd.actor == "employee" and principal.kind == "employee"
 
 
+def _positional_flags(argv: list[str]) -> list[str]:
+    """Rewrite `--name value` to a bare value where the target command names `name` as a positional.
+
+    **Why this exists (measured 2026-10-21).** `holon_dept_roles` publishes `slug` as the property an
+    argument carries, and a runtime builds `--slug` from that name — which is the name the kernel
+    itself published. The CLI, which takes `slug` positionally, answers
+    `holon: error: unrecognized arguments: --slug`, and a real body burned calls on that usage dump
+    before it gave up on the tool.
+
+    The kernel cannot dictate which runtime reads the `"positional": true` marker `mcp.tools()`
+    sets (H-14), and argparse cannot register a positional's own name as an alias for it. So the
+    name the kernel publishes is the name the kernel accepts: a `--name` that matches a positional
+    of the command being invoked is rewritten to the bare form, and everything else — a real
+    option, an unknown flag that must keep failing — is left untouched.
+    """
+    if not argv:
+        return argv
+    # which command is being invoked: the longest prefix of REGISTRY paths that matches the words
+    words = [w for w in argv if not w.startswith("-")]
+    cmd = None
+    for c in sorted(REGISTRY, key=lambda c: -len(c.path)):
+        if tuple(words[: len(c.path)]) == c.path:
+            cmd = c
+            break
+    if cmd is None:
+        return argv
+    positionals = {a[0] for a, kw in cmd.args if a and not a[0].startswith("-")}
+    if not positionals:
+        return argv
+    out, i = [], 0
+    while i < len(argv):
+        w = argv[i]
+        if w.startswith("--") and w[2:].replace("-", "_") in {p.replace("-", "_") for p in positionals}:
+            # drop the flag, keep the value: `["--slug", "eng"]` becomes `["eng"]`
+            i += 1
+            if i < len(argv) and not argv[i].startswith("-"):
+                out.append(argv[i])
+                i += 1
+            continue
+        out.append(w)
+        i += 1
+    return out
+
+
 def main(argv: list[str] | None = None, broker: dict | None = None) -> int:
     """`broker`: set by the broker (isolation.py) for an agent's request: who it is comes only from its
     token or key, only agent commands run, and file arguments come from the request."""
     global _FILES
     from holon.execution.security import AuthError
+    argv = _positional_flags(list(argv) if argv is not None else list(sys.argv[1:]))
     args = build_parser().parse_args(argv)
     cmd: Command = args._command
     if broker is None and os.environ.get("HOLON_BROKER"):  # an agent under isolation: the broker decides

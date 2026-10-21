@@ -1,15 +1,32 @@
 # Holon driver for jcode. Installed to $HOLON_HOME/config/drivers/jcode.toml by install.py, which pins
 # the jcode binary and JCODE_HOME (an isolated jcode home per instance: provider profile, the Holon MCP
 # server, the exported skills, and jcode's own memory, swarm, ambient mode and updates turned off).
-# Observe stages run without jcode's editing tools; the shell stays, so the kernel's read-only guard
-# stays on (read_only_enforced = false).
+# Observe stages run with jcode's own self-dev and swarm tools off; the shell and the file tools stay,
+# so a body can hand its result in however its brief allows, and the kernel's read-only guard stays
+# on (read_only_enforced = false).
 name = "jcode"
 command = "jcode run --json --trace --quiet --no-update --no-selfdev -C {workdir} --provider-profile holon {read_only}{act_args} {briefing}"
 cwd = "{workdir}"
 timeout_s = 3600
 result = "stdout-json"     # a holon_submit call, else result.json, else the JSON object in jcode's reply
-read_only = "--disabled-tools write,edit,multiedit,patch,apply_patch,replace,bg,selfdev,swarm"
+# G-a (measured 2026-10-21): the observe posture disabled every file-writing tool, while the stage
+# brief's Output section named `$result_path` first. A real planner produced a complete envelope,
+# called `write`, got "Tool 'write' is disabled", and stopped with the plan in its context — no
+# result.json, no holon_submit, no final-message JSON. The kernel then recorded a contract breach
+# for a run that had done all of its work.
+#
+# The write tools stay available in observe. The fence is not the tool list, it is the kernel's own
+# read-only guard: `Kernel.run_driver` snapshots the WORKING DIRECTORY before and after the run and
+# calls any change a breach, and it deliberately excludes the run directory (brief.json, brief_md,
+# result.json, policy.json) from that comparison. So a body that writes its own result into the
+# run directory changes nothing the guard watches, and a body that writes into the workdir is still
+# caught and recorded. The tool list is also no longer the right lever: the JSON-last-message
+# fallback (`extract_last_json(stdout)`) is the kernel's own tolerance for a body that cannot write
+# at all, and disabling the tools is what forces a body into it.
+read_only = "--disabled-tools selfdev,swarm"
 act_args = "--disabled-tools selfdev,swarm"
+# The harness does not itself fence observe-stage writes (jcode has no per-tool path fence), so the
+# kernel's working-directory guard stays on: read_only_enforced = false means the guard runs.
 read_only_enforced = false
 # --trace writes one line per model call to stderr; the kernel sums them. A run stopped after
 # holon_submit never prints the --json summary, and that summary's input already includes cached tokens
