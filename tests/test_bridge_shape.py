@@ -41,10 +41,21 @@ class UntypedListIsUnwrapped(KernelCase):
         self.assertEqual(got["writes"], ["/tmp/ok.txt"])
         self.assertEqual(got["learnings"], [])
 
+    def test_a_flattened_wrapper_is_accepted_too(self):
+        """The second measured shape: a ONE-element array arrives as `{"item": "the
+        element"}` — the client flattens it. The contract wants a list, so the repair
+        restores the one-element list."""
+        env = self.envelope()
+        wrapped = {k: ({"item": (v[0] if isinstance(v, list) and len(v) == 1 else v)}
+                       if isinstance(v, list) else v) for k, v in env.items()}
+        got = contract.validate("plan", wrapped)
+        self.assertEqual(got["writes"], ["/tmp/ok.txt"], "the flattened write came back as a list")
+        self.assertEqual(got["steps"], ["1. write ok.txt"])
+
     def test_the_repair_never_turns_a_real_object_into_a_list(self):
-        """The repair is narrow: only a dict whose ONLY key is `item` and whose value is
-        a list. A genuine object is untouched — nothing that decides an outcome is
-        relaxed."""
+        """The repair is narrow: only a dict whose ONLY key is `item`, and only for a
+        field the contract calls a list. A genuine object is untouched — nothing that
+        decides an outcome is relaxed."""
         env = {"kind": "plan", "findings": "f", "steps": ["1. x"], "writes": ["/tmp/a"],
                "external_effects": [], "grade": "G0", "risks": "r", "rollback": "rm",
                "estimate": "small", "learnings": [], "proposals": [],
@@ -53,13 +64,17 @@ class UntypedListIsUnwrapped(KernelCase):
         self.assertEqual(got["decision_note"], {"item": "not a list"},
                          "a dict that is not a wrapper is left alone")
 
-    def test_a_wrapped_field_that_is_not_a_list_is_still_rejected(self):
-        """The repair does not become a loophole: a field the contract wants as a list
-        and which arrives as a wrapper around a non-list is still wrong."""
+    def test_a_wrapper_around_a_wrong_type_is_still_rejected(self):
+        """The repair does not become a loophole: a field whose items must be OBJECTS
+        cannot be satisfied by a wrapper around a string.
+
+        (A wrapper around a *string* is accepted for a string list, because that is the
+        shape the client actually produces — measured. A wrapper around a string where
+        the contract wants objects with named fields is still wrong.)"""
         env = self.envelope()
-        env["writes"] = {"item": "not a list"}
+        env["terrain"] = {"item": "a string, but terrain items are objects with content and source"}
         with self.assertRaises(contract.EnvelopeError):
-            contract.validate("plan", env)
+            contract.validate("research", env)
 
     def test_the_repair_does_not_relax_a_required_field(self):
         """A missing required field is still missing. The repair is a shape, not a

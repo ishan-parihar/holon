@@ -221,6 +221,18 @@ def variant(stage: str, env: dict) -> str:
     return "" if "" in variants else env.get("kind", "")
 
 
+# Every field the contract says IS a list, across every stage and variant. Derived from
+# the spec — the one writer of the rules — so a new list field is covered the moment it
+# is declared, and the shape repair below can never touch a field the contract does not
+# call a list.
+_LIST_FIELDS: dict[str, F] = {}
+for _variants in SPECS.values():
+    for _variant in _variants.values():
+        for _name, _f in {**_variant, **COMMON}.items():
+            if _f.type in ("list", "entry", "text_or_list"):
+                _LIST_FIELDS.setdefault(_name, _f)
+
+
 def validate(stage: str, env: Any) -> dict:
     if stage not in SPECS:
         raise EnvelopeError([f"unknown stage {stage!r}"])
@@ -239,25 +251,44 @@ def validate(stage: str, env: Any) -> dict:
     return env
 
 
+def _list_fields() -> dict[str, F]:
+    """Every field the contract says IS a list, across every stage and variant.
+
+    Derived from the spec — the one writer of the rules — so a new field that is a list
+    is covered the moment it is declared, and the repair can never touch a field the
+    contract does not call a list.
+    """
+    return _LIST_FIELDS
+
+
 def _repair_untyped_lists(env: dict) -> dict:
-    """A list that arrived as `{"item": [...]}` is unwrapped.
+    """A list that arrived as `{"item": ...}` is unwrapped.
 
     **Why this exists (measured 2026-10-20).** An MCP client that cannot type a field
-    coerces an untyped array to an object and wraps it as `{"item": [...]}`. A real body
-    produced a complete, well-formed plan; the client transmitted it wrapped; the kernel
-    rejected it with seven field complaints and the plan was lost. A body that spent
-    twenty minutes producing a plan must not lose it to a shape detail the body never
-    chose.
+    coerces an untyped array to an object and wraps it as `{"item": ...}` — where the
+    value is the array's SINGLE element, not the array. A real body produced a
+    complete, well-formed plan; the client transmitted it wrapped; the kernel rejected
+    it and the plan was lost. A body that spent twenty minutes producing a plan must
+    not lose it to a shape detail the body never chose.
 
-    The wrapper is unwrapped only where it is unambiguous — a dict whose ONLY key is
-    `item` and whose value is a list — so this can never turn a genuine object into a
-    list. Everything that decides an outcome stays strict: this repairs a shape, it does
-    not relax a rule.
+    The wrapper comes in two shapes, and both were measured:
+
+    - `{"item": [...]}` — the array, unflattened
+    - `{"item": "a string"}` — a one-element array, flattened by the client
+
+    So the repair restores the list the contract expects: a wrapper whose value is a
+    list stays a list, and a wrapper whose value is a scalar becomes a one-element
+    list. The repair is applied ONLY where the contract says the field IS a list, so
+    it can never turn a genuine object into a list. Everything that decides an
+    outcome stays strict: this repairs a shape, it does not relax a rule.
     """
     out = dict(env)
-    for key, value in out.items():
-        if isinstance(value, dict) and set(value) == {"item"} and isinstance(value["item"], list):
-            out[key] = value["item"]
+    for key in _LIST_FIELDS:
+        value = out.get(key)
+        if not (isinstance(value, dict) and set(value) == {"item"}):
+            continue
+        inner = value["item"]
+        out[key] = inner if isinstance(inner, list) else [inner]
     return out
 
 
