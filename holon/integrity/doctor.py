@@ -234,6 +234,18 @@ def run(k) -> list[dict]:
                     f"{r[1]} stage {r[0]}: its task class {r[4]!r} is held by no active employee in reach — "
                     "no one may claim it (give an employee that class, or change the work's class)")
 
+    # a work's workdir that no longer exists: the driver falls back to the run directory, so the
+    # body runs against a directory with none of the inputs its plan names (measured 2026-10-21 on a
+    # live instance: a recurring routine pointed at a scratchpad from a retired harness era, its body
+    # spun on a dead path for an hour, and the work was only recovered by the lease sweep). Warn
+    # rather than error: the run still works, but the job the routine was hired for does not.
+    for r in q("SELECT id, title, workdir FROM tasks WHERE stage IS NOT NULL AND status='ready' "
+               "AND workdir IS NOT NULL AND workdir<>''"):
+        if not Path(r[2]).is_dir():
+            add("warning", "workdir.missing",
+                f"{r[1]} stage {r[0]} names workdir {r[2]!r}, which does not exist: the body will run in "
+                "its run directory instead, with none of the inputs the plan expects")
+
     # separation of duties, in history
     for r in q("SELECT a.id, a.decided_by FROM tasks a JOIN task_needs n ON n.task_id=a.id JOIN outputs o "
                "ON o.task_id=n.needs_id WHERE a.stage='approve' AND a.decided_by IS NOT NULL"):

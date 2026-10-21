@@ -332,3 +332,25 @@ class SetDriver(Loops):
         self.assertEqual(self.k.work.get_run(c.run["id"])["driver"], "other",
                          "their work now runs on the new harness")
         self.assertEqual(self.k.org.employee(e)["driver"], "other")
+
+
+class DeadWorkdir(KernelCase):
+    """C2's own finding, made a check: the live instance's notes-digest routine named a
+    hermes-era scratchpad that does not exist. The driver falls back to the run directory, so the
+    body ran against an empty dir and spun for an hour on inputs its plan named; the work was
+    recovered only by the lease sweep. `holon doctor` now names the stage before a body is spent."""
+
+    def test_a_ready_stage_whose_workdir_is_gone_is_reported(self):
+        from holon.integrity import doctor
+        t = self.add("Digest the notes", dept="eng", task_class="demo",
+                     workdir=str(self.tmp / "gone-digest"))
+        findings = [f for f in doctor.run(self.k) if f["check"] == "workdir.missing"]
+        self.assertEqual(len(findings), 1, f"doctor names the stage: {findings}")
+        self.assertIn("gone-digest", findings[0]["message"])
+        self.assertEqual(findings[0]["severity"], "warning",
+                         "the run still works in the run dir; the job it was hired for does not")
+
+    def test_a_stage_whose_workdir_exists_is_not_reported(self):
+        from holon.integrity import doctor
+        self.add("Live digest", dept="eng", task_class="demo", workdir=str(self.workdir))
+        self.assertEqual([f for f in doctor.run(self.k) if f["check"] == "workdir.missing"], [])
