@@ -1516,6 +1516,9 @@ def cmd_restore(args, k):
          arg("driver", nargs="?", help="a driver name — omit with --supervisor"),
          arg("--workdir", help="scratch directory (default: a temporary one)"),
          arg("--clauses", help="comma list of clauses to run (default: all)"),
+         arg("--timeout", type=float, metavar="S",
+             help="the whole run's budget in seconds (default: 3600); clauses past it report "
+                  "out of time rather than a broken harness"),
          arg("--supervisor", metavar="CMD", help="test this supervisor command: it reads the prepared "
              "run JSON on stdin, runs the body, renews the lease, enforces the timeout, and hands the "
              "body in (`holon adapter test --supervisor '…'` — the scripted fixture spends no model calls)"))
@@ -1528,7 +1531,9 @@ def cmd_adapter_test(args, k):
         if not args.driver:
             raise ValueError("a driver name, or --supervisor <cmd>")
         from holon.integrity import conformance
-        report = conformance.run(k, args.driver, args.workdir, args.clauses.split(",") if args.clauses else None)
+        report = conformance.run(k, args.driver, args.workdir,
+                                args.clauses.split(",") if args.clauses else None,
+                                timeout_s=getattr(args, "timeout", None))
     _out(args, report, "\n".join(f"{'pass' if c['ok'] else 'FAIL'}  {c['clause']:<22} {c['detail']}"
                                  for c in report["clauses"]) + f"\n{report['passed']}/{len(report['clauses'])} passed")
     return 0 if report["passed"] == len(report["clauses"]) else 1
