@@ -805,19 +805,27 @@ class Work:
     # ── settling: completion flows up (parents) and across (dependents) ───
     def _finish(self, work: dict, status: str, note: str | None, actor: str | None = None, **cols: Any) -> None:
         work = self.get(work["id"])
-        if work["status"] in TERMINAL:
-            return
+        terminal = work["status"] in TERMINAL
         if status == "cancelled":
             # A withdrawn work offers nothing: every live stage goes with it, the retro stage
             # included. It used to survive here, so a cancelled refinement left a claimable
             # retro on cancelled work — a body redoing work the Chair had withdrawn.
+            # The sweep runs even when the work is already terminal (a repeat cancel, or one
+            # settled by its last child): a stage left ready there is still claimable, and this
+            # loop is the only thing that stops it. The kernel's own department-retro loop
+            # re-opens a root while its stage still says ready, which is how one stale retro
+            # survived eight cancels on the live instance.
             for s in self._active_stages(work["id"]):
                 self._abandon(s, f"work {status}")
             for c in self.children(work["id"]):
                 if c["status"] not in TERMINAL:
                     self._finish(c, "cancelled", "parent cancelled", actor)
+            if terminal:
+                return                      # already settled; this call only swept the leftovers
             if self.get(work["id"])["status"] in TERMINAL:  # settled by its last child
                 return
+        elif terminal:
+            return
         else:
             for s in self._active_stages(work["id"]):
                 if s["stage"] != "retro":

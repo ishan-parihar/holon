@@ -253,6 +253,25 @@ class CancelledWorkLeavesNoLiveStage(KernelCase):
         self.assertIsNone(self.k.claim(None, self.hod, task_id=t["id"]),
                            "a cancelled work offers nothing to claim")
 
+    def test_a_repeat_cancel_still_sweeps_the_stage_it_left_behind(self):
+        """The kernel's department-retro loop re-opens a root whose retro stage already says
+        ready, so the stage is what survives the first cancel and is still claimable. Cancelling
+        that root again must clear it: the sweep runs even when the work is already terminal."""
+        t = self.add(dept="eng", task_class="demo")
+        self.k.work._add_stage(self.k.work.get(t["id"]), "retro", [], blocked_reason="still ready")
+        self.assertEqual(self.status(t), "open")
+        self.k.work.cancel(t["id"], "the Chair withdrew it")
+        self.assertEqual(self.status(t), "cancelled")
+        self.assertEqual(self.k.work.stages(t["id"], "retro")[0]["status"], "cancelled")
+        # the kernel's retro loop adds a fresh stage while the root stays cancelled
+        again_id = self.k.work._add_stage(self.k.work.get(t["id"]), "retro", [],
+                                          blocked_reason="re-opened")["id"]
+        self.assertEqual(self.k.work.get(again_id)["status"], "ready", "the loop's fresh stage is claimable")
+        self.k.work.cancel(t["id"], "and again: its stage is still claimable")
+        self.assertEqual(self.k.work.get(again_id)["status"], "cancelled",
+                         "a repeat cancel must sweep the stage the loop left behind")
+        self.assertIsNone(self.k.claim(None, self.hod, task_id=t["id"]))
+
     def test_a_cancelled_refinement_queues_nothing_new(self):
         t = self.add(dept="eng", task_class="demo")
         self.plan_and_approve(t, assignee=self.dev1, writes=[])
