@@ -126,6 +126,21 @@ def _mini_yaml(path: Path) -> dict:
         and quote them across lines with a trailing backslash. Both are one value.
         """
         text = first.strip()
+        # a block scalar: `key: |`, `key: >` or `key: >-`. Everything indented past `indent`
+        # is one value. A folded block (`>`) joins its lines with spaces; a literal block (`|`)
+        # keeps them. The chomp indicator is the second character: `-` strips the final newline,
+        # `+` keeps every trailing one, and none clips exactly one — YAML's own rule, so a value
+        # read here compares equal to a library's parse of the same file.
+        if text[:1] in ("|", ">") and set(text[1:]) <= set("-+"):
+            body: list[str] = []
+            j = i + 1
+            while j < len(lines) and lines[j][0] > indent:
+                body.append(lines[j][1])
+                j += 1
+            if not body:
+                return "", j
+            joined = (" " if text[0] == ">" else "\n").join(body)
+            return (joined if text[1:2] == "-" else joined + "\n"), j
         # a quoted value continued on the following lines (single or double quotes)
         quoted_open = (text.endswith("\\") or text.startswith('"') or text.startswith("'")) and not (
             len(text) > 1 and text[0] == text[-1] and text[0] in "\"'")

@@ -83,6 +83,50 @@ class YamlReader(KernelCase):
         with self.assertRaises(ValueError):
             ventures._mini_yaml(f)
 
+    def test_a_block_scalar_is_folded_the_way_a_yaml_library_folds_it(self):
+        """The pools write their long prose as block scalars (`|`, `>`, `>-`) — eleven files in
+        the corpus use one, five of them the folded form. The reader had no branch for them at
+        all: it read the marker itself (`>-`) as the value and folded the whole block as a plain
+        continuation, so a venture's `purpose` arrived as the literal characters `>-` followed by
+        its text. A charter read that way is worse than a refused one, because it imports.
+
+        The corpus comparison (`test_it_reads_every_pools_yaml_the_way_a_yaml_library_does` above)
+        catches this against the pools' real files; this guard is self-contained, so the rule
+        holds on a checkout that has no pools at all."""
+        import yaml
+        text = (
+            "services:\n"
+            "- id: a\n"
+            "  purpose: >-\n"
+            "    Tier-A automated browsing for ATS application flows (Ashby etc). MUST be "
+            "reached through a\n"
+            "    single client module that handshakes on init\n"
+            "  access: cli\n"
+            "- id: b\n"
+            "  purpose: |\n"
+            "    line one\n"
+            "    line two\n"
+            "- id: c\n"
+            "  purpose: |-\n"
+            "    stripped\n"
+        )
+        f = self.tmp / "block.yaml"
+        f.write_text(text)
+        mine = ventures._mini_yaml(f)
+        ref = yaml.safe_load(text)
+        self.assertEqual(sorted(mine), sorted(ref))
+        for item, want in zip(mine["services"], ref["services"]):
+            self.assertEqual(item["purpose"], want["purpose"], item["id"])
+        # the marker is a constructor, not a value
+        self.assertNotIn(">-", mine["services"][0]["purpose"])
+        # a literal block keeps its newlines and clips exactly one trailing one; `|-` strips it
+        self.assertEqual(mine["services"][1]["purpose"], "line one\nline two\n")
+        self.assertEqual(mine["services"][2]["purpose"], "stripped")
+        # an empty block is the empty string, not the marker
+        f2 = self.tmp / "empty.yaml"
+        f2.write_text("key: |-\nother: 1\n")
+        self.assertEqual(ventures._mini_yaml(f2), {"key": "", "other": 1})
+
 
 class VentureBuilder(KernelCase):
     """M4. One command reads a venture's four artifacts."""
