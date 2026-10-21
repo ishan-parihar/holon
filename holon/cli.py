@@ -1476,6 +1476,23 @@ def cmd_keys_list(args, k):
                                 for r in rows) or "no key files")
 
 
+@command("keys gc", "chair", "collect Chair key files no live instance claims (a scratch "
+         "instance's key outlives it): they move to keys.quarantine/, so a recovery is a mv",
+         arg("--keep", action="append", default=[], help="a key file to keep, by name (repeat)"),
+         arg("--apply", action="store_true"), arg("--force", action="store_true",
+                                                      help="unlink rather than quarantine"))
+def cmd_keys_gc(args, k):
+    from holon.integrity import keys
+    p = keys.plan(k, keep=args.keep)
+    if not args.apply:
+        _out(args, p, f"{len(p['keys'])} key files, {len(p['orphans'])} orphans, {len(p['kept'])} kept "
+                      f"(dry run; --apply collects the orphans)")
+        return
+    out = keys.apply(k, p, force=args.force)
+    _out(args, out, f"collected {len(out['removed'])} orphan key file(s) "
+                    f"({out['quarantine'] or 'unlinked'}), kept {len(out['kept'])}")
+
+
 @command("incident waive", "chair", "record why a closed incident's fix carries no guard (a deliberate "
          "decision, not an omission; `holon doctor` checks for it)", arg("work_id"),
          arg("--note", required=True, help="why this fix needs no re-check"))

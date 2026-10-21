@@ -264,6 +264,7 @@ commit and run it again.
 | Driver lifecycle, 2026-10-20 | every shipped driver declared a 3600s timeout while a `plan` stage leases 1800s and a `verify` one 1200s, so the lease sweep recovered work the harness was still running: the stage returned to ready under a live run and two bodies contended for one result file | `test_a_drivers_deadline_never_exceeds_the_stages_lease` |
 | Driver lifecycle, 2026-10-20 | a body stopped mid-run lost its whole stdout: Python buffers a pipe that is not a terminal, so a killed body's reasoning — the only evidence of what it tried — was gone. Its output now survives | `test_a_stalled_body_is_stopped_while_its_lease_is_still_live` |
 | Live instance, 2026-10-21 | cancelling a work left its `retro` stage `ready`: the stage used to be exempt from the cancel sweep, so a cancelled playbook refinement kept offering its retro to any claimer — a body redoing work the Chair had withdrawn (found cancelling the stale board: two retros survived eight cancels) | `test_a_cancelled_work_stage_is_cancelled_too` |
+| Survey, 2026-10-21 | the trust-boundary survey claimed 250 world-readable Chair keys; the dir was 0700 and every file 0600, so no other user could read them — the real defect was the 250 orphans (4 from the conformance era). `holon keys gc` now collects them, into quarantine rather than into nothing, and reports the mode so the claim is checkable | `test_the_key_dir_mode_is_reported` |
 
 ## Reading order for a new agent
 
