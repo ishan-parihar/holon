@@ -31,6 +31,18 @@ def _sha(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
+def _portable_workdir(path: str | None) -> str | None:
+    """What an archive may say about a routine's working directory.
+
+    A workdir is where THIS machine kept the work. Copying it into an archive publishes one
+    operator's filesystem layout to every machine the archive reaches — measured 2026-10-21,
+    where a live instance's routine named another harness's dead session scratch directory and the
+    export carried it verbatim. The archive keeps the *fact* ("a workdir was set") so a reader
+    need not guess, and leaves the path where it belongs: with the machine that has it.
+    """
+    return "(set on the source instance)" if path else None
+
+
 def export_department(k, dept_id: str, dest: str) -> dict:
     """Write one department's archive: its shape, its people, its routines, its reach.
 
@@ -67,7 +79,15 @@ def export_department(k, dept_id: str, dest: str) -> dict:
         routines.append({"title": r["title"], "cron": r["cron"], "lane": r["lane"],
                          "command": body.get("command"), "rubric": body.get("rubric") or [],
                          "intent": work["intent"], "acceptance": work.get("acceptance"),
-                         "workdir": work.get("workdir"), "playbook": body.get("playbook")})
+                         # A working directory is a machine fact, not a department fact.
+                         # Measured 2026-10-21: the live instance carries one routine whose
+                         # workdir is another harness's dead session scratch directory, and the
+                         # export copied it verbatim — so an operator's private path became the
+                         # imported routine's workdir on a machine the operator never ran it on.
+                         # The archive records only whether one was set; the path stays with the
+                         # machine that has it, and the import leaves it for the Chair to set.
+                         "workdir": _portable_workdir(work.get("workdir")),
+                         "playbook": body.get("playbook")})
 
     kb = []
     try:
@@ -133,15 +153,24 @@ def import_department(k, archive: str) -> dict:
             continue  # a slot the profile has no room for is the Chair's to widen
 
     # its routines, each as a proposal for the Chair's approval
-    made = 0
+    made, skipped = 0, []
     for r in manifest.get("routines") or []:
         try:
             k.add_routine(r["title"], r.get("intent") or r["title"], dept=slug, cron=r.get("cron"),
                           command=r.get("command"), rubric=r.get("rubric") or None,
-                          workdir=r.get("workdir"), strict=False, imported=True)
+                          # the archive names the workdir as a fact, never as a path: the
+                          # directory belonged to the exporting machine
+                          workdir=None, strict=False, imported=True)
             made += 1
-        except (ValueError, LookupError):
-            continue
+        except (ValueError, LookupError) as e:
+            # Named, not swallowed. The venture import had the same silent `continue` and lost an
+            # entire pool with no record; a department archive that drops a routine and says
+            # nothing is the same failure in a different command.
+            skipped.append({"title": r.get("title"), "reason": str(e)})
+
+    summary = {"dept": slug, "employees": hired, "routines": made, "skipped": skipped,
+               "kb": [x["slug"] for x in manifest.get("kb") or []], "approved": 0,
+               "note": "every imported routine is unapproved: an import is not an approval"}
 
     # its reach and its checks, into the instance's config
     scope = manifest.get("scope") or {}
@@ -167,9 +196,7 @@ def import_department(k, archive: str) -> dict:
                 add.append(f"\n{var} = {json.dumps(path)}")   # the path, never the value
         k.home.config_file.write_text(text.rstrip() + "\n" + "\n".join(add) + "\n")
 
-    return {"dept": slug, "employees": hired, "routines": made,
-            "kb": [x["slug"] for x in manifest.get("kb") or []],
-            "approved": 0, "note": "every imported routine is unapproved: an import is not an approval"}
+    return summary
 
 
 def verify_archive(archive: str) -> dict:

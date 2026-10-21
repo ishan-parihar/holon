@@ -280,12 +280,18 @@ def venture_import(k, pool: Path, dept: str, dry_run: bool = True) -> dict:
     # ordinary intake uses), so the import sees the same thing the Chair's rule means.
     outside = [r["title"] for r in rows if k._external_by_name(r["title"], r["intent"])[0]]
 
+    # What the import is NOT doing, stated in the summary itself. An import that drops a protocol
+    # and says nothing is indistinguishable from one that imported cleanly, which is how the only
+    # real pool came to report `routines: 0` beside `protocols: 4`. Both runs name their skips.
+    skipped = [{"title": r["title"], "reason": "the protocol declares itself paused"}
+               for r in rows if r["paused"]]
+
     summary = {"dept": dept, "pool": str(v["pool"]), "charter": v["charter"],
                "protocols": len(rows), "protocols_with_skills": with_skills,
                "checks": len(v["checks"]), "scripts": len(v["scripts"]),
                "outside_reach": len(outside), "outside_reach_titles": outside,
                "services_consumed": [s.get("id") for s in v["services_consumed"] if isinstance(s, dict)],
-               "dry_run": dry_run}
+               "dry_run": dry_run, "skipped": skipped}
 
     if dry_run:
         return summary
@@ -316,17 +322,22 @@ def venture_import(k, pool: Path, dept: str, dry_run: bool = True) -> dict:
     k.home.config_file.write_text(text.rstrip() + "\n" + "\n".join(add) + "\n")
 
     # the routines: each a proposal for the Chair's approval
-    made = 0
+    made, skipped = 0, list(summary["skipped"])
     for r in rows:
         if r["paused"]:
-            continue
+            continue  # already named in the summary: the operator's own pause, not a failure
         try:
             k.add_routine(r["title"], r["intent"], dept=dept, cron=r["cron"], command=r["command"],
                           workdir=r["workdir"], deliver=r["deliver"], strict=False, imported=True)
             made += 1
-        except (ValueError, LookupError):
-            continue
+        except (ValueError, LookupError) as e:
+            # A protocol that cannot be imported is named, with the reason. Measured 2026-10-21:
+            # the silent `continue` that used to sit here let the only importable pool report
+            # `routines: 0` beside `protocols: 4` and say nothing — a migration foundation whose
+            # own importer cannot tell a clean import from one that lost everything is not a
+            # foundation.
+            skipped.append({"title": r["title"], "reason": str(e)})
 
-    summary.update({"routines": made, "approved": 0, "created_at": now(),
+    summary.update({"routines": made, "skipped": skipped, "approved": 0, "created_at": now(),
                     "note": "every imported routine is unapproved: an import is not an approval"})
     return summary

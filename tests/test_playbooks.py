@@ -185,6 +185,74 @@ class LegacyImport(LaneCase):
         body = self.k.work.plan_for_approval(a["id"])["output"]["body"]
         self.assertEqual((body["lane"], body["deliver"]), ("script", True))
 
+    def test_a_protocol_that_declares_no_status_is_not_silently_dropped(self):
+        """Measured 2026-10-21 on the real corpus: every protocol in the only importable pool
+        (`pioneer-qf/cron-jobs/*.md`) carries `job`, `schedule`, `runtime` and `owner` — and **no**
+        `status` key. The importer read `paused: meta.get("status") != "active"`, so all four were
+        treated as paused, and the apply's `except …: continue` skipped them with no record:
+        `holon venture import --apply` reported `routines: 0` beside `protocols: 4`.
+
+        Absence is not a declaration of pause. A protocol that says nothing about its status is
+        active, because the operator is asking the kernel to import it; and a protocol that says
+        `status: paused` is honoured, because that is a declaration. The whole migration foundation
+        rests on this: an importer that silently drops what it was given is not an importer."""
+        from holon.cli import legacy_cron
+        pool = self.tmp / "acme"
+        (pool / "cron-jobs").mkdir(parents=True)
+        f = pool / "cron-jobs" / "daily-live-monitor.md"
+        f.write_text('---\njob: "daily-live-monitor"\nschedule: "0 18 * * *"\nruntime: vps-systemd\n'
+                     'owner: observability\n---\n\n# Daily live monitor\n\nPull the summary.\n')
+        r = legacy_cron(f)
+        self.assertEqual((r["title"], r["cron"]), ("daily-live-monitor", "0 18 * * *"))
+        self.assertFalse(r["paused"], "no `status` key means not paused: silence is not a pause")
+        # and it must be importable, not skipped. `LaneCase` wires a fake classifier that answers the
+        # first criterion at 95% — which is `script` — so name what the classifier says: this is an
+        # agent's job, and the routine lands in the agent lane.
+        self.fake.answer = lambda state, questions: {
+            qid: ({"type": "choice", "choice": "agent", "confidence": 0.9,
+                   "probabilities": {c: (0.9 if c == "agent" else 0.1 / 3) for c in q["criteria"]}}
+                  if qid == "lane" else {"type": "noul", "noul": 0.0})
+            for qid, q in questions.items()}
+        made = self.k.add_routine(r["title"], r["intent"], dept="eng", cron=r["cron"],
+                                  workdir=r["workdir"], strict=False)
+        self.assertTrue(made["id"], "a protocol with no status is imported, not dropped")
+        self.assertEqual(self.k.work.get(made["id"])["lane"], "full",
+                         "an agent-legible protocol is an agent's job, not a dropped one")
+
+    def test_a_protocol_that_declares_paused_is_still_dropped(self):
+        """The other half: an explicit pause is a declaration and is honoured, so the fix is a
+        default and not a removal of the pause gate. The lifecycle words the corpus actually
+        uses are all honoured — `decommissioned` and `retired` were already asserted by M1's own
+        guard, and they are the words a protocol that is *done* is written with."""
+        from holon.cli import legacy_cron
+        pool = self.tmp / "acme"
+        (pool / "cron-jobs").mkdir(parents=True)
+        for word in ("paused", "decommissioned", "retired", "archived", "disabled"):
+            f = pool / "cron-jobs" / f"{word}.md"
+            f.write_text(f'---\njob: "{word}"\nschedule: "0 18 * * *"\nstatus: {word}\n---\n\n# {word}\n')
+            self.assertTrue(legacy_cron(f)["paused"], f"status: {word} is a declaration of pause")
+        # and the absence of the word is not
+        f = pool / "cron-jobs" / "live.md"
+        f.write_text('---\njob: "live"\nschedule: "0 18 * * *"\n---\n\n# Live\n')
+        self.assertFalse(legacy_cron(f)["paused"])
+
+    def test_the_venture_apply_reports_what_it_skipped(self):
+        """A drop must be visible. `except …: continue` inside the import's apply made every
+        failure invisible, so a reader could not tell a clean import from one that lost every
+        protocol — which is exactly how `--apply` came to report `routines: 0` beside
+        `protocols: 4` with no warning at all. Both runs name their skips, with a reason."""
+        from holon.execution import ventures
+        pool = self.tmp / "acme"
+        (pool / "cron-jobs").mkdir(parents=True)
+        (pool / "cron-jobs" / "a.md").write_text(
+            '---\njob: "a"\nschedule: "0 18 * * *"\nstatus: paused\n---\n\n# A\n')
+        (pool / "cron-jobs" / "b.md").write_text(
+            '---\njob: "b"\nschedule: "0 19 * * *"\n---\n\n# B\n')
+        out = ventures.venture_import(self.k, pool, "acme", dry_run=True)
+        self.assertEqual([s["title"] for s in out["skipped"]], ["a"],
+                         "the paused protocol is named, not silently omitted")
+        self.assertEqual(out["protocols"], 2)
+
 
 class Objectives(LaneCase):
     def setUp(self):

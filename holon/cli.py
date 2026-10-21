@@ -789,7 +789,16 @@ def legacy_cron(path: Path) -> dict:
     return {"title": title, "cron": meta.get("schedule", ""),
             "intent": intent,
             "command": (f"python3 {script}" if str(script).endswith(".py") else str(script)) if script else None,
-            "deliver": bool(meta.get("deliver")), "workdir": str(pool), "paused": meta.get("status") != "active",
+            "deliver": bool(meta.get("deliver")), "workdir": str(pool),
+            # Absence is not a declaration of pause. A protocol that names `status: paused` is
+            # honoured (that is a declaration); a protocol that says nothing is active, because the
+            # operator is asking the kernel to import it. Measured 2026-10-21 on the real corpus:
+            # every protocol in the only importable pool declares no `status` at all, so the old
+            # default (`!= "active"`) silently dropped every one of them, and the apply's
+            # `except …: continue` reported `routines: 0` beside `protocols: 4`.
+            "paused": str(meta.get("status", "active")).strip().strip("'").lower()
+                      in ("paused", "decommissioned", "disabled", "off", "retired", "archived",
+                          "false", "no", "0"),
             "source": str(path),
             "skills": skills, "enabled_toolsets": toolsets,
             "provenance": {"source": str(path), "fields": dict(carried), "dropped": []}}

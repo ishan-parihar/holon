@@ -113,6 +113,43 @@ class DepartmentArchive(KernelCase):
         finally:
             k2.close()
 
+    def test_the_archive_does_not_carry_the_source_instances_workdir(self):
+        """Measured 2026-10-21 on the live instance: an archive's routine carried
+        `workdir = /var/tmp/.../claude-1000/.../scratchpad/lane-live.LkyM` — one operator's
+        dead session directory from a different harness. The export copied the source
+        instance's workdir verbatim, so the operator's own path became the imported
+        routine's working directory on a machine the operator never ran it on.
+
+        That is the AGENTS.md law read at the archive layer: instance specifics stay out of
+        the repo and out of anything that travels. A routine's workdir is a machine fact, not
+        a department fact — the archive names it so a reader knows one was set, and the import
+        leaves it for the Chair to set on this machine."""
+        d = self.department()
+        # the source instance's routine works in a directory from a dead session on another
+        # harness — which is what the live instance actually carries today
+        from holon.execution.work import write_txn
+        with write_txn(self.k.wconn):
+            self.k.wconn.execute("UPDATE tasks SET workdir=? WHERE recurring=1",
+                                  ("/var/tmp/other-harness/some-dead-session/scratch",))
+        out = self.k.export_department(d["id"], str(self.tmp / "archive6"))
+        manifest = json.loads((Path(out["path"]) / "department.json").read_text())
+        for r in manifest["routines"]:
+            self.assertNotIn("other-harness", r.get("workdir") or "",
+                             "the source machine's working directory must not travel")
+            self.assertNotIn("dead-session", r.get("workdir") or "")
+
+    def test_an_imported_routine_without_a_local_workdir_is_not_filed_into_one(self):
+        """The other half of the same law: the archive must not *invent* a workdir either. An
+        imported routine whose source directory does not exist on this machine has no working
+        directory here, and filing one silently puts the body in a directory that is not there."""
+        d = self.department()
+        out = self.k.export_department(d["id"], str(self.tmp / "archive7"))
+        # the archive mentions the workdir so a reader knows one was set, without copying the
+        # machine's own path as if it were part of the department
+        manifest = json.loads((Path(out["path"]) / "department.json").read_text())
+        self.assertIn("workdir", manifest["routines"][0],
+                      "the workdir is named, so nobody has to guess whether one was set")
+
     def test_an_import_refuses_to_overwrite_a_department_that_exists(self):
         """The import is additive: a department that already exists is the Chair's to
         change, not the archive's to replace."""
