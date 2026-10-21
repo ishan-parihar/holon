@@ -1,7 +1,9 @@
 # 2026-10-21 — Red-team audit: agent-facing reachability and the two-CLI seam
 
-**Status:** record of findings. §1 is measured on this checkout (`main` bb799aa); §2 is the
-implementation plan, and the work items wait on the Chair's ratification, not on this record.
+**Status:** findings measured on this checkout, and **executed**. §1 is the audit's measurements at
+`main bb799aa`; §2 was the implementation plan, and all three phases have since landed (`5b08b68`
+and after), each defect with its guard and its ledger row. The record is kept as written so the
+measurements remain reproducible evidence for the repairs rather than being rewritten to match them.
 
 **Question it answers:** whenever any agent in this agentic-OS works on anything, can it reach
 everything, from anywhere, in the fewest tokens and tool calls? The Chair's instinct was that the
