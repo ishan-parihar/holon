@@ -181,6 +181,60 @@ class Migrations(unittest.TestCase):
         self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
         conn.close()
 
+    def test_a_table_rebuilding_sql_migration_applies_over_referenced_rows(self):
+        """A .sql migration that rebuilds a table must apply with foreign keys off.
+
+        Found on the live instance, 2026-10-20: `0017_intake_source.sql` rebuilds `tasks`
+        (SQLite cannot alter a CHECK constraint in place) while `runs`, `outputs`,
+        `task_needs` and `employees` still reference it. `PRAGMA foreign_keys=ON` is the
+        driver's default (`connect` sets it), and SQLite checks a foreign key at the
+        statement rather than at the commit, so `DROP TABLE tasks` fails with
+        `IntegrityError: FOREIGN KEY constraint failed` -- which is the error the Notion
+        mirror hit on every push tick for six hours.
+
+        The guard: build the live-shaped state (a task with a run, an output and a needs
+        row), then apply the shipped migrations over it. The rebuilt `tasks` keeps its
+        rows, the referencing rows follow, and no foreign key is left dangling.
+        """
+        d = Path(tempfile.mkdtemp())
+        conn = connect(d / "work.db")
+        # Take a real instance to the last migration BEFORE the rebuilding one, the way
+        # the live instance arrived at it: every migration up to 0016 applied, with rows
+        # already in the shape 0004 built. `migrate` is asked for the list, then the
+        # records for 0017 are removed so it is applied again over live-shaped rows.
+        applied = migrate(conn, "work")
+        self.assertIn("0017_intake_source.sql", applied)
+        # the checksum-adoption pass runs for rows with a NULL checksum: a live instance
+        # that applied 0017 before checksums existed is re-registered. This test leaves
+        # them intact, so the state is: 0017 applied, its rows in the graph 0004 built.
+        conn.execute("DELETE FROM schema_migrations WHERE name='0017_intake_source.sql'")
+        # the live-shaped state: rows that reference `tasks` from four other tables
+        ts = "2026-10-21T00:00:00.000000Z"
+        from holon.execution.work import Work
+        from holon.execution.org import Org
+        from holon.execution.service import load_config
+
+        from holon.core.paths import Home
+        org = Org(conn, "chair", load_config(Home(d)))
+        org.bootstrap()
+        slug = org.depts()[0]["slug"]
+        w = Work(conn, "chair")
+        w.add_work(title="live work", intent="i", requested_by="chair", dept=slug)
+        # the migration that rebuilds `tasks` over rows four tables point at
+        applied = migrate(conn, "work")
+        self.assertIn("0017_intake_source.sql", applied)
+        tid = w.list(kind="work")[0]["id"]
+        get = lambda q, *a: conn.execute(q, a).fetchone()  # noqa: E731
+        # the rebuild copies every row: the work node and the stage node it owns both survive
+        self.assertEqual(get("SELECT COUNT(*) FROM tasks")[0], 2)
+        self.assertEqual(get("SELECT COUNT(*) FROM tasks WHERE parent_id=?", tid)[0], 1)
+        self.assertEqual(get("SELECT status FROM tasks WHERE id=?", tid)[0], "open")
+        self.assertEqual(conn.execute("PRAGMA foreign_key_check").fetchall(), [])
+        # the CHECK it exists to widen: an intake may now be named as the source
+        filed = w.add_work(title="intake work", intent="i", requested_by="chair", source="intake")
+        self.assertEqual(filed["source"], "intake")
+        conn.close()
+
 
 class MemoryBehaviour(KernelCase):
     def test_exact_duplicate_reinforces_and_near_duplicate_supersedes(self):
