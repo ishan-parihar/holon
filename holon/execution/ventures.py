@@ -238,6 +238,31 @@ def _mini_yaml(path: Path) -> dict:
     return out
 
 
+def _would_refuse(k, rows: list[dict], already: list[dict]) -> list[dict]:
+    """What the apply would decline, predicted without writing anything.
+
+    The apply's refusal lives in `add_routine`: a job the classifier calls `script` with no
+    `--command` is refused, because a script lane without a command cannot run. The dry run skipped
+    that call entirely, so a survey of a real pool reported `skipped: []` while the apply filed 3 of
+    4 and named nothing about the fourth. Predicting it costs one classification call and makes the
+    survey say what the apply would say — which is the whole point of a survey."""
+    out = list(already)
+    named = {s.get("title") for s in out}
+    for r in rows:
+        if r["title"] in named:
+            continue
+        try:
+            cls = k.classify(r["title"], r["intent"], r.get("command"))
+        except Exception as e:  # a classifier that is down is not a reason to hide the refusal
+            cls = {"lane": None, "error": str(e)[:80]}
+        if cls.get("lane") == "script" and not r.get("command"):
+            out.append({"title": r["title"],
+                        "reason": (f"this job looks deterministic (script, "
+                                   f"{(cls.get('confidence') or 0):.0%}): give it as a script with "
+                                   f"--command, or say why an agent must do it")})
+    return out
+
+
 def read_venture(pool: Path) -> dict:
     """Everything a venture's four artifacts say, in one place."""
     pool = Path(pool).expanduser().resolve()
@@ -294,6 +319,13 @@ def venture_import(k, pool: Path, dept: str, dry_run: bool = True) -> dict:
                "dry_run": dry_run, "skipped": skipped}
 
     if dry_run:
+        # The dry run must predict what the apply would decline. Measured 2026-10-21: the
+        # script-lane refusal lives in `add_routine`, which the dry run never calls, so a survey
+        # of a 4-protocol pool reported `skipped: []` while the apply silently filed 3 and named
+        # nothing about the fourth. Two protocols refused as "looks deterministic" were invisible
+        # until you committed. A survey that cannot see its own refusals is the same silence the
+        # paused-status bug was, one layer up.
+        summary["skipped"] = _would_refuse(k, rows, summary["skipped"])
         return summary
 
     # the department, with the pool's charter

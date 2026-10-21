@@ -249,9 +249,48 @@ class LegacyImport(LaneCase):
         (pool / "cron-jobs" / "b.md").write_text(
             '---\njob: "b"\nschedule: "0 19 * * *"\n---\n\n# B\n')
         out = ventures.venture_import(self.k, pool, "acme", dry_run=True)
-        self.assertEqual([s["title"] for s in out["skipped"]], ["a"],
-                         "the paused protocol is named, not silently omitted")
+        self.assertEqual(sorted(s["title"] for s in out["skipped"]), ["a", "b"],
+                         "both the paused protocol and the refusal the apply would make are named")
         self.assertEqual(out["protocols"], 2)
+
+    def test_a_dry_run_predicts_what_the_apply_would_refuse(self):
+        """A survey must say what the apply would say. Measured 2026-10-21 on the real pool: the
+        script-lane refusal lives in `add_routine`, which the dry run never calls, so the survey of
+        a 4-protocol pool reported `skipped: []` while the apply filed 3 and named nothing about the
+        fourth. Two refusals — invisible until you committed.
+
+        `LaneCase` wires a fake classifier that answers the first criterion at 95%, which is
+        `script`, so this is exactly the state a survey must predict."""
+        from holon.execution import ventures
+        pool = self.tmp / "acme"
+        (pool / "cron-jobs").mkdir(parents=True)
+        (pool / "cron-jobs" / "a.md").write_text(
+            '---\njob: "a"\nschedule: "0 18 * * *"\n---\n\n# A\n')
+        (pool / "cron-jobs" / "b.md").write_text(
+            '---\njob: "b"\nschedule: "0 19 * * *"\nstatus: paused\n---\n\n# B\n')
+        out = ventures.venture_import(self.k, pool, "acme", dry_run=True)
+        named = sorted(s["title"] for s in out["skipped"])
+        self.assertIn("b", named, "an explicit pause is still named")
+        self.assertIn("a", named, "and the refusal the apply would make is predicted, not hidden")
+        self.assertIn("script", " ".join(s["reason"] for s in out["skipped"]),
+                      "the reason names the lane, so the operator can act on it")
+
+    def test_the_dry_run_names_nothing_when_everything_would_import(self):
+        """The prediction is not noise: a pool whose jobs are agent-legible imports cleanly, and the
+        survey says so."""
+        from holon.execution import ventures
+        self.fake.answer = lambda state, questions: {
+            qid: ({"type": "choice", "choice": "full", "confidence": 0.9,
+                   "probabilities": {c: (0.9 if c == "full" else 0.1 / 3) for c in q["criteria"]}}
+                  if qid == "lane" else {"type": "noul", "noul": 0.0})
+            for qid, q in questions.items()}
+        pool = self.tmp / "clean"
+        (pool / "cron-jobs").mkdir(parents=True)
+        (pool / "cron-jobs" / "a.md").write_text(
+            '---\njob: "a"\nschedule: "0 18 * * *"\n---\n\n# A\n')
+        out = ventures.venture_import(self.k, pool, "clean", dry_run=True)
+        self.assertEqual(out["skipped"], [])
+        self.assertEqual(out["protocols"], 1)
 
 
 class Objectives(LaneCase):
