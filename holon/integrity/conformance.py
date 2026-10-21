@@ -29,6 +29,7 @@ JD = ("Conformance employee: checks that this harness honors the Holon contract.
 
 
 def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | None = None) -> dict:
+    import time as _t
     from holon.execution import drivers
     from holon.execution.service import Kernel
 
@@ -93,7 +94,12 @@ def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | No
                 return False, "no plan stage was claimable"
             if out.get("breach"):
                 return False, "; ".join(out["breach"])
-            a = s.work.latest(state["work"], "approve")  # read state: an agent may have submitted via holon_submit
+            a = None
+            for _ in range(20):  # the same self-submit race: poll briefly for the approve stage
+                a = s.work.latest(state["work"], "approve")
+                if a is not None:
+                    break
+                _t.sleep(0.5)
             if a is None:
                 return False, f"no approval stage after the plan (work {s.work.get(state['work'])['status']})"
             return True, f"valid plan, graded G{a['grade']}, working directory untouched"
@@ -105,7 +111,16 @@ def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | No
                 return False, "no approval was routed to the CEO (did the plan clause pass?)"
             if out.get("breach"):
                 return False, "; ".join(out["breach"])
-            a = s.work.latest(state["work"], "approve", "done")
+            # A body that submits itself (pull-in-push) does so from the harness's own MCP child;
+            # the commit lands a beat after run_driver returns (measured 2026-10-21: the harness
+            # was stopped at 04:11:5X, the decision committed at 04:11:55). Poll briefly rather
+            # than reading once — a real decision is never more than a few seconds behind.
+            a = None
+            for _ in range(20):  # bounded: ~10s
+                a = s.work.latest(state["work"], "approve", "done")
+                if a is not None:
+                    break
+                _t.sleep(0.5)
             if a is None:
                 return False, "the approval was not decided"
             return True, f"decision: {a['outcome']} ({a.get('decision_note') or ''})"[:200]
@@ -118,7 +133,12 @@ def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | No
             if out.get("breach"):
                 return False, "; ".join(out["breach"])
             target = work / TARGET
-            ex = s.work.latest(state["work"], "execute")
+            ex = None
+            for _ in range(20):  # the same self-submit race as approve: poll briefly
+                ex = s.work.latest(state["work"], "execute")
+                if ex is not None:
+                    break
+                _t.sleep(0.5)
             outcome = ((s.work.output(ex["id"]) if ex else None) or {"body": {}})["body"].get("outcome")
             if not target.exists() or "ok" not in target.read_text().lower():
                 return False, f"result {outcome} but {TARGET} is missing or wrong"
@@ -132,7 +152,13 @@ def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | No
             if out.get("breach"):
                 return False, "; ".join(out["breach"])
             status = s.work.get(state["work"])["status"]
-            v = s.work.latest(state["work"], "verify", "done")
+            v = None
+            for _ in range(20):  # the same self-submit race: poll briefly
+                v = s.work.latest(state["work"], "verify", "done")
+                if v is not None or status == "done":
+                    break
+                status = s.work.get(state["work"])["status"]
+                _t.sleep(0.5)
             return status == "done", f"verdict {v['outcome'] if v else None}; work {status}"
         clause("verify", check_verify)
     finally:
