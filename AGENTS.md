@@ -263,6 +263,7 @@ commit and run it again.
 | Harness seam, 2026-10-20 | a body that never submitted left nothing behind: the run failed, the stage recycled, and no event named what it had been doing, so a repeated stall was indistinguishable from a single one | `test_a_stalling_body_records_that_it_produced_nothing` |
 | Driver lifecycle, 2026-10-20 | every shipped driver declared a 3600s timeout while a `plan` stage leases 1800s and a `verify` one 1200s, so the lease sweep recovered work the harness was still running: the stage returned to ready under a live run and two bodies contended for one result file | `test_a_drivers_deadline_never_exceeds_the_stages_lease` |
 | Driver lifecycle, 2026-10-20 | a body stopped mid-run lost its whole stdout: Python buffers a pipe that is not a terminal, so a killed body's reasoning — the only evidence of what it tried — was gone. Its output now survives | `test_a_stalled_body_is_stopped_while_its_lease_is_still_live` |
+| Live instance, 2026-10-21 | cancelling a work left its `retro` stage `ready`: the stage used to be exempt from the cancel sweep, so a cancelled playbook refinement kept offering its retro to any claimer — a body redoing work the Chair had withdrawn (found cancelling the stale board: two retros survived eight cancels) | `test_a_cancelled_work_stage_is_cancelled_too` |
 
 ## Reading order for a new agent
 

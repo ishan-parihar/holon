@@ -14,12 +14,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from typing import TYPE_CHECKING
 
 from holon.core.db import log_event, now, write_txn
 from holon.core.ids import new_id
 from holon.core.vocab import CHAIR, EXECUTIVE
 from holon.execution import autonomy
 from holon.execution import bylaws
+
+if TYPE_CHECKING:  # the type only: importing Home at runtime would be a cycle
+    from holon.core.paths import Home
 
 
 class OrgError(RuntimeError):
@@ -34,10 +38,12 @@ def approver_ref(employee_id: str) -> str:
 
 
 class Org:
-    def __init__(self, conn: sqlite3.Connection, actor: str = CHAIR, config: dict | None = None):
+    def __init__(self, conn: sqlite3.Connection, actor: str = CHAIR, config: dict | None = None,
+                 home: Home | None = None):
         self.conn = conn
         self.actor = actor
         self.config = config or {}
+        self.home = home
 
     def policy(self, dept: str | None = None) -> dict:
         """The autonomy policy for a department (slug or id), or the organization's when None."""
@@ -238,6 +244,25 @@ class Org:
         with write_txn(self.conn):
             self.conn.execute("UPDATE employees SET roles=? WHERE id=?", (json.dumps(sorted(new)), eid))
             self._event("employee", eid, ",".join(e["roles"]), ",".join(sorted(new)), f"reassigned: {reason}")
+        return self.employee(eid)
+
+    def set_driver(self, eid: str, driver: str, reason: str) -> dict:
+        """Rebind an employee to a driver without firing and re-hiring them: when a harness is replaced
+        the person keeps their record, their authority and their memory."""
+        e = self.employee(eid)
+        if self.home is not None:
+            from holon.execution import drivers
+            try:
+                d = drivers.get(self.home, driver)
+            except drivers.DriverError as err:
+                raise OrgError(str(err)) from None
+            missing = [s for s in e["stages"] if s not in d.stages]
+            if missing:
+                raise OrgError(f"driver {driver} does not serve {','.join(missing)}, which {eid}'s "
+                               f"roles need")
+        with write_txn(self.conn):
+            self.conn.execute("UPDATE employees SET driver=? WHERE id=?", (driver, eid))
+            self._event("employee", eid, e["driver"], driver, f"set-driver: {reason}")
         return self.employee(eid)
 
     def set_status(self, eid: str, status: str, reason: str) -> dict:

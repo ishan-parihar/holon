@@ -271,7 +271,7 @@ class Kernel:
         autonomy.policy(self.config)  # fail fast on a bad [autonomy] section
         self.work = Work(self.wconn, actor, KernelRules(self))
         self.memory = Memory(self.mconn)
-        self.org = Org(self.wconn, actor, self.config)
+        self.org = Org(self.wconn, actor, self.config, self.home)
         self.work.appliers["authority"] = lambda a: self.org.write_authority(
             a["approver"], a["task_class"], a["max_grade"], a["reason"])
         self.work.appliers["employee_status"] = self._apply_status

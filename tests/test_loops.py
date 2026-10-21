@@ -277,3 +277,58 @@ class GuardLoop(Loops):
         self.k.auth._put(f"incident:{w['id']}:waived", "the disk fills and empties by design")
         self.assertEqual([f for f in doctor.run(self.k) if f["check"] == "incident.guard"], [],
                          "a recorded waiver is a decision, not an omission")
+
+
+class SetDriver(Loops):
+    """When a harness is retired, the people bound to it used to be unusable: the kernel had no
+    driver-change path at all, so the only way to move them was fire + re-hire — losing their
+    authority, their memory and their record. `hr set-driver` rebinds them, and it refuses a
+    driver that cannot serve the stages their roles need, so nobody is stranded on a partial one."""
+
+    def _hire_on(self, driver, slot="maker"):
+        return self.k.org.hire(name="New", title="Engineer", dept="ops", job_description=JD,
+                               slot=slot, driver=driver, reason="r", status="active")["id"]
+
+    def test_an_employee_may_be_rebound_to_a_driver_that_serves_their_stages(self):
+        e = self._hire_on("fake")
+        self.install_fake_driver("other")
+        out = self.k.org.set_driver(e, "other", "fake is retired")
+        self.assertEqual(out["driver"], "other")
+        self.assertEqual(self.k.org.employee(e)["driver"], "other",
+                         "the change is what a later reader sees, not just the returned row")
+        ev = self.k.wconn.execute("SELECT from_status, to_status FROM events WHERE entity_id=? AND entity='employee'",
+                                  (e,)).fetchall()
+        self.assertIn((("fake"), "other"), [tuple(r) for r in ev],
+                      "the audit trail carries the rebinding, not a silent UPDATE")
+
+    def test_an_employee_may_not_be_rebound_to_a_driver_that_is_not_installed(self):
+        from holon.execution import org
+        e = self._hire_on("fake")
+        with self.assertRaises(org.OrgError) as caught:
+            self.k.org.set_driver(e, "no-such", "typo")
+        self.assertIn("no driver 'no-such'", str(caught.exception))
+        self.assertEqual(self.k.org.employee(e)["driver"], "fake", "a refused change changes nothing")
+
+    def test_an_employee_may_not_be_rebound_to_a_driver_that_cannot_serve_their_roles(self):
+        from holon.execution import org
+        maker = self._hire_on("fake", slot="maker")
+        self.install_fake_driver("verify-only", extra='stages = ["verify"]\n')
+        with self.assertRaises(org.OrgError) as caught:
+            self.k.org.set_driver(maker, "verify-only", "cheaper")
+        self.assertIn("does not serve", str(caught.exception))
+        self.assertIn("plan", str(caught.exception), "the maker's own missing stage is named")
+        self.assertEqual(self.k.org.employee(maker)["driver"], "fake",
+                         "a partial driver is refused, so the employee is never stranded on one")
+
+    def test_a_rebound_employee_still_claims_their_own_work(self):
+        """The point of the command: the work they hold now runs on the new harness."""
+        e = self._hire_on("fake", slot="maker")
+        self.install_fake_driver("other")
+        self.k.org.set_driver(e, "other", "fake is retired")
+        t = self.add(dept="ops", task_class="restart")
+        self.plan_and_approve(t, planner=self.maker, assignee=e, writes=[])
+        c = self.k.claim("execute", e, driver="other")
+        self.assertIsNotNone(c, "the rebound employee still claims the work assigned to them")
+        self.assertEqual(self.k.work.get_run(c.run["id"])["driver"], "other",
+                         "their work now runs on the new harness")
+        self.assertEqual(self.k.org.employee(e)["driver"], "other")

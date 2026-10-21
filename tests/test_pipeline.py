@@ -239,6 +239,32 @@ class OptionalStages(KernelCase):
         self.assertEqual(self.status(t), "cancelled")
 
 
+class CancelledWorkLeavesNoLiveStage(KernelCase):
+    def test_a_cancelled_work_stage_is_cancelled_too(self):
+        t = self.add(dept="eng", task_class="demo")
+        self.k.work._add_stage(self.k.work.get(t["id"]), "retro", [],
+                               blocked_reason="kernel: verifier failure opened refinement")
+        retro = self.k.work.stages(t["id"], "retro")[0]
+        self.assertEqual(retro["status"], "ready")
+        self.k.work.cancel(t["id"], "superseded by the next version")
+        still = self.k.work.stages(t["id"], "retro")[0]
+        self.assertNotEqual(still["status"], "ready",
+                           "a stage on cancelled work stays claimable, so a body redoes work that was withdrawn")
+        self.assertIsNone(self.k.claim(None, self.hod, task_id=t["id"]),
+                           "a cancelled work offers nothing to claim")
+
+    def test_a_cancelled_refinement_queues_nothing_new(self):
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[])
+        c = self.k.claim("execute", self.dev1)
+        self.k.submit(c.run["id"], self.exec_env())
+        self.k.verify(t["id"], "fail", "the write is missing")
+        self.assertEqual(self.pipeline_of(t)[-1], ("execute", "ready"))
+        self.k.work.cancel(t["id"], "the Chair made this moot")
+        self.assertEqual([s for s in self.k.work.stages(t["id"]) if s["status"] in ("ready", "claimed")], [],
+                         "cancelled work holds no live stage, so nothing re-runs it")
+
+
 class CollectiveMemory(KernelCase):
     def _run_lesson(self, executor, lesson):
         t = self.add(f"job for {executor}", dept="eng", task_class="demo")

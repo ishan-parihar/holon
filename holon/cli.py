@@ -299,6 +299,14 @@ def cmd_hr_fire(args, k):
     _out(args, e, f"{e['id']} retired" + (f"; memory passes to {args.successor}" if args.successor else ""))
 
 
+@command("hr set-driver", "chair", "rebind an employee to another harness driver: they keep their "
+         "record, authority and memory (see `holon drivers`)",
+         arg("employee"), arg("--driver", required=True), arg("--reason", required=True))
+def cmd_hr_set_driver(args, k):
+    e = k.org.set_driver(args.employee, args.driver, args.reason)
+    _out(args, e, f"{e['id']}  {e['name']} now runs on {e['driver']}")
+
+
 @command("hr pause", "chair", "pause an employee", arg("employee"), arg("--reason", required=True))
 def cmd_hr_pause(args, k):
     e = k.org.set_status(args.employee, "paused", args.reason)

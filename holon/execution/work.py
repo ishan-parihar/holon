@@ -807,15 +807,21 @@ class Work:
         work = self.get(work["id"])
         if work["status"] in TERMINAL:
             return
-        for s in self._active_stages(work["id"]):
-            if s["stage"] != "retro":
-                self._abandon(s, f"work {status}")
         if status == "cancelled":
+            # A withdrawn work offers nothing: every live stage goes with it, the retro stage
+            # included. It used to survive here, so a cancelled refinement left a claimable
+            # retro on cancelled work — a body redoing work the Chair had withdrawn.
+            for s in self._active_stages(work["id"]):
+                self._abandon(s, f"work {status}")
             for c in self.children(work["id"]):
                 if c["status"] not in TERMINAL:
                     self._finish(c, "cancelled", "parent cancelled", actor)
             if self.get(work["id"])["status"] in TERMINAL:  # settled by its last child
                 return
+        else:
+            for s in self._active_stages(work["id"]):
+                if s["stage"] != "retro":
+                    self._abandon(s, f"work {status}")
         self._set(work["id"], status, note, actor, **cols)
         work = self.get(work["id"])
         self.rules.on_finished(work)
