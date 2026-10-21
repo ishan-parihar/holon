@@ -12,6 +12,10 @@ A department is a holon: a mission, a bylaws profile whose slots cover the six r
 employees tailored to fill them. Design it from its requirements, not from a template alone;
 the profile is the skeleton, the job descriptions and tailored skills are the muscle.
 
+This designs one system. The `holon-operator` skill manages the organization of them: when the
+question is which departments should exist, or how one that outgrew its profile is reshaped,
+that skill is the seam.
+
 ## Protocol
 
 1. **Requirements.** The mission in one sentence; the outcomes it owns; its task classes; the

@@ -79,8 +79,11 @@ is `auto`, `always` or `never` in `holon.toml [pipeline]`, overridable per profi
 ## 4. Skills
 
 The standard library (`holon/skills/`) holds the protocol every employee loads first
-(`holon-employee`), one skill per role with that role's stage briefs (`briefs/<stage>.md`), and
-three operations (`holon-system-design`, `holon-collaboration`, `holon-memory`). Skills resolve per
+(`holon-employee`), one skill per role with that role's stage briefs (`briefs/<stage>.md`),
+and the operation skills: `holon-collaboration` (colleagues and departments), `holon-memory`
+(institutional memory), `holon-operator` (the organization itself: adding, removing, refactoring,
+expanding, condensing, healing and evolving its systems), `holon-system-design` (designing and
+staffing one department). Skills resolve per
 file through three layers, first match wins: `$HOLON_HOME/skills/@<dept>/<skill>/`, then
 `$HOLON_HOME/skills/<skill>/`, then the standard library, so tailoring one file for one department
 leaves the rest untouched and reaches that department's next brief.

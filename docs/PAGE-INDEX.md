@@ -17,6 +17,7 @@ the one it replaces, and the earlier record is left readable so the reasoning su
 | File | Status | Owns | Not for |
 |---|---|---|---|
 | [`BYLAWS.md`](BYLAWS.md) | LIVE | Bylaws: roles, stages, profiles, skills, autonomy | — |
+| [`COMMANDS.md`](COMMANDS.md) | LIVE | Every command the distribution registers, generated from the registry | — |
 | [`CONTRACT.md`](CONTRACT.md) | LIVE | The harness contract | — |
 | [`INTENT.md`](INTENT.md) | LIVE | Intent | — |
 | [`2026-10-16-capability-layer-audit.md`](design/2026-10-16-capability-layer-audit.md) | LIVE | 2026-10-16: the capability-layer audit — a work list for this repository | — |

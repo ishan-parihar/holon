@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import shutil
 import sqlite3
 import types
@@ -11,11 +12,14 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
+from holon import cli
 from holon import cli as holon_cli
 from holon.core.db import now
 from holon.execution.service import Kernel
 from holon.integrity import doctor, lint
 from tests.helpers import KernelCase
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def rules(findings, severity="error"):
@@ -28,6 +32,91 @@ class Lint(KernelCase):
         findings = lint.run(self.k)
         self.assertEqual([f for f in findings if f["severity"] == "error"], [])
         self.assertEqual([f for f in findings if f["severity"] == "warning"], [])
+
+    def test_every_registered_command_is_in_the_command_reference(self):
+        """A command that exists and is documented nowhere is a reader's surprise: the reference
+        is the one page a new agent opens to learn the surface, and 119 commands is past what a
+        person keeps current by hand. The pack fails when the reference drifts from the registry."""
+        self.assertEqual(lint.run(self.k, ["reference"]), [])
+        doc = Path(holon_cli.__file__).parent.parent / "docs" / "COMMANDS.md"
+        self.assertTrue(doc.exists(), "docs/COMMANDS.md must exist")
+        text = doc.read_text()
+        for c in cli.manifest():
+            self.assertIn(f"`holon {c['command']}`", text, f"{c['command']} is missing from the reference")
+
+    def test_a_command_added_without_regenerating_the_reference_is_caught(self):
+        doc = Path(holon_cli.__file__).parent.parent / "docs" / "COMMANDS.md"
+        original = doc.read_text()
+        try:
+            doc.write_text(original.replace("`holon status`", "`holon statusa`"))
+            found = lint.run(self.k, ["reference"])
+            self.assertTrue(any(f["rule"] == "reference.stale" for f in found), found)
+            self.assertIn("status", " ".join(f["message"] for f in found))
+        finally:
+            doc.write_text(original)
+
+    def test_a_missing_command_reference_is_an_error(self):
+        doc = Path(holon_cli.__file__).parent.parent / "docs" / "COMMANDS.md"
+        original = doc.read_text()
+        try:
+            doc.unlink()
+            found = lint.run(self.k, ["reference"])
+            self.assertEqual([f["rule"] for f in found], ["reference.missing"])
+        finally:
+            doc.write_text(original)
+
+    def test_the_reference_regenerates_identically(self):
+        """The committed reference is what the generator produces, so `regenerate` is a check
+        rather than a rewrite: a stale file fails, a regenerated file passes unchanged."""
+        from holon.tools import commands
+        doc = Path(holon_cli.__file__).parent.parent / "docs" / "COMMANDS.md"
+        self.assertEqual(doc.read_text(), commands.render(),
+                         "docs/COMMANDS.md is not what `python3 -m holon.tools.commands` produces")
+
+    def test_bylaws_names_every_operation_skill_the_library_carries(self):
+        """BYLAWS §4 enumerates the standard library's non-role skills, and one that the doc does
+        not name is a capability that exists with no reader. The two sets must agree exactly, in
+        both directions: an unlisted skill and a listed-but-absent one are both errors."""
+        section = re.search(r"## 4\. Skills\n(.*?)\n## 5\.", (ROOT / "docs" / "BYLAWS.md").read_text(),
+                            re.S)
+        self.assertIsNotNone(section, "BYLAWS §4 must be a numbered section")
+        named = set(re.findall(r"`(holon-[a-z-]+)`", section.group(1)))
+        library = {d.name for d in (ROOT / "holon" / "skills").iterdir()
+                   if d.is_dir() and (d / "SKILL.md").exists()
+                   and "kind: operation" in (d / "SKILL.md").read_text().split("---")[1]}
+        # §4 also names the protocol skill every employee loads first; that one is expected here.
+        library.add("holon-employee")
+        self.assertEqual(named, library,
+                         "BYLAWS §4 names skills the library does not carry, or omits one it does")
+
+    def test_every_skill_a_role_needs_is_in_the_export(self):
+        """A skill that no export reaches is unreachable however well written it is: the export
+        decides what an employee can read, so a new skill must be role-bound and reachable."""
+        from holon.capabilities import skills as S
+        for name in sorted(p.name for p in (ROOT / "holon" / "skills").iterdir() if p.is_dir()):
+            meta = self.k.skills.meta(name)
+            self.assertTrue(meta.get("roles"), f"{name} binds no role, so no brief exports it")
+            self.assertIn("Use when", meta.get("description", ""),
+                          f"{name} does not say when to use it")
+
+    def test_the_operator_skill_teaches_every_move_of_the_organization(self):
+        """The red-team that produced `holon-operator` found the reflexes of managing the
+        organization — add, remove, refactor, expand, condense, heal, evolve — encoded nowhere.
+        The skill is the answer, so each move must be present and command-bound."""
+        text = (ROOT / "holon" / "skills" / "holon-operator" / "SKILL.md").read_text()
+        for move in ("add", "remove", "refactor", "expand", "condense", "heal", "evolve"):
+            self.assertIn(f"**{move}**", text, f"the {move} move is not named in the skill")
+        for command in ("holon dept create", "holon dept export", "holon dept profile",
+                        "holon hr hire", "holon gc", "holon guards", "holon incident waive"):
+            self.assertIn(command, text, f"the skill names no command for {command}")
+
+    def test_the_operator_skill_is_scoped_against_the_system_design_skill(self):
+        """Two skills that both cover a department's shape are two answers to one question. The
+        boundary is stated in both directions so a reader picks one deliberately."""
+        for who in ("holon-operator", "holon-system-design"):
+            body = (ROOT / "holon" / "skills" / who / "SKILL.md").read_text()
+            other = "holon-system-design" if who == "holon-operator" else "holon-operator"
+            self.assertIn(other, body, f"{who} does not state its boundary against {other}")
 
     def test_a_secret_in_config_is_flagged_a_key_file_reference_is_not(self):
         """G8: [secrets.dept.<slug>] values are 0600 key-file paths. The secret itself in config,

@@ -37,7 +37,7 @@ from holon.core import contract, vocab
 from holon.core.db import checksum, migration_files
 
 PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "bylaws", "drift", "extstore",
-         "boundary")
+         "boundary", "reference")
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
@@ -208,7 +208,7 @@ def pack_schema(k, f: Findings) -> None:
 
 
 # ── REF ───────────────────────────────────────────────────────────────────
-CMD_RE = re.compile(r"(\$holon|`holon|\bholon|bin/holon|\$HOLON)\s+((?:[a-z][a-z-]*)(?:\s+[a-z][a-z-]*)?)([^`\n|]*)")
+CMD_RE = re.compile(r"(\$holon|`holon|\bholon|bin/holon|\$HOLON)\s+((?:[a-z][a-z-]*)(?:\s+[a-z][a-z-]*){0,2})([^`\n|]*)")
 
 
 def _cli_refs(text: str, where: str, f: Findings) -> None:
@@ -224,8 +224,11 @@ def _cli_refs(text: str, where: str, f: Findings) -> None:
             if explicit:
                 f.add("error", "ref.cli", where, f"`holon {words[0]}` is not a command")
             continue
-        key = tuple(words[:2]) if tuple(words[:2]) in cmds else (words[0],)
-        if key not in cmds:
+        # the longest path the registry actually holds (three words at most, the depth the
+        # reference table reaches: `holon kb blueprint check`). A two-word fallback that misses
+        # here would report a real command as nonexistent.
+        key = next((tuple(words[:n]) for n in (3, 2, 1) if tuple(words[:n]) in cmds), None)
+        if key is None:
             f.add("error", "ref.cli", where, f"`holon {' '.join(words)}` is not a command")
             continue
         opts = {o for a, _ in cmds[key].args for o in a if o.startswith("-")} | {"--json", "--home", "--token"}
@@ -431,7 +434,33 @@ def pack_bind(k, f: Findings) -> None:
                     f.add("error", "bind.config", f"[{section}] {key}", "config key is not documented")
 
 
-# ── DEPTH ─────────────────────────────────────────────────────────────────
+def pack_reference(k, f: Findings) -> None:
+    """docs/COMMANDS.md is generated from the registry (`python3 -m holon.tools.commands`), and
+    every command it holds must appear there. A command added without regenerating the reference
+    is an error, not a reader's surprise: the reference is the one document a new agent reads to
+    learn the surface, and 119 commands is past what a person keeps current by hand."""
+    from holon import cli
+    from holon.tools import commands
+    doc = DIST / "docs" / "COMMANDS.md"
+    if not doc.exists():
+        f.add("error", "reference.missing", "docs/COMMANDS.md",
+              "the command reference does not exist; generate it: python3 -m holon.tools.commands > docs/COMMANDS.md")
+        return
+    text = doc.read_text()
+    stale = [c["command"] for c in cli.manifest() if f"`holon {c['command']}`" not in text]
+    if stale:
+        f.add("error", "reference.stale", "docs/COMMANDS.md",
+              f"{len(stale)} command(s) are not in the reference ({', '.join(stale[:5])}…); regenerate it "
+              "with `python3 -m holon.tools.commands > docs/COMMANDS.md`")
+    # every family a future agent adds is classified, so the reference stays ordered rather
+    # than growing an "unclassified" tail nobody reads
+    for family, _ in commands.by_family():
+        if family.startswith("unclassified:"):
+            f.add("warning", "reference.unclassified", "holon/tools/commands.py",
+                  f"{family} has no place in FAMILY_ORDER; a reader cannot find it")
+
+
+# ── DEPTH ─────────────────────────────────────────────────────────────────────────────────
 def _words(text: str) -> int:
     return len(re.findall(r"[A-Za-z][\w'-]*", _strip_code(re.sub(r"^---.*?---", "", text, flags=re.S))))
 
