@@ -11,10 +11,19 @@ shape in `docs/CONTRACT.md` §7.
 | Model | a named OpenAI-compatible profile (`holon`); the key is read from a file and kept in jcode's private env file |
 | Native tools | the Holon MCP server (`bin/holon mcp`, stdio, `shared: false`): every run spawns its own, inheriting the run token |
 | Skills | `holon skill export` → `$JCODE_HOME/skills` (registered: verified skill changes refresh it) |
-| Posture | observe stages run with `--disabled-tools write,edit,multiedit,patch,apply_patch,replace,bg,selfdev,swarm`; the shell stays, so the kernel's read-only guard stays on |
+| Posture | observe stages run with `--disabled-tools selfdev,swarm` (the file tools stay, so a body can hand its result in); the kernel's read-only guard stays on (`read_only_enforced = false`) |
 | Turned off | jcode's own memory (the organization's is Holon's), swarm (sub-agents outside the work graph), ambient mode (unapproved proactive work), self-updates, telemetry |
 | Usage | `--trace` prints a `token_usage` line per model call; the kernel sums them (`usage_line`) and records them on the run |
 | Conformance | `holon adapter test jcode` |
+
+## Deploy a driver change
+
+**Re-run the installer; do not copy `driver.toml` by hand.** `install.py` appends this instance's
+`JCODE_HOME = "$HOLON_HOME/adapters/jcode/home"` to the driver's `[env]`, because the provider
+profile the command needs lives inside it — and an instance path must never be committed (AGENTS.md).
+A hand-copied driver has no `JCODE_HOME`, so every run fails immediately with
+`Unknown provider profile 'holon'`, and the failure looks like a harness fault when it is a deploy
+fault. The installed driver is the artifact the runs use; the repo's is the source.
 
 ## Install
 
