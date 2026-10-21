@@ -13,6 +13,7 @@ from pathlib import Path
 from holon import cli
 from holon.core import vocab
 from holon.execution.drivers import Driver
+from holon.execution.policy import READ_ONLY_COMMANDS
 from holon.integrity import conformance
 from tests.helpers import KernelCase
 
@@ -287,6 +288,31 @@ class Conformance(KernelCase):
         report = {c["clause"]: c for c in conformance.run(self.k, "fake")["clauses"]}
         self.assertFalse(report["plan"]["ok"])
 
+    def test_a_slow_harness_is_not_reported_as_a_broken_one(self):
+        """Measured 2026-10-21: the suite's own report is only as good as the time it is given. A real
+        harness spends several model minutes per stage — the bodies do the work rather than
+        short-circuiting — and a caller whose shell budget is shorter than that gets its harness
+        killed mid-clause and the run reads `FAIL`. The suite must let a caller say how long it has,
+        and must report what it was given when it runs out, so a measurement of patience is never
+        mistaken for a measurement of the contract."""
+        self.install_fake_driver("fake", mode="stall")
+        report = conformance.run(self.k, "fake", timeout_s=2)
+        by_clause = {c["clause"]: c for c in report["clauses"]}
+        # the clause that ran first is judged on the harness, which produced nothing:
+        self.assertFalse(by_clause["plan"]["ok"])
+        # every clause AFTER the budget was spent says it was out of time, and does not pretend
+        # to have judged the harness
+        for name in ("approve", "execute", "verify"):
+            self.assertIn("out of time", by_clause[name]["detail"],
+                          f"{name} reports the budget, not a broken harness: {by_clause[name]['detail']}")
+            self.assertFalse(by_clause[name]["ok"])
+
+    def test_the_default_budget_is_generous_enough_for_a_real_harness(self):
+        """The default must not itself be the measurement's ceiling: four stages of real work take
+        minutes each, and the kernel leases a plan stage for 1800 s."""
+        self.assertGreaterEqual(conformance.DEFAULT_TIMEOUT_S, vocab.LEASE_S["plan"],
+                                "the default budget covers at least one plan stage's lease")
+
     def test_cli(self):
         buf = io.StringIO()
         with redirect_stdout(buf):
@@ -345,14 +371,38 @@ class Operant(KernelCase):
         obs = tomllib.loads(p.stdout[p.stdout.index("--- observe.toml ---") + len("--- observe.toml ---"):p.stdout.index("--- act.toml ---")])
         act = tomllib.loads(p.stdout[p.stdout.index("--- act.toml ---") + len("--- act.toml ---"):])
         # observe: every mutating tool is gone; act: only the AFT writers are
-        self.assertIn("file_write", obs["tools"]["disabled_tools"])
+        # G-a (2026-10-21): `file_write` is the one write tool an observer keeps — it is how a body
+        # hands in a result when the submit tool is not reachable, and the fence is the kernel's
+        # working-directory guard, not the tool list.
+        self.assertNotIn("file_write", obs["tools"]["disabled_tools"],
+                         "an observer can still hand in its result")
         self.assertIn("terminal", obs["tools"]["disabled_tools"])
         self.assertIn("send_message", obs["tools"]["disabled_tools"])
         self.assertNotIn("file_write", act["tools"]["disabled_tools"])
+        for tool in ("patch", "process", "code_execution", "config_manage", "cron", "approval_request"):
+            self.assertIn(tool, obs["tools"]["disabled_tools"],
+                          f"{tool} mutates the machine or the organization: it stays denied")
+        for tool in ("aft_edit", "aft_write", "aft_patch", "aft_append"):
+            self.assertIn(tool, obs["tools"]["disabled_tools"], f"the AFT writers stay denied")
         # an approved plan never stalls on a prompt an unattended harness cannot answer.
         # command_allowlist is a top-level key (it seeds the agent's approval allowlist)
         self.assertEqual(act.get("command_allowlist"), ["*"])
-        self.assertNotIn("command_allowlist", obs)
+        # G-e (2026-10-21): lockdown mode refuses a tool with no allow entry, and the observe posture
+        # set none — so a read-only `aft_bash` probe and the observer's own `file_write` hand-in were
+        # both escalated and recorded as refusals, which the kernel treats as blockers. lockdown is
+        # the right default; what it needs is an entry. The observe posture names the kernel's own
+        # read-only command vocabulary plus the observer's hand-in tool, and nothing that mutates.
+        obs_allow = obs.get("command_allowlist")
+        self.assertTrue(obs_allow, "an observer's read-only probes need an allow entry under lockdown")
+        self.assertIn("file_write", obs_allow, "the observer's own result hand-in is allowed")
+        self.assertIn("aft_bash", obs_allow,
+                      "the harness's shell is how an observer runs a read-only probe")
+        for probe in ("ls", "cat", "stat", "grep"):
+            self.assertIn(probe, obs_allow, f"{probe} is a read-only probe")
+        for mutator in ("rm", "mv", "git", "deploy", "patch", "send_message", "config_manage"):
+            self.assertNotIn(mutator, obs_allow, f"{mutator} mutates the machine or the organization")
+        self.assertEqual(set(READ_ONLY_COMMANDS) <= set(obs_allow), True,
+                         "the observe list is the kernel's own vocabulary, not a copy that can drift")
         # the organization's records are Holon's, and the body's own lanes stay pinned off: the
         # continual-harness lane (KernelSettings lives at [tools.kernel] — config.rs's
         # ToolSettings.kernel; a top-level [kernel] is an unknown field and operant refuses the

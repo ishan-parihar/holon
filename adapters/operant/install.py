@@ -44,6 +44,18 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(HERE.parent))
 import install_lib  # noqa: E402  (the shared installer seam: R3 of the 2026-10-20 bridge plan)
 
+# G-e: the observe posture's allowlist comes from the kernel, not from a copy here. Two lists that
+# must agree are one list or they drift, and this one is the kernel's own statement of what an
+# observer may run (it is the same list `policy.json` carries).
+sys.path.insert(0, str(REPO))
+from holon.execution.policy import READ_ONLY_COMMANDS  # noqa: E402
+# `file_write` is the one write tool an observer keeps: it is how the body hands in its result, and
+# the fence is the kernel's working-directory guard, not the tool list. `aft_bash` is the same case
+# one level down — it is the harness's shell, the only way an observer can run `ls` or `cat` to see
+# what it plans, and the run's `policy.json` plus the kernel's workdir fingerprint are what stop a
+# mutation, not the presence of the tool.
+OBSERVE_TOOLS = (*READ_ONLY_COMMANDS, "aft_bash", "aft_read", "file_write", "file_list", "file_search")
+
 # operant tool names (crates/operant-core/src/tools/builtin.rs) that mutate the machine, the
 # organization's records, or reach a human. An observer gets none of them.
 WRITE_TOOLS = [
@@ -62,6 +74,14 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
                 memory_dir: Path, observe: bool, api_key: str | None,
                 native_tools: bool = False) -> str:
     tools = sorted(WRITE_TOOLS + AFT_WRITE) if observe else AFT_WRITE
+    # G-a (measured 2026-10-21): `file_write` is a write tool, and it is also the only way a body
+    # hands in a result when the submit tool is not reachable. Denying it in observe leaves the
+    # body with nothing to hand in — the fence is the kernel's own working-directory guard, which
+    # snapshots the workdir and excludes the run directory, not the tool list. So `file_write`
+    # stays available in observe; everything that mutates the machine, the organization's records,
+    # or a human is still denied.
+    if "file_write" in tools:
+        tools = sorted(set(tools) - {"file_write"})
     lines = [
         "# Written by Holon's operant adapter installer. One posture config per {posture} run.",
         f"# Posture: {'observe — no write/mutation/notification tools' if observe else 'act — the plan was approved'}.",
@@ -75,6 +95,25 @@ def config_text(base_url: str, model: str, holon_cmd: str, skills_dir: Path,
             "# agent's approval allowlist and matches tool names or globs). The smart-approval",
             "# hardline floor (destructive command patterns) still applies.",
             'command_allowlist = ["*"]',
+            "",
+        ]
+    else:
+        # G-e (measured 2026-10-21): lockdown mode refuses a tool that has "neither an allow entry
+        # nor a standing grant", and the observe posture set none — so a read-only `aft_bash` probe
+        # and the observer's own `file_write` hand-in were both escalated and recorded as refusals,
+        # which the kernel then treats as blockers. lockdown is the right default; what it needs is
+        # an entry, not a relaxation.
+        #
+        # So the observe posture names exactly what an observer may run: the kernel's read-only
+        # command vocabulary (holon/execution/policy.py, the same list policy.json carries) and
+        # `file_write`, the tool that writes this run's own result. The kernel compiles the code, so
+        # the two lists cannot drift; the harness's own allowlist is what lets it through.
+        lines += [
+            "# observe posture: lockdown mode refuses a tool with no allow entry, so the observer's",
+            "# read-only probes and its own result hand-in both need one. The list is the kernel's",
+            "# read-only command vocabulary plus `file_write` (the run's result.json) — the same list",
+            "# policy.json carries. Read-only by construction, like the kernel's own posture.",
+            'command_allowlist = [' + ", ".join(json.dumps(c) for c in OBSERVE_TOOLS) + ']',
             "",
         ]
     lines += [

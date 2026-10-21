@@ -17,18 +17,24 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 from holon.core import vocab
 from holon.core.paths import Home
 
 CLAUSES = ("driver", "plan", "approve", "execute", "verify")
+# The whole run's budget, not one clause's. Four stages of real work take minutes each, and a plan
+# stage's lease alone is 1800 s, so a ceiling at that level is a floor for a caller's own patience
+# rather than a limit on the harness.
+DEFAULT_TIMEOUT_S = 3600
 TARGET = "conformance.txt"
 JD = ("Conformance employee: checks that this harness honors the Holon contract. Do exactly what the "
       "brief asks and return the JSON result it describes.")
 
 
-def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | None = None) -> dict:
+def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | None = None,
+        timeout_s: float | None = None) -> dict:
     import time as _t
     from holon.execution import drivers
     from holon.execution.service import Kernel
@@ -37,11 +43,25 @@ def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | No
     bad = set(wanted) - set(CLAUSES)
     if bad:
         raise ValueError(f"unknown clauses {sorted(bad)}; clauses: {CLAUSES}")
+    start = time.monotonic()
+    # Measured 2026-10-21: a real harness spends several model minutes per stage — its bodies do
+    # the work rather than short-circuiting — and a caller whose shell budget is shorter than that
+    # gets the harness killed mid-clause and the run reads `FAIL plan — no result.json`. That is a
+    # measurement of the caller's patience and says nothing about the contract. So the suite carries
+    # its own ceiling, far above what any clause needs (a plan stage's lease alone is 1800 s), and
+    # a caller with less time says so with --timeout instead of being told the harness broke.
+    budget = timeout_s if timeout_s else DEFAULT_TIMEOUT_S
+    deadline = start + budget
     results: list[dict] = []
     state: dict = {}
 
     def clause(name: str, fn) -> None:
         if name not in wanted:
+            return
+        if time.monotonic() > deadline:
+            results.append({"clause": name, "ok": False, "detail": f"out of time: the suite's "
+                                                          f"{budget:.0f}s budget was spent on earlier "
+                                                          f"clauses"})
             return
         try:
             ok, detail = fn()
@@ -112,9 +132,9 @@ def run(k, driver_name: str, workdir: str | None = None, clauses: list[str] | No
             if out.get("breach"):
                 return False, "; ".join(out["breach"])
             # A body that submits itself (pull-in-push) does so from the harness's own MCP child;
-            # the commit lands a beat after run_driver returns (measured 2026-10-21: the harness
-            # was stopped at 04:11:5X, the decision committed at 04:11:55). Poll briefly rather
-            # than reading once — a real decision is never more than a few seconds behind.
+            # the commit lands a beat after run_driver returns (measured 2026-10-21). Poll briefly
+            # rather than reading once — a real decision is never more than a few seconds behind.
+            import time as _t
             a = None
             for _ in range(20):  # bounded: ~10s
                 a = s.work.latest(state["work"], "approve", "done")

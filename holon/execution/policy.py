@@ -21,6 +21,38 @@ from pathlib import Path
 
 POLICY_VERSION = 1
 
+# The commands a body in the observe posture may run. An observer's whole job is to see: it reads
+# the working directory, the files its brief names and the systems it is about to change, and it
+# changes none of them. Without a named list a harness that enforces policy.json has no entry to
+# allow, so it falls back to its own default — which, unattended, is "refuse everything". That was
+# measured on a real run (2026-10-21): the observe policy carried `commands: []`, a harness refused a
+# read-only `ls` as "neither an allow entry nor a standing grant", and the kernel then read that
+# refusal as a blocker on work it had merely been asked to look at.
+#
+# A fixed vocabulary, never a passthrough: `[scope] commands` and `act_commands` are both ignored
+# for an observer — the observe posture is read-only by construction, not by what the instance
+# asked for.
+READ_ONLY_COMMANDS = (
+    "cat", "cksum", "cmp", "cut", "diff", "du", "env", "file", "find", "getent", "grep", "head",
+    "id", "ls", "md5sum", "nl", "od", "pwd", "readlink", "realpath", "sed", "sha1sum",
+    "sha256sum", "sort", "stat", "tail", "tree", "uniq", "wc", "which", "whoami", "xargs",
+)
+# `sed` is here for read-only use (`sed -n '1,40p' file`); it is in the list because an observer may
+# need it to view a range of a large file, not because it may write. A harness that fences commands
+# more tightly than a name is free to do so; this list is the kernel's own statement of what an
+# observer may read with.
+
+
+def observe_commands() -> list[str]:
+    """What an observe-stage body may run: the read-only vocabulary, and nothing else.
+
+    `[scope] commands` and `act_commands` are both ignored here — the vocabulary is the filter, not
+    a starting point. A department that runs its own read tool names it in its skill and its brief;
+    the posture's machine-readable statement of what an observer may run is fixed, so no scope edit
+    can widen an observer into a writer, and no reviewer has to diff a department's scope to know
+    what its researchers may execute."""
+    return list(READ_ONLY_COMMANDS)
+
 
 def compile_policy(node: dict, work: dict | None, scope: dict | None, plan: dict | None,
                     budget: dict | None) -> dict:
@@ -38,9 +70,11 @@ def compile_policy(node: dict, work: dict | None, scope: dict | None, plan: dict
     roots = [workdir] if workdir else []
     roots += (scope or {}).get("roots", [])
     read_roots = (scope or {}).get("read_roots", []) or []
-    commands = (scope or {}).get("commands", []) or []
+    commands = (scope or {}).get("commands") or []
     if posture == "act":
-        commands += (scope or {}).get("act_commands", []) or []
+        commands += (scope or {}).get("act_commands") or []
+    else:
+        commands = observe_commands()
     writes = list((plan or {}).get("writes") or []) if posture == "act" else []
     return {
         "version": POLICY_VERSION,

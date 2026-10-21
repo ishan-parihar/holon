@@ -31,7 +31,18 @@ approver whose authority covers that grade, so make it reviewable in under two m
 Follow the `holon-employee` skill's turn-budget section. The exact envelope shape is `$envelope_path`.
 
 
-## Output: write exactly one JSON object to `$result_path`
+## Output: hand your result in through one of these, in this order
+
+**1. `holon_submit`** — the MCP tool. Call it with the JSON object below as `result`. It is always
+available, it needs no file write, and it is authenticated by this run's own token. If you have the
+Holon tools, this is the way.
+
+**2. Write it to `$result_path`** — only if you have a working file-write tool AND that tool is not
+confined to the working directory. (On an observe stage a write tool may be disabled or fenced:
+that is expected, and it is why `holon_submit` is listed first.)
+
+**3. End your final message with the JSON object** — the last resort, read only if neither above
+worked.
 
 ```json
 {"kind": "plan", "findings": "current state, relevant files and systems, with sources",
@@ -43,4 +54,5 @@ Follow the `holon-employee` skill's turn-budget section. The exact envelope shap
 or `{"kind": "decompose", "rationale": "...", "grade": "G2", "children": [{"title": "...", "intent": "...", "acceptance": "...", "dept": "ops", "after": [0]}]}`
 or `{"kind": "needs_input", "question": "..."}`
 
-Hand it in per the employee skill: `holon_submit`, or the JSON as your final message.
+One object, one hand-in. **Do not guess between them: try `holon_submit` first, and if it errors,
+read the error — a refused result is rework, an unhanded-in result is nothing.**
