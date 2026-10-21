@@ -533,7 +533,10 @@ def cmd_plan_show(args, k):
 
 
 @command("plan approve", "chair", "approve a plan (approval, plan or work id)", arg("ref"), arg("--note"),
-         arg("--recurring", action="store_true", help="also approve it as a template for a recurring schedule"))
+         arg("--recurring", action="store_true",
+             help="record this plan as a recurring template (it is how a decomposition with cron "
+                  "children becomes one; an imported routine already records that, and enabling its "
+                  "schedule is a separate decision: `holon schedule enable`)"))
 def cmd_plan_approve(args, k):
     out = k.approve(args.ref, args.note, recurring=args.recurring)
     extra = f" ({len(out['children'])} sub-tasks created)" if out["children"] else ""

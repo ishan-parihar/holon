@@ -162,10 +162,19 @@ def main(argv: list[str] | None = None) -> int:
                              if hot else ""))
                     stagger += 1
                     if a.apply:
-                        approval = k.add_routine(cron["name"], cron["prompt"][:2000], dept=dept,
-                                                 cron=when, deliver=deliver,
-                                                 task_class=f"operant-cast:{sid}")
-                        applied.append(f"routine proposal for {sid} → approval {approval['id']}")
+                        try:
+                            approval = k.add_routine(cron["name"], cron["prompt"][:2000], dept=dept,
+                                                     cron=when, deliver=deliver,
+                                                     task_class=f"operant-cast:{sid}")
+                            applied.append(f"routine proposal for {sid} → approval {approval['id']}")
+                        except ValueError as e:
+                            # The kernel refuses a high-cadence routine it cannot justify (a full
+                            # lane buys a body on every firing, and the classifier is absent).
+                            # The importer reports it, names the seam, and carries on: a refusal
+                            # the operator never sees is the silence this adapter exists to end.
+                            print(f"refused   {sid:<18} {e}")
+                            print(f"          give it a script (`--command`) or a slower cron, or "
+                                  f"configure [classifier] and re-run")
             elif sid in MECHANISMS:
                 print(f"mechanism {sid:<18} {MECHANISMS[sid]}")
         for c in other:

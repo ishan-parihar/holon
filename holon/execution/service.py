@@ -1187,6 +1187,33 @@ class Kernel:
     def _external(self, cls: dict) -> bool:
         return (cls.get("external_p") or 0) >= float(self.config["lanes"]["external_p_max"])
 
+    @staticmethod
+    def _per_day(cron: str) -> int:
+        """How many times a cron fires in the next 24 hours, by walking its real times."""
+        c = Cron(cron)
+        t = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        end = t + timedelta(days=1)
+        n = 0
+        while True:
+            t = c.next_after(t)
+            if t > end:
+                return n
+            n += 1
+
+    @classmethod
+    def _fires_often(cls, cron: str, at_most: int = 11) -> bool:
+        """A cron that fires more often than `at_most` times a day buys a body on every firing.
+
+        The cheapest full-lane firing is one agent session. A */5 job is 288 of them a day; even an
+        hourly job is 24. The threshold matches the boundary the cast importer in `adapters/`
+        already recognises (it flags a job at `>= 12/day` and enforces nothing) — this is that
+        flag with a decision attached. An unreadable cron is not a reason to refuse a routine,
+        so a parse failure is False."""
+        try:
+            return cls._per_day(cron) > at_most
+        except Exception:
+            return False  # an unreadable cron is not a reason to refuse a routine
+
     def _external_by_name(self, title: str, intent: str) -> tuple[bool, str]:
         """Outside-reach, decided by the job's own words rather than by a model.
 
@@ -1252,6 +1279,15 @@ class Kernel:
                              "agent must do it")
         elif lane is None:
             lane = cls["lane"] if cls["lane"] in ("fast", "full") else "full"
+            if lane == "full" and cls["lane"] is None and cron and self._fires_often(cron):
+                # No decision model has an opinion, and the cron fires often enough that a full
+                # lane buys a body on every firing — 288 of them a day for a */5 job. Fail closed
+                # the way the import already does for outside-reach: the kernel refuses to spend
+                # that unattended, because nothing has said a body is needed.
+                raise ValueError(f"no decision model is available and this routine fires on '{cron}' "
+                                 f"({self._per_day(cron)} times a day): a full lane would dispatch a body "
+                                 "on every firing. Configure [classifier], give it as --command, or say "
+                                 "--why an agent must do it")
         elif cls["lane"] and order.index(lane) < order.index(cls["lane"]):
             notes.append(f"raised from {lane} to {cls['lane']}: the classifier is {cls['confidence']:.0%} sure it "
                          "needs that much care")

@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+from pathlib import Path
 from unittest import mock
 
 from holon import cli
@@ -12,6 +13,12 @@ from tests.fake_decisions import FakeDecisions
 from tests.helpers import KernelCase
 
 ROUTINE_FREE = "[grading]\nnovelty_min_verified = 0\n[autonomy]\nverify_sample_rate = 0\n"
+
+# The only venture pool on this machine, and the pilot's. A guard that measures real behaviour
+# needs the real artifact, so this names the pool rather than a fixture standing in for it.
+POOL = Path(__file__).resolve().parents[2] / "pioneer-qf"
+if not POOL.is_dir():
+    POOL = Path("pioneer-qf")
 
 
 class LaneCase(KernelCase):
@@ -197,6 +204,45 @@ class Routines(LaneCase):
         self.k.approve(a["id"])
         w = self.fire(plan)
         self.assertEqual((w["lane"], self.pipeline_of(w)), ("full", [("plan", "ready")]))
+
+    def test_an_import_without_a_decision_model_does_not_buy_a_body_every_5_minutes(self):
+        """A job whose every firing is a script must not become a body's job when the model is off.
+
+        Found on the live instance with the pilot: `spread-sample` runs `spread_sample.py` on a
+        `*/5 * * * *` cron — 288 firings a day — and the classifier judges it a script at 100%
+        confidence. With the model off, `classify` returns `lane: None`, the routine's own
+        heuristic had nothing to compare against, and the job landed as a `full` routine: a body
+        dispatched to do what a 5-second script does, 288 times a day, unattended.
+
+        The guard: turn the decision model off, import the real pool through
+        `venture_import`, and assert that a job whose cron fires every few minutes never lands as
+        a `full` routine — a lane whose every firing dispatches a body.
+        """
+        self.classifier = False
+        self.configure("")
+        from holon.execution.ventures import venture_import, read_venture
+        from holon.cli import legacy_cron
+        self.assertTrue(POOL.is_dir(), f"the pilot pool {POOL}")
+        v = read_venture(POOL)
+        self.assertTrue(v["protocols"], "the pilot pool has protocols to import")
+        survey = venture_import(self.k, POOL, "pilot", dry_run=True)
+        self.assertEqual(survey["protocols"], len(v["protocols"]))
+        rows = [legacy_cron(p) for p in v["protocols"]]
+        often = [(r["title"], r["cron"]) for r in rows
+                 if isinstance(r["cron"], str) and r["cron"].startswith("*/")]
+        self.assertTrue(often, "the pool carries a job that fires every few minutes")
+        on_file = venture_import(self.k, POOL, "pilot", dry_run=False)
+        self.assertGreater(on_file["routines"], 0, "the import filed its routines")
+        # a refusal is named, not a silent drop: this is the whole point of the survey
+        for title, cron in often:
+            if f"Routine: {title}" not in {w["title"] for w in self.k.work.list(kind="work")}:
+                reasons = [s["reason"] for s in on_file["skipped"] if s["title"] == title]
+                self.assertTrue(reasons, f"{title} was dropped without a reason")
+                self.assertRegex(reasons[0], "times a day",
+                                 "the reason names the cost, so the Chair can act on it")
+            else:
+                self.fail(f"{title} fires on '{cron}' as a full routine: a body per firing, "
+                          "with no decision model to say a script would do")
 
 
 class Classifier(LaneCase):

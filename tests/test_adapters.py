@@ -548,7 +548,9 @@ class ImportCast(KernelCase):
         org = sqlite3.connect(self.tmp / "org.db")
         org.execute("INSERT INTO employees VALUES ('identity-warden','Identity Warden','warden','it','[]','c')")
         cron = sqlite3.connect(self.tmp / "cron.db")
-        cron.execute("INSERT INTO cron_jobs VALUES ('cron_cast_identity-warden','identity audit','audit','0 0 * * * *','local')")
+        # a genuinely 'hot' cadence: the seat whose department is missing is the seam under
+        # test, and the importer's own hot boundary (>= 12/day) is what flags it for review
+        cron.execute("INSERT INTO cron_jobs VALUES ('cron_cast_identity-warden','identity audit','audit','0 * * * * *','local')")
         org.commit(), cron.commit(), org.close(), cron.close()
         p = subprocess.run(self.cmd(True), capture_output=True, text=True)
         self.assertEqual(p.returncode, 1, "a seat mapped to a department the instance lacks refuses to apply")

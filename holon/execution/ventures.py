@@ -260,6 +260,18 @@ def _would_refuse(k, rows: list[dict], already: list[dict]) -> list[dict]:
                         "reason": (f"this job looks deterministic (script, "
                                    f"{(cls.get('confidence') or 0):.0%}): give it as a script with "
                                    f"--command, or say why an agent must do it")})
+        elif cls.get("lane") is None and not r.get("command") and k._fires_often(r.get("cron") or ""):
+            # The other refusal, and the one the model's silence hides: with no decision model
+            # there is no lane to compare against, and a job that fires every few minutes as a
+            # full routine buys a body on every firing (288 a day for a */5 cron). The apply
+            # refuses it, so the survey must too — otherwise the dry run again reports a clean
+            # pool that the apply drops.
+            out.append({"title": r["title"],
+                        "reason": (f"no decision model is available and this job fires on "
+                                   f"'{r.get('cron')}' ({k._per_day(r.get('cron') or '')} times a day): "
+                                   f"a full lane would dispatch a body on every firing. Configure the "
+                                   f"classifier, give it as a script with --command, or say --why an "
+                                   f"agent must do it")})
     return out
 
 
