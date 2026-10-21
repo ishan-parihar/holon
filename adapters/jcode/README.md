@@ -77,5 +77,20 @@ exploring. A second session died the same way, reading the kernel's own source f
 grading floor the brief forbids. The open fix is a **driver turn cap** and a **brief that
 names the exploration budget**; neither is implemented.
 
-**Nothing here is fixed in the adapter yet.** Until conformance passes again, treat this
-adapter as **unverified**: `holon adapter test jcode` is the gate, and it must reach 5/5.
+**Conformance 5/5 again (2026-10-21).** The gate is green: driver, plan, approve, execute and
+verify all pass on jcode v0.99.0. What closed it, all measured from real runs:
+
+- `holon_submit`'s published schema names the stage's real envelope fields (2026-10-20), and the
+  server repairs the three wrapper shapes a coercing client produces.
+- The envelope's schema is rendered beside every brief, and the budget lives in the employee
+  skill: submit within it, and `holon_submit` (or the JSON as the final message) is the primary
+  route under a lockdown seat.
+- A proposal written as `{"content": …}` is repaired into `{title, intent}` instead of voiding
+  a correct verdict.
+- The conformance clauses poll briefly for a self-submitting body's commit: the body submits
+  from its own MCP child, and the commit lands a beat after the dispatcher returns.
+
+**Still open, both outside this repo:** jcode's dynamic tool bridge derives a CLI flag from a
+named MCP property (`run_id` → `--run_id`-shaped errors) instead of passing the value — the
+kernel's submit path is proved correct with a live token; and the free-tier provider cuts any
+response at exactly 64KB. The first is jcode's to fix; the second is a provider limit.
