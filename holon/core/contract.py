@@ -226,6 +226,7 @@ def validate(stage: str, env: Any) -> dict:
         raise EnvelopeError([f"unknown stage {stage!r}"])
     if not isinstance(env, dict):
         raise EnvelopeError(["envelope must be a JSON object"])
+    env = _repair_untyped_lists(env)
     variants = SPECS[stage]
     key = variant(stage, env)
     if key not in variants:
@@ -236,6 +237,28 @@ def validate(stage: str, env: Any) -> dict:
     if problems:
         raise EnvelopeError(problems)
     return env
+
+
+def _repair_untyped_lists(env: dict) -> dict:
+    """A list that arrived as `{"item": [...]}` is unwrapped.
+
+    **Why this exists (measured 2026-10-20).** An MCP client that cannot type a field
+    coerces an untyped array to an object and wraps it as `{"item": [...]}`. A real body
+    produced a complete, well-formed plan; the client transmitted it wrapped; the kernel
+    rejected it with seven field complaints and the plan was lost. A body that spent
+    twenty minutes producing a plan must not lose it to a shape detail the body never
+    chose.
+
+    The wrapper is unwrapped only where it is unambiguous — a dict whose ONLY key is
+    `item` and whose value is a list — so this can never turn a genuine object into a
+    list. Everything that decides an outcome stays strict: this repairs a shape, it does
+    not relax a rule.
+    """
+    out = dict(env)
+    for key, value in out.items():
+        if isinstance(value, dict) and set(value) == {"item"} and isinstance(value["item"], list):
+            out[key] = value["item"]
+    return out
 
 
 def _repair_annotations(env: dict) -> dict:

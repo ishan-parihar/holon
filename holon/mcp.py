@@ -18,6 +18,7 @@ import os
 import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 from holon import __version__
 
@@ -57,6 +58,65 @@ def _arg_schema(a: tuple, kw: dict) -> tuple[str, dict, bool, bool] | None:
     return name, s, required, positional
 
 
+def _result_schema() -> dict:
+    """The envelope schema for THIS run's stage, published to the client.
+
+    **Why (measured 2026-10-20).** A client that cannot type a field coerces an
+    untyped array to an object and wraps it as `{"item": [...]}`. A real body produced a
+    complete plan; the client transmitted it wrapped; the kernel rejected it and the plan
+    was lost. The cause was this tool publishing `result` as a free-form object with no
+    `properties` — the client had no field types to coerce *to*, so it guessed.
+
+    The kernel already knows the shape: `contract.json_schema(stage)` is the one writer
+    of the rules, and the same schema is rendered beside every brief as
+    `envelope.schema.json`. Publishing it here means the tool and the brief agree, and a
+    coercing client has the types it needs.
+
+    The stage comes from the run the token belongs to; if it cannot be read, the schema
+    is the generic object — the kernel's own tolerance (contract._repair_untyped_lists)
+    is what keeps that from voiding a result.
+    """
+    generic = {"type": "object", "description": "the result envelope (see the brief's Output section)"}
+    stage = _run_stage()
+    if not stage:
+        return generic
+    try:
+        from holon.core import contract
+        schema = contract.json_schema(stage)
+    except Exception:
+        return generic
+    # the JSON Schema for a stage is a oneOf over its variants; the properties of the
+    # first variant carry the field types a client needs
+    props = {}
+    for variant in (schema.get("oneOf") or []):
+        props.update(variant.get("properties") or {})
+    if not props:
+        return generic
+    props = {k: v for k, v in props.items() if k not in ("kind",)}
+    return {"type": "object", "description": f"the {stage} result envelope (the exact shape the brief describes)",
+            "properties": props}
+
+
+def _run_stage() -> str | None:
+    """The stage of the run this server belongs to, from its run token."""
+    token = os.environ.get("HOLON_RUN_TOKEN")
+    if not token:
+        return None
+    try:
+        from holon.core.paths import Home
+        from holon.execution.service import Kernel
+        home = Home.resolve(Path(os.environ.get("HOLON_HOME", "~/holon")))
+        k = Kernel(home)
+        try:
+            p = k.auth.principal(token)
+            run = k.work.get_run(p.run_id) if p.run_id else None
+            return (run or {}).get("kind")
+        finally:
+            k.close()
+    except Exception:
+        return None
+
+
 def tools() -> list[dict]:
     from holon.cli import REGISTRY
     by_path = {" ".join(c.path): c for c in REGISTRY}
@@ -67,8 +127,7 @@ def tools() -> list[dict]:
          "description": "Hand in this run's result: the JSON envelope the stage brief describes, as an object. "
                         "Use this instead of writing result.json when you have no file-write tool.",
          "inputSchema": {"type": "object", "required": ["result"], "properties": {
-             "result": {"type": "object", "description": "the result envelope (see the brief's Output section)"},
-             "run_id": {"type": "string", "description": "default: the run your token belongs to"}}}},
+             "result": _result_schema(), "run_id": {"type": "string", "description": "default: the run your token belongs to"}}}},
     ]
     for p in AGENT_COMMANDS:
         c = by_path[p]
