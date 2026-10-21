@@ -276,19 +276,26 @@ def _repair_untyped_lists(env: dict) -> dict:
     - `{"item": [...]}` — the array, unflattened
     - `{"item": "a string"}` — a one-element array, flattened by the client
 
+    And one more shape the body itself produced: a **blank string** for a list field
+    (`"external_effects": ""`), which means "no external effects" — a clear intent in a
+    shape the contract does not accept.
+
     So the repair restores the list the contract expects: a wrapper whose value is a
-    list stays a list, and a wrapper whose value is a scalar becomes a one-element
-    list. The repair is applied ONLY where the contract says the field IS a list, so
-    it can never turn a genuine object into a list. Everything that decides an
-    outcome stays strict: this repairs a shape, it does not relax a rule.
+    list stays a list, a wrapper whose value is a scalar becomes a one-element list, and
+    a blank string becomes the empty list. The repair is applied ONLY where the
+    contract says the field IS a list, so it can never turn a genuine object into a
+    list. Everything that decides an outcome stays strict: this repairs a shape, it
+    does not relax a rule.
     """
     out = dict(env)
     for key in _LIST_FIELDS:
         value = out.get(key)
-        if not (isinstance(value, dict) and set(value) == {"item"}):
-            continue
-        inner = value["item"]
-        out[key] = inner if isinstance(inner, list) else [inner]
+        if isinstance(value, dict) and set(value) == {"item"}:
+            inner = value["item"]
+            out[key] = inner if isinstance(inner, list) else [inner]
+        elif isinstance(value, str) and not value.strip():
+            # a blank string for a list field means "no items" — the body said "none"
+            out[key] = []
     return out
 
 

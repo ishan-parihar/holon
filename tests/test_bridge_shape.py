@@ -52,6 +52,22 @@ class UntypedListIsUnwrapped(KernelCase):
         self.assertEqual(got["writes"], ["/tmp/ok.txt"], "the flattened write came back as a list")
         self.assertEqual(got["steps"], ["1. write ok.txt"])
 
+    def test_a_blank_string_for_a_list_field_means_no_items(self):
+        """The third measured shape, and the body's own: `"external_effects": ""` — a
+        clear intent ("no external effects") in a shape the contract does not accept."""
+        env = self.envelope()
+        env["external_effects"] = ""
+        got = contract.validate("plan", env)
+        self.assertEqual(got["external_effects"], [], "the blank string became the empty list")
+
+    def test_a_non_blank_string_for_a_list_field_is_still_wrong(self):
+        """Only a BLANK string means "none". A string with content is a real mistake
+        and the kernel must still say so."""
+        env = self.envelope()
+        env["external_effects"] = "emails the founder"
+        with self.assertRaises(contract.EnvelopeError):
+            contract.validate("plan", env)
+
     def test_the_repair_never_turns_a_real_object_into_a_list(self):
         """The repair is narrow: only a dict whose ONLY key is `item`, and only for a
         field the contract calls a list. A genuine object is untouched — nothing that
