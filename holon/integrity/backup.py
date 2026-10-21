@@ -19,6 +19,12 @@ from holon.core.db import now
 
 TREES = ("config", "skills", "bylaws", "adapters", "kb")
 
+# A body's harness home holds the body's own binaries (`aft/aft`, a ~100 MB AFT executable).
+# An adapter installer re-downloads them (`install_lib.pin_binary`), so they are not instance state:
+# a backup that carries one per retained version fills the disk for nothing and `holon restore`
+# would resurrect a binary older than the installed one. Config, logs and memory banks ride along.
+SKIP_FILES = frozenset({"aft"})
+
 
 def _sha(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
@@ -37,7 +43,7 @@ def backup(k, dest: str, with_runs: bool = False) -> dict:
     for t in trees:
         src = k.home.root / t
         if src.is_dir():
-            shutil.copytree(src, out / t)
+            shutil.copytree(src, out / t, ignore=shutil.ignore_patterns(*SKIP_FILES))
     files = sorted(p for p in out.rglob("*") if p.is_file())
     manifest = {
         "instance_id": k.auth.instance_id, "created_at": now(), "with_runs": with_runs,
@@ -72,6 +78,12 @@ def restore(k, src: str) -> dict:
         if (src_p / t).is_dir():
             dst = k.home.root / t
             if dst.exists():
-                shutil.rmtree(dst)
-            shutil.copytree(src_p / t, dst)
+                # Keep what the backup does not carry: a body binary the installer owns is deliberately
+                # absent, so a plain replace would leave a department whose harness cannot start.
+                keep = {p for p in dst.rglob("*") if p.name in SKIP_FILES and p.is_file()}
+                others = [p for p in dst.rglob("*") if p.is_file() and p not in keep]
+                for p in others:
+                    p.unlink()
+            shutil.copytree(src_p / t, dst, ignore=shutil.ignore_patterns(*SKIP_FILES),
+                            dirs_exist_ok=True)
     return {"restored_from": str(src_p), "instance_id": check["manifest"]["instance_id"]}

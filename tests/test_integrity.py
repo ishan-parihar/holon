@@ -329,6 +329,40 @@ class Operations(KernelCase):
         self.assertTrue((body_store / "memory_wire.sqlite").exists(),
                         "the body's memory store rides backup/restore")
 
+    def test_a_restore_does_not_wipe_a_body_binary_the_installer_owns(self):
+        """`holon restore` copies each backed-up tree over the live one. A body binary the installer
+        owns (`aft/aft`) is deliberately absent from the backup, so a naive copy-out would delete the
+        live one and leave a department whose harness cannot start."""
+        from holon.integrity import backup
+        aft = self.home.root / "adapters" / "operant" / "home" / "aft" / "aft-v0.61.0"
+        aft.mkdir(parents=True)
+        (aft / "aft").write_bytes(b"\x7fELF" + b"\0" * 200_000)
+        out = backup.backup(self.k, str(self.tmp / "bk"))
+        self.add("to wipe out", dept="eng")
+        backup.restore(self.k, out["path"])
+        self.assertTrue((aft / "aft").exists(),
+                        "restore replaced the trees it carries and left the installer's binary")
+
+    def test_the_backup_excludes_binaries_the_installer_reproduces(self):
+        """A live instance's daily backup grew to 125 MB: an adapter home carried the operant body's
+        own 101 MB AFT binary (`aft/aft`), which `install_lib.pin_binary` re-downloads. Instance state is
+        a body's harness config and memory, not the harness executable — a backup holding one blob per
+        retained version fills the disk for nothing, and `holon restore` would resurrect a stale binary."""
+        from holon.integrity import backup
+        aft = self.home.root / "adapters" / "operant" / "home" / "aft" / "aft-v0.61.0"
+        aft.mkdir(parents=True)
+        (aft / "aft").write_bytes(b"\x7fELF" + b"\0" * 200_000)
+        store = self.home.root / "adapters" / "operant" / "home" / "memory"
+        store.mkdir(parents=True)
+        (store / "memory_wire.sqlite").write_text("body bank")
+        out = backup.backup(self.k, str(self.tmp / "bk"))
+        copied = {str(p) for p in Path(out["path"]).rglob("*") if p.is_file()}
+        self.assertFalse([p for p in copied if p.endswith("/aft")],
+                         f"the installer's binary is not instance state: {copied}")
+        self.assertTrue((store / "memory_wire.sqlite").exists(), "the body's memory still rides it")
+        self.assertEqual(backup.verify(out["path"])["corrupt"], [])
+
+
     def test_a_present_external_store_declares_a_known_version(self):
         """R-6 (CONTRACT §9a): the strategy seam is dormant — a store that exists must declare an
         api_version the kernel knows, so the bundle's fail-open joins cannot read a schema blind."""
