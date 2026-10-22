@@ -877,19 +877,25 @@ class Work:
         status stays as history, only the record's standing changes — and the artifact pins the
         result made in memory go with it, retired by the kernel's memory writer (one writer per
         database, law 3). `k.memory` is unavailable to the pure Work layer, so the pins are
-        retired by the caller with the returned run ids (the service and CLI pass them on)."""
+        retired by the caller with the returned run ids (the service and CLI pass them on).
+        A work may carry more than one execute output (a cancelled retry precedes a done one, or
+        the reverse), so every execute output of the work is withdrawn, not just the latest
+        stage's — doctor walks them all."""
         with write_txn(self.conn):
             work = self.work_of(ref)
-            ex = self.latest(work["id"], "execute")
-            if ex is None or not self.output(ex["id"]):
+            outs = self.conn.execute(
+                "SELECT o.id, o.task_id FROM outputs o JOIN tasks t ON t.id = o.task_id "
+                "WHERE t.parent_id=? AND t.stage='execute' AND o.kind='execute' AND o.superseded=0",
+                (work["id"],)).fetchall()
+            if not outs:
                 raise TransitionError(f"{work['id']} has no execute result to supersede")
-            if self.output(ex["id"]).get("superseded"):
-                raise TransitionError(f"{work['id']}'s result is already superseded")
-            self.conn.execute("UPDATE outputs SET superseded=1 WHERE task_id=?", (ex["id"],))
-            runs = [r["id"] for r in self.conn.execute(
-                "SELECT id FROM runs WHERE task_id=? ORDER BY started_at", (ex["id"],)).fetchall()]
-            self._event("task", ex["id"], "execute", "superseded", note)
-        return {"work": work["id"], "superseded": 1, "runs": runs}
+            runs: list[str] = []
+            for o in outs:
+                self.conn.execute("UPDATE outputs SET superseded=1 WHERE id=?", (o["id"],))
+                runs += [r["id"] for r in self.conn.execute(
+                    "SELECT id FROM runs WHERE task_id=? ORDER BY started_at", (o["task_id"],)).fetchall()]
+                self._event("task", o["task_id"], "execute", "superseded", note)
+        return {"work": work["id"], "superseded": len(outs), "runs": runs}
 
     def retry(self, ref: str, note: str = "chair retry") -> dict:
         with write_txn(self.conn):

@@ -82,6 +82,22 @@ class ASupersededResultIsWithdrawn(KernelCase):
         with self.assertRaises(TransitionError):
             self.k.work.supersede(w["id"], "x")
 
+    def test_supersede_takes_a_work_whose_latest_execute_was_a_cancelled_retry(self):
+        """Found on the live instance: a work whose done execute output predates a cancelled
+        retry — `latest('execute')` returns the cancelled stage with no output, and supersede
+        refused the very work doctor was reporting. A work's execute outputs are walked, not
+        the latest stage's."""
+        w, out = self._executed(artifacts=["/nonexistent/rotted.txt"])
+        # a cancelled retry after the done attempt: the exact live shape
+        ex2 = self.k.work._add_stage(self.k.work.get(w["id"]), "execute",
+                                     [self.k.work.stages(w["id"], "execute")[-1]["id"]], attempt=2)
+        self.k.work._set(ex2["id"], "cancelled", "chair cancelled the retry")
+        self.assertTrue(self._dangling())
+        res = self.k.work.supersede(w["id"], "x")
+        for run_id in res["runs"]:
+            self.k.memory.retire_artifacts(run_id)
+        self.assertFalse(self._dangling(), "the done attempt's output must be withdrawn too")
+
     def test_supersede_is_chair_only(self):
         """Withdrawing a finished result is the Chair's: the registry must declare it chair."""
         self.assertEqual(_cli_path("task supersede"), "chair")
