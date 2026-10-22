@@ -261,6 +261,34 @@ class Lint(KernelCase):
 
 
 class Doctor(KernelCase):
+    def test_a_cold_started_instance_is_not_reported_as_a_stale_checkout(self):
+        """A fresh, perfectly healthy cold start reported `code.root` on itself.
+
+        `holon init` recorded `parents[1]` of `holon/cli.py` — the checkout — while the doctor
+        compared `parents[1]` of `holon/integrity/doctor.py` — the `holon/` package. Two sides of
+        one seam, two different roots, so the first `holon doctor` after any `install.py` warned
+        about a stale checkout that does not exist. A warning nobody can act on trains an operator
+        to ignore the doctor, which is the one thing it must never do.
+
+        The guard is the cold start itself, end to end: one decision (which root is the
+        distribution) must hold on both sides of the seam, and a real install is what breaks when
+        it does not."""
+        import subprocess, sys
+        from pathlib import Path as _Path
+        dist = _Path(__file__).resolve().parents[1]
+        home = self.tmp / "cold"
+        out = subprocess.run([sys.executable, str(dist / "install.py"), "--home", str(home),
+                              "--bin-dir", str(self.tmp / "cbin")], capture_output=True, text=True)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        dr = subprocess.run([sys.executable, "-m", "holon", "--home", str(home), "doctor"],
+                            capture_output=True, text=True, env={**os.environ, "PYTHONPATH": str(dist)})
+        self.assertNotIn("code.root", dr.stdout + dr.stderr,
+                         "a cold start is never a stale checkout")
+        self.assertIn("0 errors", dr.stdout + dr.stderr, f"the cold start is healthy: {dr.stdout}")
+        # the only warning left is the one the Chair resolves by naming the agent user
+        warns = [ln for ln in (dr.stdout + dr.stderr).splitlines() if ln.startswith("WARN")]
+        self.assertEqual([w for w in warns if "isolation.off" not in w], [], warns)
+
     def test_a_healthy_instance_is_clean_once_the_chair_key_exists(self):
         self.assertIn("security.auth", rules(doctor.run(self.k)))
         self.k.auth.init_chair_key()

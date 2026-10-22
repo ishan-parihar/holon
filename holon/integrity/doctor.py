@@ -11,6 +11,7 @@ import sqlite3
 import stat
 from pathlib import Path
 
+from holon.cli import _distribution_root   # the same rule `holon init` records, so the two agree
 from holon.core import vocab
 from holon.core.db import connect, event_hash, now
 from holon.execution import autonomy
@@ -88,7 +89,10 @@ def run(k) -> list[dict]:
     except sqlite3.OperationalError:
         recorded = None
     if recorded:
-        running = str(Path(__file__).resolve().parents[1])
+        # the same root `holon init` records, decided by the same rule: counting parents differs
+        # by one hop between `holon/cli.py` and this file, and two different roots meant every
+        # healthy cold start warned about a stale checkout that did not exist.
+        running = str(_distribution_root())
         if recorded[0] != running:
             add("warning", "code.root",
                 f"this instance was last migrated from {recorded[0]}, but is running from {running} — "

@@ -27,6 +27,23 @@ from holon.core import vocab
 from holon.core.paths import Home, HomeNotSet
 
 NOTHING, FORBIDDEN = 3, 4
+
+
+def _distribution_root() -> Path:
+    """The distribution this code runs from: the checkout holding docs/, adapters/ and holon/.
+
+    The root is decided by structure, not by a magic index: walk up from this file until the
+    directory that holds both `holon/` and `docs/`. Counting parents was how this went wrong —
+    `holon/cli.py` needs one hop, `holon/integrity/doctor.py` needs two, and the writer
+    (`holon init`) and the reader (`doctor`) each picked their own, so every healthy cold start
+    compared two different paths and warned about a stale checkout that did not exist.
+    """
+    for parent in Path(__file__).resolve().parents:
+        if (parent / "holon").is_dir() and (parent / "docs").is_dir():
+            return parent
+    return Path(__file__).resolve().parents[1]   # a harness that ships the package alone
+
+
 # what an agent may run through the broker (holon/execution/isolation.py): MCP's agent commands, plus these
 BROKER_EXTRA = ("submit", "whoami", "help", "task list", "plan queue")
 _FILES: dict[str, str] | None = None   # set while the broker serves a request: the files the client sent
@@ -128,8 +145,11 @@ def cmd_init(args, k):
             "mode = \"supervised\"\n# verify_sample_rate = 0.2\n# [autonomy.dept.<slug>]\n# mode = \"delegated\"\n\n"
             "[memory]\npromotion_threshold = 2\n")
     # which checkout migrated this instance (I-04/H-09's silent half): doctor warns when the
-    # running code comes from somewhere else — two checkouts, one launcher, was a live hazard
-    root = Path(__file__).resolve().parents[1]
+    # running code comes from somewhere else — two checkouts, one launcher, was a live hazard.
+    # `parents[1]` of this file is the `holon/` package, not the distribution, and doctor compares
+    # against the distribution, so the two disagreed by one segment and every cold start warned
+    # about a stale checkout that did not exist.
+    root = _distribution_root()
     k.auth._put("code_root", str(root))
     path = k.auth.init_chair_key(rotate=args.rotate_chair_key)
     msg = f"holon initialized at {k.home.root}"
