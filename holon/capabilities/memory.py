@@ -130,6 +130,15 @@ class Memory:
             self.conn.execute("UPDATE items SET superseded_by='retired' WHERE id=? AND superseded_by IS NULL", (item_id,))
         return self.get_item(item_id)
 
+    def retire_artifacts(self, run_id: str) -> int:
+        """Retire every artifact pin a run made (a superseded result's pins go with it — the
+        organization must not be steered by pointers into work that no longer resolves).
+        Returns how many items were retired."""
+        with write_txn(self.conn):
+            cur = self.conn.execute("UPDATE items SET superseded_by='retired' WHERE kind='artifact' AND "
+                                    "superseded_by IS NULL AND provenance LIKE ?", (f"%{run_id}%",))
+        return cur.rowcount
+
     def link(self, from_id: str, to_id: str, rel: str) -> None:
         """A provenance edge between items (supersedes | derived_from | depends_on | contradicts | about)."""
         with write_txn(self.conn):

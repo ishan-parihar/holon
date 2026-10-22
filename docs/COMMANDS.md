@@ -51,6 +51,7 @@ is not in this file fails `holon lint` — so this file can never drift from the
 | `holon task replan` `--note` <task_id> | chair | queue a fresh plan stage |
 | `holon task retry` <task_id> | chair | give failed work another execution attempt |
 | `holon task show` <task_id> | any | one work node: its pipeline, outputs, children and conversation |
+| `holon task supersede` `--note` <task_id> | chair | withdraw a finished result whose record no longer resolves (the remedy doctor's artifacts.dangling names: the work's history stays, its standing changes, its artifact pins are retired) |
 | `holon task tree` <task_id> | any | the holarchy under a work node |
 | `holon plan approve` `--note` `--recurring` <ref> | chair | approve a plan (approval, plan or work id) |
 | `holon plan grade` `--note` <ref> <grade> | chair | regrade a pending plan (reroutes it) |

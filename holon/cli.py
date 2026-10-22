@@ -508,6 +508,17 @@ def cmd_task_cancel(args, k):
     _out(args, k.work.cancel(args.task_id, args.note), f"cancelled {args.task_id}")
 
 
+@command("task supersede", "chair", "withdraw a finished result whose record no longer resolves (the remedy "
+         "doctor's artifacts.dangling names: the work's history stays, its standing changes, its artifact "
+         "pins are retired)", arg("task_id"), arg("--note", required=True))
+def cmd_task_supersede(args, k):
+    out = k.work.supersede(args.task_id, args.note)
+    # the artifact pins the result made are retired with it, by the memory writer (law 3)
+    for run_id in out["runs"]:
+        k.memory.retire_artifacts(run_id)
+    _out(args, out, f"superseded {args.task_id}'s result ({len(out['runs'])} run's pins retired)")
+
+
 @command("task retry", "chair", "give failed work another execution attempt", arg("task_id"))
 def cmd_task_retry(args, k):
     _out(args, k.work.retry(args.task_id), f"{args.task_id}: new execute stage queued")

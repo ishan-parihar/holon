@@ -259,7 +259,7 @@ def run(k) -> list[dict]:
     # contract's rule: workdir-relative), never against this process's cwd.
     for r in q("SELECT w.id AS work_id, w.title, w.workdir, o.body FROM outputs o "
                "JOIN tasks ex ON ex.id = o.task_id JOIN tasks w ON w.id = ex.parent_id "
-               "WHERE o.kind='execute' AND o.body LIKE '%artifacts%'"):
+               "WHERE o.kind='execute' AND o.body LIKE '%artifacts%' AND o.superseded=0"):
         try:
             arts = (json.loads(r["body"]) or {}).get("artifacts") or []
         except (json.JSONDecodeError, TypeError):
