@@ -181,6 +181,38 @@ remain.
 
 ---
 
+## 4b. What the live heartbeat now fires, and one real consequence of it being on
+
+Enabling the heartbeat means the scheduler is no longer idle. Measured on the live instance:
+
+```
+sch_…JJPZ1N  recurring '0 6 * * *'  enabled  next 2026-10-23T06:00Z   (KB count smoke)
+sch_…2SQMES  recurring '0 7 * * *'  enabled  next 2026-10-23T07:00Z   (disk usage report)
+sch_…7RXF    recurring '0 8 * * *'  enabled  next 2026-10-23T08:00Z   (notes digest)
+```
+
+Three enabled plans, firing in the morning. Two of them create stages whose workdir is one of
+the B-side scratchpads listed above, and bodies are available to claim them (7 active employees
+on the live instance).
+
+I checked what actually happens rather than assuming, and the kernel is correct here. The
+workdir is a planning variable, not a hard dependency: `briefs.load` resolves
+`node.get("workdir") or str(run_dir)`, so a body dispatched into a vanished workdir works in its
+run directory and **`workdir.missing` names the stage**. That guard exists precisely because of
+this instance's notes-digest routine — its own guard test cites this instance by name
+(`tests/test_loops.py::…test_a_ready_stage_whose_workdir_is_gone_is_reported`), and says out loud
+that the run still works in the run dir while the job it was hired for does not.
+
+So the residual risk is not a crash or a lost body: it is a body spent on a stage that cannot do
+its job, and a `worked in its run dir` result that reads as a success. **This is the case for
+fixing the two workdirs (or cancelling the two plans) before tomorrow 07:00Z** — which the Chair
+can do with existing commands, and needs no code change.
+
+The two `ready` stages right now are exactly the instances the warning names:
+`verify: Disk usage report — 2026-10-22T07:01` and `execute: Notes digest — 2026-10-22T08:01`.
+
+---
+
 ## 5. Channels: how they are configured, and where the surface area is
 
 ### How a channel is configured
