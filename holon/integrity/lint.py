@@ -37,7 +37,7 @@ from holon.core import contract, vocab
 from holon.core.db import checksum, migration_files
 
 PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "bylaws", "drift", "extstore",
-         "boundary", "reference", "genome")
+         "boundary", "reference", "genome", "register")
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
@@ -798,6 +798,54 @@ def pack_genome(k, f: Findings) -> None:
             f.add("warning", f"genome.{code}", where, msg)
     if r.returncode not in (0, 2):
         f.add("error", "genome.run", "scripts/genome", f"genome lint exited {r.returncode}: {text[:200]}")
+
+
+# ── REGISTER ──────────────────────────────────────────────────────────────────────────────
+# A9 (2026-10-22 audit): the register said "blocked: a document knowledge base, waits on the
+# Chair" while the K1–K4 knowledge-base layer had shipped and passed its own tests. A register
+# whose rows lie corrupts every plan built on it — finished work gets re-planned, real work gets
+# skipped. The row itself is fixed in place (the register's own rule); the pack guards the class:
+# a row marked `blocked` for a mechanism the distribution demonstrably carries is drift.
+
+_ROW = re.compile(r"^\|\s*([A-Za-z][\w-]*)\s*\|\s*(\S+)\s*\|(.*)$", re.M)   # an id cell, never the --- separator
+
+
+def register_drift(register: Path) -> list[tuple[str, str]]:
+    """Every register row whose status is `blocked` while the mechanism it names exists in the
+    distribution. A row's item text names the thing it waits on; when that thing is a command the
+    registry carries (``holon kb ...``, ``bylaws draft``…), the block is against a shipped
+    mechanism. Returns (id, message) pairs — the row id and the finding the pack reports."""
+    from holon import cli
+    if not register.exists():
+        return []
+    known = {c["command"] for c in cli.manifest()}
+    out = []
+    for row in _ROW.finditer(register.read_text()):
+        rid, status, item = row.group(1), row.group(2), row.group(3)
+        if status != "blocked":
+            continue
+        # a row cites what it waits on in backticks — either the full path (`bylaws sync`) or the
+        # family (`holon kb`). A family citation matches when any registered command starts with
+        # it: the row waits on a mechanism the distribution demonstrably carries.
+        for m in re.finditer(r"`(?:holon\s+)?([a-z][a-z0-9 -]+?)\s*`", item):
+            words = " ".join(m.group(1).split())
+            if words in known or any(c.startswith(words + " ") for c in known):
+                out.append((rid, f"register row {rid} is blocked on `{words}`, which the distribution "
+                                f"ships — the mechanism exists; update the row in place (open, done with "
+                                f"evidence, or rejected), because a register that lies corrupts every plan "
+                                f"built on it (measured 2026-10-22: H4 said blocked while the KB layer shipped)"))
+                break
+    return out
+
+
+def pack_register(k, f: Findings) -> None:
+    """The distribution's own register (TODO.md) is checked like any other document: a row can
+    wait on the Chair, but it may not claim to wait on a mechanism that already exists."""
+    reg = DIST / "TODO.md"
+    if not reg.exists():
+        return
+    for rid, msg in register_drift(reg):
+        f.add("warning", "register.drift", "TODO.md", msg)
 
 
 def run(k, packs: list[str] | None = None) -> list[dict]:
