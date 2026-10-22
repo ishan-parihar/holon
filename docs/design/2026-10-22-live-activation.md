@@ -228,13 +228,26 @@ Yours are currently:
 
 ```
 [notify]  command = "operant org holon notify --reason heartbeat --text {message}"
-[chair]   channels = none
+[chair]   channels = ["telegram:5297486612"]   (was none until 2026-10-22)
 ```
 
-So today: the kernel computes, your adapter delivers, and **the destination is unwired** — which is
-exactly what `dropped_marker` now reports instead of hiding. Wiring a real destination is an
-adapter-side change (Telegram, Gmail), not a kernel change: law 2 forbids naming a platform under
-`holon/`.
+So once the destination was named, the kernel computes, the adapter delivers, and the digest
+now **reaches you**. Before this session's activation, `[chair] channels` was empty, and the honest
+"nobody" was the correct output.
+
+**[2026-10-22, activated]** The Chair channel is now wired and delivering:
+`channels = ["telegram:5297486612"]`. The id was not guessed — it is the `admins` entry already
+declared in the live gateway config, and the Telegram API confirms it is a private chat
+(`@ishan_parihar`), which is exactly the identity the kernel's comment asked for. The bot is live
+(`@ip_operant_testing_bot`).
+
+The kernel's own seam is proven, not just the adapter's: a real owed item
+(`msg send chair … --kind question`) ticked through the heartbeat and recorded
+**`sent — 1 items`**, where the identical path recorded `failed` at 20:28Z. Two messages reached the
+Chair during this activation: one adapter-level test, one through the kernel's digest.
+
+Wiring a *different* destination is an adapter-side change (another platform on the gateway, plus
+its ref here); law 2 forbids naming a platform under `holon/`.
 
 ### The surface area, in one picture
 
@@ -279,7 +292,8 @@ does not learn the mapping exists.
 ## 6. The one action left, and why it is safe to do now
 
 ```sh
-sudo sh /tmp/holon-isolation.sh                                 # root: the agent user + its runner
+sudo sh /var/tmp/ishanp-agentic/rescue/isolation-root-step.sh   # root: the agent user + its runner
+# re-add [isolation] agent_user (step 1.5, below), then:
 holon --home /home/ishanp/holon isolation apply                  # the ACLs (needs the user to exist)
 systemctl --user enable --now holon-broker                       # install.py writes this unit
 holon --home /home/ishanp/holon doctor                            # the isolation checks, probed as holon-agent
@@ -293,4 +307,8 @@ time as the root step, or the `isolation.runner` error above returns:
 agent_user = "holon-agent"
 ```
 
-The backup at `/var/tmp/ishanp-agentic/rescue/backup-pre-activation` covers the way back.
+The backup at `/var/tmp/ishanp-agentic/rescue/backup-pre-activation/` covers the way back, and the
+runbook is `/var/tmp/ishanp-agentic/isolation-one-root-step.md`. The root script it names is
+byte-identical to what the kernel's own `isolation setup_plan` generates, and regenerable with
+`holon isolation plan` — an earlier version of this handoff named a path under `/tmp`, which no
+longer existed.
