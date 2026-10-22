@@ -3,6 +3,7 @@ named before someone needs it, a directory that grew at the instance root withou
 reported, and gc never collects a run directory a pinned artifact still points into."""
 
 import json
+import time
 import unittest
 
 from holon.integrity import doctor, gc
@@ -87,6 +88,47 @@ class StrayRootDirectories(KernelCase):
         msgs = " ".join(f["message"] for f in findings)
         self.assertIn("stray/", msgs, findings)
         self.assertNotIn("declared/", msgs, "a [scope]-covered directory is declared, not stray")
+
+    def test_the_heartbeat_liveness_dir_is_not_stray(self):
+        """The heartbeat stamps its liveness at .clock/ (the operant gateway's clock organ
+        runs `holon tick` and reads that stamp; the kernel's own timer does the same). That
+        directory is kernel-owned placement, never a stray — flagging it cried wolf on the
+        live instance and hid the real strays."""
+        clock_dir = self.home.root / ".clock"
+        (clock_dir).mkdir()
+        (clock_dir / "last_tick").write_text(str(int(time.time())))
+        findings = [f for f in doctor.run(self.k) if f["check"] == "scope.stray"]
+        self.assertEqual([f["message"] for f in findings
+                          if ".clock" in f["message"]], [],
+                         "the heartbeat's liveness directory is not a stray")
+
+    def test_doctor_warns_when_the_heartbeat_stamp_goes_stale(self):
+        """.clock/last_tick is the heartbeat's live word: a stamp older than three cadences
+        (6+ minutes) says the heartbeat stopped — the organization's schedules do not fire,
+        leases do not renew, held results are never handed in. Doctor reads the stamp (a live
+        one silences it) instead of asking the Chair to notice missing ticks."""
+        clock = self.home.root / ".clock"
+        clock.mkdir()
+        stale = time.time() - 60 * 60  # one hour old: well past three cadences
+        (clock / "last_tick").write_text(str(int(stale)))
+        findings = [f for f in doctor.run(self.k) if f["check"] == "heartbeat.stale"]
+        self.assertTrue(findings, "a stale liveness stamp was not reported")
+        self.assertIn("last_tick", findings[0]["message"])
+        (clock / "last_tick").write_text(str(int(time.time())))
+        self.assertEqual([f for f in doctor.run(self.k) if f["check"] == "heartbeat.stale"], [],
+                        "a fresh stamp silences the warning")
+
+    def test_tick_stamps_the_heartbeat_liveness(self):
+        """`holon tick` writes the stamp the doctor reads: one line, the unix seconds of the
+        tick. Without it the heartbeat could be dead while doctor says nothing — the stamp is
+        how the heartbeat proves it is alive, and it must survive being read back."""
+        stamp = self.home.root / ".clock" / "last_tick"
+        before = time.time() - 1
+        self.k.tick()
+        content = stamp.read_text().strip()
+        self.assertTrue(content.isdigit(), f"stamp holds unix seconds, got {content!r}")
+        self.assertGreaterEqual(float(content), before, "the stamp carries this tick's time")
+        self.assertTrue(stamp.exists() and stamp.parent == self.home.root / ".clock")
 
 
 class GcKeepsPinnedArtifacts(KernelCase):

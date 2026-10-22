@@ -77,3 +77,15 @@ holon hr hire … --driver operant     # employees now run on Operant
 The installer pins the absolute path of the `operant` it found (`--operant PATH` to override)
 in the driver and the MCP server block, and refuses to continue when no `operant` is on PATH.
 Re-run without changes after tailoring skills, to re-export them.
+
+## The clock organ (what the real harness does)
+
+`operant gateway run` is not just a model gateway: it embeds a clock organ that runs
+`holon tick` every 2 minutes and stamps `<holon-home>/.clock/last_tick` with the unix seconds
+of each successful tick. On a machine where the gateway runs as a user service, **the organ
+is the heartbeat** — the kernel's own `holon-tick.timer` may sit disabled while the
+organization still ticks (verified by inotify on a live instance: the stamp advanced on
+cadence, the journal showed no systemd ticks, and recurring plans fired on the hour). A
+redundant second clock is fine; a dead one is not. Doctor reads the stamp (`heartbeat.stale`,
+CONTRACT §5): if the organ stops, the stamp goes stale and doctor says so — never assume the
+systemd timer is the only clock, and never flag `.clock/` as a stray directory.
