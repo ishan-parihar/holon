@@ -112,7 +112,7 @@ TOMBSTONE = re.compile(r"<!--\s*kb: tombstone target=\"([^\"]+)\"")
 ZONE_RE = re.compile(r"<!-- genome:zone (\S+) sha=([0-9a-f]+) -->\n(.*?)<!-- genome:end \1 -->", re.S)
 ERR = 2
 MIN_CHUNK = 5  # lines; `ask` hits narrower than this point at a lead line without its content
-VERSION = "2026.10.21-1"
+VERSION = "2026.10.22-1"
 # every key genome reads: an unknown key is a typo that would silently switch a check off (E017)
 CONFIG_KEYS = {
     "genome": {"modules", "schema_version"},
@@ -1676,6 +1676,19 @@ def running_edits(cfg: Cfg) -> list[str]:
             "do not change a running job's code" for rel, (how, pids) in sorted(hits.items())]
 
 
+def _changed_since(root: Path, named: str, head: str) -> list[str] | None:
+    """The paths changed between `named` and `head`, or None when the range
+    cannot be read (a rewritten history, a shallow clone)."""
+    try:
+        r = subprocess.run(["git", "diff", "--name-only", f"{named}..{head}"],
+                           cwd=root, capture_output=True, text=True, timeout=30)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    return [ln for ln in r.stdout.splitlines() if ln]
+
+
 def doctor_findings(cfg: Cfg) -> tuple[list[str], list[str]]:
     finds, info = [], []
     head = sh(cfg.root, "git", "rev-parse", "HEAD").strip()
@@ -1684,7 +1697,29 @@ def doctor_findings(cfg: Cfg) -> tuple[list[str], list[str]]:
     if cfg.has("state") and head:
         heads = re.findall(r"\b[0-9a-f]{40}\b", read(cfg.path("state")))
         if heads and heads[0] != head:
-            finds.append(f"stale state: {cfg.paths['state']} names {heads[0][:8]}, HEAD is {head[:8]}")
+            named = heads[0]
+            # A snapshot names the commit it was generated at, so it names
+            # the commit BEFORE the one that carried it — the literal
+            # comparison could never converge, and the close-out pattern
+            # ("write the snapshot, commit it with the worklog") always
+            # left the check red. A snapshot still describes the tree when
+            # every commit SINCE it touched only documentation (or a
+            # configured role path): a code commit invalidates it, a
+            # docs-only close-out does not.
+            touched = _changed_since(cfg.root, named, head)
+            if touched is None:
+                finds.append(f"stale state: {cfg.paths['state']} names {named[:8]}, HEAD is {head[:8]} "
+                             f"(the named commit is not in this history — the snapshot cannot be compared)")
+            else:
+                role_paths = {cfg.rel(cfg.path(r)) for r in cfg.paths if cfg.has(r)}
+                code_touched = [f for f in touched
+                                if not f.startswith("docs/")
+                                and not any(f == rp or f.startswith(rp.rstrip("/") + "/") for rp in role_paths)]
+                if code_touched:
+                    finds.append(f"stale state: {cfg.paths['state']} names {named[:8]}, HEAD is {head[:8]} "
+                                 f"({len(code_touched)} non-documentation path(s) changed since)")
+                else:
+                    info.append(f"state snapshot {named[:8]} is current: only documentation changed since it")
     # append-only roles: no line removed over the last core.append_window commits, nor in the working tree.
     # A numbered worklog is a directory: its entries are append-only (renames allowed), its index is generated.
     window = int(cfg.get("core", "append_window", 10))
@@ -2943,7 +2978,9 @@ what `genome wake` shows.
 
 ## State — (date)
 """
-RUNBOOK_TPL = "# Runbook — exact commands, environment traps\n\n| task | command | traps |\n|---|---|---|\n"
+RUNBOOK_TPL = ("# Runbook — exact commands, environment traps\n\n| task | command | traps |\n|---|---|---|\n"
+               "| refresh the generated zones (counts, indexes, views) | `genome emit` | "
+               "stale until re-run: a generated zone shows old counts after entity writes, and hand-editing one is E006 |\n")
 CLOSED_TPL = """# CLOSED — tried and rejected
 
 Append-only. An entry names the item, the verdict, the measurement that killed it
@@ -3062,6 +3099,7 @@ RG_BODY = """# {{ID}}: {{TITLE}}
 # entity, `jsonl` kinds one append-only event log. Any index is a cache (see the index module).
 
 RESERVED_FIELDS = {"id", "kind", "state", "title"}
+STRUCTURAL_KEYS = {"id", "kind", "state", "title"}  # front-matter keys every entity may carry: not fields, not errors
 STORES = ("dir", "jsonl")
 MUTABILITY = ("current", "amendable", "append-only", "immutable")
 KIND_KEYS = {"path", "id", "store", "mutability", "fields", "states", "initial", "transitions", "evidence_on", "evidence_ref",
@@ -3187,9 +3225,9 @@ def kind_dir(cfg: Cfg, k: dict) -> Path:
     return cfg.root / k["path"]
 
 
-def _entity(k: dict, id_: str, state: str, title: str, fields: dict, rels: dict, history: list, path: Path, line: int = 0, body: str = "") -> dict:
+def _entity(k: dict, id_: str, state: str, title: str, fields: dict, rels: dict, history: list, path: Path, line: int = 0, body: str = "", extra: list | None = None) -> dict:
     return {"id": id_, "kind": k["name"], "state": state, "title": title, "fields": fields, "rels": rels,
-            "history": history, "path": path, "line": line, "body": body}
+            "history": history, "path": path, "line": line, "body": body, "extra": extra or []}
 
 
 def inside(rel: str) -> bool:
@@ -3204,11 +3242,14 @@ def parse_dir_entity(k: dict, p: Path) -> dict | None:
         return None
     rels = {r: [x.strip() for x in fm[r].split(",") if x.strip()] for r in k["relations"] if fm.get(r)}
     fields = {f: fm[f] for f in k["fields"] if f in fm}
+    # An undeclared key is a typo the write paths validated against the kind, so it is an error, not data:
+    # it must reach lint (E502) yet must never enter `fields`, or a re-write would re-quote and adopt it.
+    extra = sorted(set(fm) - set(k["fields"]) - set(k["relations"]) - STRUCTURAL_KEYS)
     hist = [ln[2:] for ln in text.partition("\n## History")[2].splitlines() if ln.startswith("- ")]
     pre = text.partition("\n## History")[0]
     m = re.match(r"---\n.*?\n---\n", pre, re.S)
     body = re.sub(r"^\s*# .*\n", "", pre[m.end():] if m else pre, count=1).strip()
-    return _entity(k, fm["id"], fm.get("state", ""), fm.get("title", ""), fields, rels, hist, p, 0, body)
+    return _entity(k, fm["id"], fm.get("state", ""), fm.get("title", ""), fields, rels, hist, p, 0, body, extra)
 
 
 def fold_jsonl(k: dict, p: Path) -> tuple[dict[str, dict], list[str]]:
@@ -3322,6 +3363,8 @@ def lint_kinds(cfg: Cfg) -> list[str]:
             err = field_error(str(spec), e["fields"].get(f))
             if err:
                 out.append(f"E502 {where} {e['id']}.{f} {err}")
+        for f in e.get("extra") or []:
+            out.append(f"E502 {where} {e['id']}.{f} is not a field of kind `{k['name']}`")
         for f in set(e["fields"]) - set(k["fields"]):
             out.append(f"E502 {where} {e['id']}.{f} is not a field of kind `{k['name']}`")
         if k["states"] and e["state"] not in k["states"]:
