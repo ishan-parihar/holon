@@ -156,6 +156,7 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 | `[cadence]` | `probation_days` | 14 | days before a new hire's confirmation goes to their head |
 | `[budget]` | `max_running_per_dept` | 0 (no cap) | runs a department may have in flight; `[budget.dept.<slug>]` overrides |
 | `[notify]` | `command` | "" (off) | run on each heartbeat that finds something new for the Chair; `{message}` is the text (an adapter fills this in, e.g. a chat CLI) |
+| `[notify]` | `dropped_marker` | "" (off) | text the command prints when it had nowhere to deliver. Exit 0 is the contract's proof of delivery, but a command that treats "nothing is configured" as a successful no-op exits 0 having delivered nothing. Name that text here and the heartbeat records a failed send and retries the digest instead of advancing its cursor. |
 | `[events]` | `cooldown_s` | 300 | an event routine (`routine add --on event:<pattern>`) fires at most once per this many seconds; the runtime that saw a matching event calls `holon routine fire` |
 | `[chair]` | `channels` | [] | `<platform>:<user id>` refs whose channel messages are the Chair's (H8); a runtime that fronts a channel may run Chair commands only for one of these — the broker still forbids agents every Chair command |
 | `[budget]` | `max_runs_per_dept_per_day` | 0 (no cap) | runs a department may start in 24 hours; its stages wait on the board beyond it |

@@ -2080,10 +2080,17 @@ class Kernel:
             return None
         message = "Holon needs you:\n" + "\n".join(f"- {line}" for line in lines[:20])
         import shlex
+        dropped = (self.config.get("notify") or {}).get("dropped_marker")
         try:
             p = subprocess.run(command.replace("{message}", shlex.quote(message)), shell=True, capture_output=True,
                                text=True, timeout=60)
-            ok, detail = p.returncode == 0, (p.stderr or p.stdout)[-300:]
+            overlap = (p.stderr or "") + (p.stdout or "")
+            # exit 0 is the only proof of delivery the contract gives the kernel, but it is not
+            # enough on its own: a command that considers "nothing was configured" a successful
+            # no-op exits 0 having delivered nothing. The instance's own `dropped_marker` names
+            # that text. Without this check the cursor advances, `notify: sent` is recorded, the
+            # digest is never retried, and the Chair never learns what the organization needs.
+            ok, detail = p.returncode == 0 and not (dropped and dropped in overlap), overlap[-300:]
         except (OSError, subprocess.TimeoutExpired) as e:
             ok, detail = False, str(e)
         with write_txn(self.wconn):

@@ -145,3 +145,25 @@ class UnitPortability(ColdStart):
         units = self._install()
         for f in sorted(units.glob("*.service")):
             self.assertNotIn(str(ROOT), f.read_text(), f"{f.name} names the installing checkout")
+
+    def test_the_units_are_valid_and_the_timer_survives_a_reboot(self):
+        """`systemctl enable` is what links a timer into `timers.target.wants`, which is the only
+        reason a user unit starts after a reboot. A heartbeat that dies on reboot is not a
+        heartbeat: the instance stops running the moment nobody is logged in, and the failure
+        looks exactly like a healthy one (no journal entry, nothing to read).
+
+        `systemd-analyze verify` proves every unit systemd would accept; the timer's own
+        `[Install]` section is the reboot contract, so it is proved rather than assumed."""
+        import subprocess
+        units = self._install()
+        r = subprocess.run(["systemd-analyze", "verify", "--user", *[str(u) for u in sorted(units.glob("*"))]],
+                           capture_output=True, text=True)
+        self.assertNotIn("Unknown section", r.stdout + r.stderr, r.stdout + r.stderr)
+        # the timer carries the reboot contract
+        timer = (units / "holon-tick.timer").read_text()
+        self.assertIn("WantedBy=timers.target", timer, "without it, a reboot loses the heartbeat")
+        self.assertIn("Persistent=true", timer, "a missed tick while the machine was down runs once on boot")
+        self.assertIn("OnBootSec=2min", timer, "it starts shortly after boot without waiting for a login")
+        # the oneshot must not take its dispatches with it (found on the first real heartbeat)
+        svc = (units / "holon-tick.service").read_text()
+        self.assertIn("KillMode=process", svc, "a spawned dispatch outlives the tick that started it")

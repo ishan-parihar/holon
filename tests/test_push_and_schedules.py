@@ -8,6 +8,7 @@ from holon.core.paths import Home
 from holon.execution.service import Kernel
 from holon.execution.work import TransitionError
 from tests.helpers import JD, KernelCase
+from tests.test_lanes import LaneCase
 
 
 class PushMode(KernelCase):
@@ -390,3 +391,157 @@ class SupervisorProtocol(KernelCase):
         out = self.k.finish_run(p["run"], 1)
         self.assertTrue(out["breach"])
         self.assertEqual(self.k.work.last_execute_output(t["id"])["body"]["outcome"], "partial")
+
+
+class HeartbeatFoundation(KernelCase):
+    """The heartbeat is the kernel running unattended: `holon tick` on a timer. Every invariant
+    below is a way the machine can silently stop doing its job, so each is proved directly.
+
+    Foundation = the tick does not lose work, does not pile work up, and says so when it cannot."""
+
+    def _due(self, cron="* * * * *"):
+        w = self.add("scheduled digest", dept="eng")
+        plan = self.plan(w, writes=[], assignee=self.dev1)
+        self.k.approve(self.k.work.needs(plan["id"])[0], note="as a template", recurring=True)
+        plan_id = self.k.work.needs(plan["id"])[0]
+        s = self.k.schedules.add("recurring", cron, template_id=plan_id)
+        self.k.wconn.execute("UPDATE schedules SET next_run_at='2000-01-01T00:00:00.000000Z' WHERE id=?", (s["id"],))
+        return s
+
+    def test_a_due_schedule_fires_once_and_advances_its_clock(self):
+        s = self._due()
+        fired = self.k.tick()["fired"]
+        self.assertEqual(len(fired), 1, f"one fire per tick: {fired}")
+        row = self.k.schedules.get(s["id"])
+        self.assertTrue(row["enabled"], "a healthy schedule stays enabled")
+        self.assertNotEqual(row["next_run_at"], "2000-01-01T00:00:00.000000Z", "its clock advanced")
+        self.assertEqual(self.k.tick()["fired"], [], "and it does not fire again until due")
+
+    def test_a_failing_schedule_opens_one_incident_and_says_so(self):
+        """A schedule that keeps failing is a broken harness, not slow work: retrying forever is
+        exactly the failure the first real VPS heartbeat hit. `record_outcome` counts the streak and
+        `_incidents` turns it into work the Chair can see."""
+        s = self._due()
+        for _ in range(3):
+            self.k.schedules.record_outcome(s["id"], False)
+        self.assertEqual(self.k.schedules.get(s["id"])["failure_streak"], 3)
+        opened = self.k.tick()["triggered"]
+        incidents = [i for i in opened if "incident" in i]
+        self.assertTrue(incidents, f"an incident is opened: {opened}")
+        title = self.k.work.get(incidents[0]["incident"])["title"]
+        self.assertIn("keeps failing", title)
+        # one incident, not one per tick: the next tick finds it already open
+        self.assertEqual([x for x in self.k.tick()["triggered"] if "incident" in x], [],
+                         "not a second one")
+
+    def test_a_recovering_schedule_resets_its_streak(self):
+        s = self._due()
+        for _ in range(3):
+            self.k.schedules.record_outcome(s["id"], False)
+        self.k.schedules.record_outcome(s["id"], True)
+        self.assertEqual(self.k.schedules.get(s["id"])["failure_streak"], 0,
+                         "a success forgives the streak, so a flapping schedule does not accumulate")
+
+    def test_the_tick_is_idempotent(self):
+        """Two ticks in a row must not double-fire, double-alarm, or double-count: the heartbeat
+        runs every two minutes and cannot know whether the last one finished."""
+        self._due()
+        first, second = self.k.tick(), self.k.tick()
+        self.assertEqual(len(first["fired"]), 1)
+        self.assertEqual(second["fired"], [], "the second tick is a no-op")
+
+    def test_a_disabled_schedule_never_fires(self):
+        """`enabled=0` is an import's landing state (an import is not an approval). A disabled
+        schedule must be inert, not merely overdue."""
+        s = self._due()
+        self.k.wconn.execute("UPDATE schedules SET enabled=0 WHERE id=?", (s["id"],))
+        self.assertEqual(self.k.tick()["fired"], [])
+
+    def test_a_cancelled_template_stops_firing_and_says_disabled(self):
+        w = self.add("scheduled digest", dept="eng")
+        plan = self.plan(w, writes=[], assignee=self.dev1)
+        self.k.approve(self.k.work.needs(plan["id"])[0], note="as a template", recurring=True)
+        plan_id = self.k.work.needs(plan["id"])[0]
+        s = self.k.schedules.add("recurring", "* * * * *", template_id=plan_id)
+        self.k.work.cancel(w["id"], "no longer wanted")
+        self.k.wconn.execute("UPDATE schedules SET next_run_at='2000-01-01T00:00:00.000000Z' WHERE id=?", (s["id"],))
+        fired = self.k.tick()["fired"]
+        self.assertIn("disabled", str(fired), f"the cancel is reported: {fired}")
+
+    def test_the_tick_reports_what_it_swept_without_losing_the_work(self):
+        """A lease that expired is recovered by the sweep and its stage returns to the board, so a
+        body can take it again — never deleted, never silently orphaned (the first VPS wave found
+        two bodies contending for one result file)."""
+        t = self.add(dept="eng", task_class="demo")
+        plan = self.plan(t, writes=[], assignee=self.dev1)
+        self.k.approve(plan["id"])
+        c = self.k.claim("execute", self.dev1)
+        self.k.wconn.execute("UPDATE runs SET lease_until='2000-01-01T00:00:00.000000Z', "
+                             "heartbeat_at='2000-01-01T00:00:00.000000Z' WHERE id=?", (c.run["id"],))
+        swept = self.k.tick()["swept"]
+        self.assertEqual(len(swept), 1, f"the expired lease is recovered: {swept}")
+        self.assertEqual(self.pipeline_of(t)[-1][1], "ready", "the stage is back on the board")
+        self.assertIsNotNone(self.k.claim("execute", self.dev1), "and the work is claimable again")
+
+    def test_the_heartbeat_backs_up_and_reports_it(self):
+        self.k.config["healing"]["backup_every_h"] = 24
+        self.k.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('backup_ts', '2000-01-01T00:00:00.000000Z')")
+        took = [x for x in self.k.tick()["triggered"] if "backup" in x]
+        self.assertEqual(len(took), 1, f"the backup is reported: {took}")
+        self.assertTrue((self.home.root / "backups").is_dir(), "and it exists")
+
+
+class TheChairsInbox(LaneCase):
+    """The Chair's inbox is the only channel from the organization to its owner. A run that found
+    something the Chair must decide, a stage nobody can claim, a red-team breach — all of them are
+    surfaced by `notify()`, which shells `[notify].command` and treats the exit code as the proof
+    of delivery.
+
+    The first live instance ran `operant org holon notify` with no Chair channels configured. That
+    command prints "no [chair] channels configured — the message has nobody to reach" and **exits
+    0**, because it considers "no channels" a successful no-op. The kernel therefore advanced its
+    `notify_seq` cursor past the owed items and recorded `notify: sent`, so the digest was marked
+    delivered, was never retried, and the Chair never heard about a lane breach or an incident.
+    Nothing in the journal says the message went nowhere."""
+
+    def _owe_the_chair(self):
+        w = self.add(risk="low", task_class="c", lane="fast", dept="eng")
+        c = self.k.claim("execute", self.dev1, task_id=w["id"])
+        self.k.submit(c.run["id"], self.exec_env(writes=["/elsewhere/x.txt"], external_effects=["emailed a client"]))
+        return self.k.pending_for_chair(0)
+
+    def test_a_command_that_drops_the_message_and_exits_zero_is_a_failed_send(self):
+        owed = self._owe_the_chair()
+        self.assertTrue(owed, "the Chair is owed an item")
+        self.k.config["notify"] = {"command": "echo 'no [chair] channels configured'",
+                                    "dropped_marker": "no [chair] channels configured"}
+        out = self.k.notify()
+        self.assertFalse(out["sent"], "a command that printed 'nobody to reach' did not deliver")
+        still = self.k.pending_for_chair(int(self.k._setting("notify_seq") or 0))
+        self.assertTrue(still, f"the item stays owed: {still}")
+        ev = self.k.work.conn.execute(
+            "SELECT to_status, note FROM events WHERE entity='notify' ORDER BY seq DESC LIMIT 1").fetchone()
+        self.assertEqual(ev[0], "failed", "and the journal says so")
+
+    def test_a_command_that_exits_zero_having_delivered_is_recorded_as_sent(self):
+        owed = self._owe_the_chair()
+        self.assertTrue(owed, "the Chair is owed an item")
+        self.k.config["notify"] = {"command": "true", "dropped_marker": "no [chair] channels"}
+        out = self.k.notify()
+        self.assertTrue(out["sent"])
+        self.assertFalse(self.k.pending_for_chair(int(self.k._setting("notify_seq") or 0)))
+
+    def test_a_command_that_fails_honestly_leaves_the_items_owed(self):
+        # the pre-existing behaviour must survive the fix: OS-5, a failed send retries
+        owed = self._owe_the_chair()
+        self.assertTrue(owed, "the Chair is owed an item")
+        self.k.config["notify"] = {"command": "false"}
+        self.assertFalse(self.k.notify()["sent"])
+        self.assertTrue(self.k.pending_for_chair(int(self.k._setting("notify_seq") or 0)))
+
+    def test_a_quiet_instance_notifies_nobody_and_moves_nothing_owed(self):
+        self.k.config["notify"] = {"command": "echo 'nothing'"}
+        before = self.k.pending_for_chair(0)
+        self.assertIsNone(self.k.notify(), "nothing owed means nothing is sent")
+        self.assertEqual(self.k.pending_for_chair(0), [])
+        self.assertEqual(before, [], f"nothing was owed before and nothing was sent: {before}")
