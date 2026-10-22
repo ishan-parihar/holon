@@ -279,6 +279,9 @@ class Memory:
             text = b if isinstance(b, str) else json.dumps(b)
             item = self.add_item(work_scope, "open_question", f"Blocker on '{task['title']}': {text}", prov)
             written.append({"id": item["id"], "scope": work_scope, "action": item["action"]})
+        # Artifacts are pinned by the service at submit (`Kernel._pin_artifacts`, A2) — one writer,
+        # at the seam where the run is known; consolidate must not double-pin (the fingerprint
+        # rule would only mask the redundancy by reinforcing).
         if stage != "execute":
             return {"scope": work_scope, "personal_scope": personal, "items": written, "lessons": lessons,
                     "episode": None, "state": None}

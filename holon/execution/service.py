@@ -738,6 +738,7 @@ class Kernel:
                 self.work.set_run_usage(run_id, u.get("tokens_in"), u.get("tokens_out"), u.get("cost"),
                                          u.get("tool_calls"), u.get("duration_s"), u.get("build"))
             out = self.work.submit_execute(run_id, env, exit_code)
+            self._pin_artifacts(work, env, run_id)
             self._hold_direct_skill_writes(work["id"], self.work.output(node["id"]), env)  # whatever the outcome
             v = self.work.latest(work["id"], "verify", "ready")
             if v and defer:
@@ -945,6 +946,30 @@ class Kernel:
         return self.work.skip_verification(
             work["id"], f"verification sampled out: trusted G0 work ({streak} consecutive verified passes; "
                         f"{pol['verify_sample_rate']:.0%} of such results are verified)")
+
+    def _pin_artifacts(self, work: dict, env: dict, run_id: str) -> None:
+        """A2: `artifacts` had no reader at all — the field is defined in the contract and named
+        once in the executor skill, and no line of code consumed it, so a result's durable work
+        rotted in `outputs` where only that result would ever see it, and an artifact pointer that
+        stopped resolving was invisible.
+
+        Each artifact the run actually produced is pinned to memory as an `artifact` item at the
+        *work's* scope (the organization's record, not the employee's), with the run's id in the
+        provenance so a reader can follow it back to the run that wrote it. A later identical
+        artifact reinforces the same item rather than duplicating it, which is memory's own
+        fingerprint rule. A `failure` is skipped: its artifacts are claims about work that did not
+        finish, and pinning them would teach the organization to trust paths that may not exist."""
+        if env.get("outcome") not in ("success", "partial"):
+            return
+        slug = self._dept_slug(work["dept_id"]) if work.get("dept_id") else None
+        scope = f"dept:{slug}" if slug else "org"
+        for a in env.get("artifacts") or []:
+            if not isinstance(a, str) or not a.strip():
+                continue
+            try:
+                self.memory.add_item(scope, "artifact", f"artifact: {a}", f"run:{run_id}")
+            except ValueError:
+                continue
 
     def _check_guard(self, work: dict, env: dict) -> None:
         """K-2: an incident fix's guard names a [checks.class] entry — the Chair authored the

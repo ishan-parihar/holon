@@ -70,6 +70,22 @@ def grade_plan(conn: sqlite3.Connection, task: dict, env: dict, cfg: dict | None
         for pattern in cfg["sensitive_paths"]:
             if fnmatch.fnmatch(str(p), pattern) or fnmatch.fnmatch(w, pattern):
                 bump(3, f"writes a sensitive path ({w} ~ {pattern}): floor G3")
+    # `artifacts` is the durable record a result leaves behind: a pointer outside the
+    # workdir and the reach names something the organization cannot get back, so it raises
+    # the floor exactly as a write does. `writes` had this since the trust boundary was
+    # built; `artifacts` had no reader at all (A6), so a result claiming a durable artifact
+    # beyond its department graded as routine.
+    for a in env.get("artifacts") or []:
+        if not isinstance(a, str) or "://" in a:
+            continue
+        p = Path(a).expanduser()
+        if not p.is_absolute():
+            continue
+        if any(p.resolve().is_relative_to(r) for r in read_roots):
+            bump(3, f"leaves an artifact in a pooled unit ({a}: work for its owner — msg request): floor G3")
+        inside = any(p.resolve().is_relative_to(r) for r in ([workdir] if workdir else []) + roots)
+        if not inside:
+            bump(2 if not roots else 3, f"leaves an artifact outside the task workdir ({a}): floor G2")
     if task.get("task_class") and verified_in_class(conn, task["task_class"]) < int(cfg["novelty_min_verified"]):
         bump(2, f"task class '{task['task_class']}' has fewer than {cfg['novelty_min_verified']} verified "
                 "successes (novel work): floor G2")

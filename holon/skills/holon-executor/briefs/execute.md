@@ -26,7 +26,7 @@ Follow the `holon-employee` skill's turn-budget section. The exact envelope shap
 {"outcome": "success | partial | failure | noop",
  "summary": "one paragraph a busy reader can trust",
  "documentation": "markdown: what was done and how, where every artifact is, deviations, how to verify it, what is left",
- "artifacts": ["paths, URLs, commit ids"],
+ "artifacts": ["absolute paths inside the workdir or a scope root — see Placement"],
  "learnings": ["lessons for next time", {"content": "...", "kind": "fact|lesson|constraint", "confidence": "low|medium|high"}],
  "decisions": ["decisions future work must respect"],
  "blockers": ["what stopped or limited you"],
@@ -39,3 +39,11 @@ When the approved plan lists `skill:<skill>/<file>` in its writes, put the new f
 instead of editing skill files: the kernel writes it into your department's layer once the work is
 verified. `documentation` is the result the Chair reads. Hand it in per the employee skill:
 `holon_submit`, or the JSON as your final message.
+
+## Placement
+
+A durable thing lives in **the workdir or a declared scope root**. Nothing else: not the instance
+root, not a directory you improvised, not somewhere outside your reach. `artifacts` names where
+every durable thing ended up — absolute paths, no URLs, no fragments — because the kernel grades
+them and pins them to memory as pointers the organization must still be able to follow. A path
+outside the workdir and the reach raises the grade of your work.

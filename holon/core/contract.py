@@ -233,6 +233,26 @@ for _variants in SPECS.values():
                 _LIST_FIELDS.setdefault(_name, _f)
 
 
+def _artifact_paths(env: "dict") -> "list[str]":
+    """`artifacts` is the permanent record of what a result left behind, and it had no reader:
+    the field accepted prose, URLs and typos, so a pointer rotted in `outputs` with nothing to
+    notice. An entry is an absolute path or a workdir-relative fragment, the same shape as a
+    `writes` entry — a URL is not a thing the organization can reach, and an empty string is
+    a pointer to nothing."""
+    problems: list[str] = []
+    for i, a in enumerate(env.get("artifacts") or []):
+        if not isinstance(a, str) or not a.strip():
+            problems.append(f"artifacts[{i}] must be a non-empty path")
+            continue
+        if "://" in a:
+            problems.append(f"artifacts[{i}] must be a path, not a URL: {a}")
+        elif "//" in a:
+            problems.append(f"artifacts[{i}] has an empty path segment: {a}")
+        elif len(a.splitlines()) > 1:
+            problems.append(f"artifacts[{i}] must be one path")
+    return problems
+
+
 def validate(stage: str, env: Any) -> dict:
     if stage not in SPECS:
         raise EnvelopeError([f"unknown stage {stage!r}"])
@@ -246,6 +266,7 @@ def validate(stage: str, env: Any) -> dict:
     env = _repair_annotations(env)
     problems: list[str] = []
     _fields("", env, {**variants[key], **COMMON}, problems)
+    problems.extend(_artifact_paths(env))
     if problems:
         raise EnvelopeError(problems)
     return env
