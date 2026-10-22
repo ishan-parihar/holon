@@ -62,7 +62,11 @@ def holon(env: dict, *args: str, check: bool = True) -> subprocess.CompletedProc
 def unit(name: str, home: Path, extra_env: dict) -> str:
     text = (ROOT / ("adapters/notion" if name == "holon-notion.service" else "adapters/systemd") / name).read_text()
     text = text.replace("Environment=HOLON_HOME=%h/holon", f"Environment=HOLON_HOME={home}")
-    text = text.replace("<holon-checkout>", str(ROOT)).replace("/usr/bin/env holon ", f"{ROOT}/bin/holon ")
+    text = text.replace("<holon-checkout>", str(ROOT))
+    # the launcher stays on PATH: pinning this checkout's own bin/holon into the unit means a
+    # machine cannot move or delete the tree it installed from without every tick dying with
+    # "file not found", and nothing says why. The template's `/usr/bin/env holon` resolves the
+    # launcher through the PATH the unit already sets, which survives a move.
     env_lines = "".join(f"Environment={k}={v}\n" for k, v in extra_env.items())
     return text.replace("[Service]\n", "[Service]\n" + env_lines, 1)
 

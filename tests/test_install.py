@@ -66,7 +66,7 @@ class ColdStart(unittest.TestCase):
             self.assertIn(line, tunnel)
         self.assertIn(str(self.tmp / ".cloudflared/holon-notion.yml"), units["cloudflared-holon-notion.service"])
         self.assertIn(f"HOLON_HOME={home}", units["holon-notion.service"])
-        self.assertIn(f"{ROOT}/bin/holon tick", units["holon-tick.service"])
+        self.assertIn("ExecStart=/usr/bin/env holon tick", units["holon-tick.service"])
         path = __import__("json").loads((home / "adapters/notion/notion.json").read_text())["webhook_path"]
         self.assertIn(f"https://hooks.example.com{path}", first, "the URL to subscribe in Notion")
         requests = self.fake.requests
@@ -114,3 +114,34 @@ class LauncherOwnership(ColdStart):
                               "--bin-dir", str(b), "--repoint"], env=self.env, text=True, capture_output=True)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertEqual(os.readlink(b / "holon"), str(ROOT / "bin/holon"))
+
+
+class UnitPortability(ColdStart):
+    """Cold start on a new machine: the units the installer writes name the checkout they were
+    built from, so a machine that installed from a clone cannot move or delete it — every tick
+    dies with "file not found" and the organization stops running with no message why."""
+
+    def _install(self, extra=()):
+        units = self.tmp / "units"
+        out = subprocess.run([sys.executable, str(ROOT / "install.py"), "--home", str(self.tmp / "holon"),
+                              "--bin-dir", str(self.tmp / "bin"), "--systemd", "--systemd-dir", str(units),
+                              "--no-start", *extra], env=self.env, text=True, capture_output=True)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        return units
+
+    def test_a_unit_survives_the_checkout_it_was_installed_from_moving(self):
+        units = self._install()
+        tick = (units / "holon-tick.service").read_text()
+        self.assertIn("ExecStart=/usr/bin/env holon tick", tick,
+                      "the tick resolves the launcher through the unit's PATH, not through the tree "
+                      "that installed it")
+        # the unit's own PATH carries the per-user bin dirs the launcher lands in
+        self.assertIn("%h/bin", tick)
+        self.assertNotIn(str(ROOT), tick,
+                         "no absolute path into this checkout: a moved or deleted worktree must not "
+                         "stop the heartbeat")
+
+    def test_every_unit_the_installer_writes_is_portable(self):
+        units = self._install()
+        for f in sorted(units.glob("*.service")):
+            self.assertNotIn(str(ROOT), f.read_text(), f"{f.name} names the installing checkout")
