@@ -156,14 +156,28 @@ Doing it out of order is what produced the error above.
 
 ### Gaps isolation does not close (measured)
 
-- **`skills.export_stale`** — 2 exported skill files differ from the library, because I edited the
-  executor brief. `holon skill export` clears it.
-- **`workdir.missing` × 2 and `artifacts.dangling` × 3** — the live record still points at B-side
-  scratchpads from the retired harness era. Isolation changes nothing here; those pointers are
-  already rotted.
-- **B-side workdirs are inside the agent's reach?** No — but note that `writes` is the
-  pioneer-qf scope only, so nothing in `/var/tmp/ishanp-agentic/…` is writable by an agent either.
-  Those dangling pointers are a record-keeping problem, now visible because of the earlier work.
+**Where the warnings actually are, counted from the live doctor after the export:**
+
+- **`isolation.off`** — expected: `agent_user` is not set, so agents run as the kernel's user.
+  This is the one the root step closes, and it is the highest-consequence warning in the list.
+- **`workdir.missing` × 2 and `artifacts.dangling` × 7** — the live record points at B-side
+  scratchpads under `/var/tmp/ishanp-agentic/claude-1000/…-hermes-organism/…/scratchpad/…` that
+  the retired harness era left behind. Isolation changes nothing here: `[isolation] writes` is the
+  pioneer-qf scope only, so those paths are outside the agent's reach either way. These are a
+  record-keeping problem — restore the files, or supersede the results — now visible because the
+  doctor checks for them.
+
+**Correction to an earlier claim of mine:** I first reported `artifacts.dangling` as ×3. The
+live doctor counts **7** dangling pointers across 5 works — one `Refine playbook:
+routine-notes-digest` result names 2 unresolvable paths (a relative directory and a relative
+checksum pair), four absolute paths point into the retired harness era's scratchpad. My earlier
+count was wrong; the check is doing its job.
+
+**`skills.export_stale` is now cleared** — it needed `holon skill export` against *both* export
+targets (`adapters/jcode/home/skills` and `adapters/operant/home/skills`), because the live
+instance registers an export per adapter home. The live instance went from 11 warnings to 10 the
+moment the stale copies were refreshed; only the `isolation.off` warning and the B-side pointers
+remain.
 
 ---
 
