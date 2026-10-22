@@ -48,6 +48,22 @@ def plan(k) -> dict:
             gold_run = gold.get("run_id")
             keep = (KEEP_ALWAYS if run["stage"] == "execute" and (judged or gold_run == run["run_id"])
                     else ())
+            # A7 (2026-10-22 audit): a pinned artifact may point into this run's directory
+            # (a body that leaves its evidence there), and the pin is the organization's
+            # promise that the pointer still resolves — doctor reports a dangling one. A
+            # collected dir would break that promise silently, so memory's artifact items
+            # are consulted before any dir is collected: a run whose memory holds a pointer
+            # into it keeps the pointed-at files. memory.db is read through the kernel's own
+            # connection (the one writer's API, law 3).
+            pinned = k.mconn.execute(
+                "SELECT content FROM items WHERE kind='artifact' AND superseded_by IS NULL").fetchall()
+            d_resolved = d.resolve()
+            pointed = [Path(row[0][10:]).expanduser().resolve() for row in pinned
+                       if row[0].startswith("artifact: ")]
+            into = [str(p.relative_to(d_resolved)) for p in pointed
+                    if p.is_absolute() and p.is_relative_to(d_resolved)]
+            if into:
+                keep = tuple(dict.fromkeys((*(keep or ()), "result.json", *into)))
             out["run_dirs"].append({"run": run["run_id"], "work": run["work_id"], "dir": str(d),
                                     "keep": list(keep)})
     if msgs_days > 0:

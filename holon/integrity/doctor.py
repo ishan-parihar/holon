@@ -250,6 +250,56 @@ def run(k) -> list[dict]:
                 f"{r[1]} stage {r[0]} names workdir {r[2]!r}, which does not exist: the body will run in "
                 "its run directory instead, with none of the inputs the plan expects")
 
+    # A3 (2026-10-22 audit): a result's `artifacts` are the permanent record of what it left
+    # behind, and until now nothing re-read them — two of six live pointers had already stopped
+    # resolving, rotted in `outputs` where only a verifier's glance ever saw them. Re-resolve
+    # every execute output's artifacts; a path that no longer exists is a warning naming the
+    # work and the pointer. A relative artifact is resolved against its work's workdir (the
+    # contract's rule: workdir-relative), never against this process's cwd.
+    for r in q("SELECT w.id AS work_id, w.title, w.workdir, o.body FROM outputs o "
+               "JOIN tasks ex ON ex.id = o.task_id JOIN tasks w ON w.id = ex.parent_id "
+               "WHERE o.kind='execute' AND o.body LIKE '%artifacts%'"):
+        try:
+            arts = (json.loads(r["body"]) or {}).get("artifacts") or []
+        except (json.JSONDecodeError, TypeError):
+            continue
+        for a in arts:
+            if not isinstance(a, str) or not a.strip() or "://" in a:
+                continue
+            p = Path(a).expanduser()
+            if not p.is_absolute() and (r["workdir"] or "").strip():
+                p = Path(r["workdir"]).expanduser() / p
+            if not p.exists():
+                add("warning", "artifacts.dangling",
+                    f"{r['title']} ({r['work_id']}) names artifact {a!r}, which does not exist — the "
+                    "organization's record points at something it can no longer reach (restore it, or "
+                    "supersede the result)")
+
+    # A4 (2026-10-22 audit): placement was fenced nowhere, and a directory grew at the
+    # instance root because a body put it there (five tasks' workdir on a live instance,
+    # named by no config and no kernel vocabulary). A root directory is legitimate when the
+    # kernel owns it (its own vocabulary), when a work names it as its workdir, or when a
+    # declared [scope] root covers it; anything else is a stray, and the fix is to declare
+    # it or remove it — never to let it keep growing unnamed.
+    _vocab = {"config", "execution", "capabilities", "bylaws", "skills", "kb", "genome",
+              "adapters", "backups", "ventures", "governance"}
+    used = {Path(r[0]).resolve().name for r in q("SELECT workdir FROM tasks WHERE workdir IS NOT NULL "
+                                                 "AND workdir<>''") if Path(r[0]).parent.resolve()
+            == k.home.root.resolve()}
+    covered = [Path(x).expanduser().resolve() for group in (k.config.get("scope", {}).get("roots") or [],
+               *(d.get("roots") or [] for d in (k.config.get("scope", {}).get("dept") or {}).values()))
+               for x in group]
+    if k.home.root.is_dir():
+        for d in sorted(k.home.root.iterdir()):
+            if not d.is_dir() or d.name in _vocab or d.name in used:
+                continue
+            if any(d.resolve().is_relative_to(c) or c.is_relative_to(d.resolve()) for c in covered):
+                continue
+            add("warning", "scope.stray",
+                f"{d.name}/ sits at the instance root named by nothing: no work's workdir, no [scope] "
+                "root, no kernel vocabulary. Declare it (a [scope] root, or a work's workdir) or "
+                "remove it — an undeclared directory is where placement discipline goes to die")
+
     # separation of duties, in history
     for r in q("SELECT a.id, a.decided_by FROM tasks a JOIN task_needs n ON n.task_id=a.id JOIN outputs o "
                "ON o.task_id=n.needs_id WHERE a.stage='approve' AND a.decided_by IS NOT NULL"):
