@@ -1,5 +1,7 @@
 """Push mode through a driver (fake harness), concurrency, schedules, recurring plans, hiring."""
 
+import contextlib
+import io
 import json
 import multiprocessing as mp
 import unittest
@@ -7,6 +9,8 @@ import unittest
 from holon.core.paths import Home
 from holon.execution.service import Kernel
 from holon.execution.work import TransitionError
+from holon import cli
+from holon.cli import FORBIDDEN
 from tests.helpers import JD, KernelCase
 from tests.test_lanes import LaneCase
 
@@ -545,3 +549,212 @@ class TheChairsInbox(LaneCase):
         self.assertIsNone(self.k.notify(), "nothing owed means nothing is sent")
         self.assertEqual(self.k.pending_for_chair(0), [])
         self.assertEqual(before, [], f"nothing was owed before and nothing was sent: {before}")
+
+
+class TheChairsInboxReachesIt(LaneCase):
+    """The Chair's digest is the only thing the organization can say to its owner, and it read
+    `events JOIN tasks` and nothing else — so a message was invisible to it. An employee who
+    needed a key, or who found the work blocked, posted into `messages` and the Chair never
+    learned it: `pending_for_chair(0)` came back empty with the message sitting unread in the
+    table, and nothing anywhere reported the gap.
+
+    A question to the Chair is now a digest line, and a delivered message stops being new by the
+    same cursor discipline `dropped_marker` already relies on — not a second one."""
+
+    def _post(self, to_ref, body, kind="question"):
+        return self.k.work.post_message(f"emp:{self.dev1}", to_ref, body, kind=kind)
+
+    def test_an_employees_question_to_the_chair_reaches_the_digest(self):
+        self._post("chair", "the build needs a key, which one?")
+        lines = self.k.pending_for_chair(0)
+        self.assertTrue(any("key" in l for l in lines), f"the question is owed to the Chair: {lines}")
+        self.assertTrue(any(f"emp:{self.dev1}" in l for l in lines),
+                        "and it names who asked, not just what")
+
+    def test_a_request_for_work_the_chair_must_decide_reaches_the_digest(self):
+        self._post("chair", "please approve reaching outside the org", kind="request")
+        self.assertTrue(self.k.pending_for_chair(0), "a request is owed to the Chair")
+
+    def test_a_message_to_a_colleague_is_not_the_chairs_business(self):
+        self._post(f"emp:{self.dev2}", "can you look at this?", kind="dm")
+        self.assertEqual(self.k.pending_for_chair(0), [], "a colleague's dm is not a digest line")
+
+    def test_a_dm_to_the_chair_is_not_work_the_kernel_chases(self):
+        """A `dm` addressed to the Chair is a human writing to a human. Chasing it would put a
+        person's aside in the same digest as a stage nobody can claim, which is how a digest
+        stops being opened. `question` and `request` ask something of the Chair; a `dm` does not."""
+        self._post("chair", "thanks, that was useful", kind="dm")
+        self.assertEqual(self.k.pending_for_chair(0), [], "a dm to the Chair is not owed")
+        self._post("chair", "but which key?", kind="question")
+        self.assertTrue(self.k.pending_for_chair(0), "a question still is")
+
+    def test_a_delivered_message_stops_being_new(self):
+        self._post("chair", "which key?")
+        before = self.k.pending_for_chair(0)
+        self.assertTrue(before, "the question is owed")
+        self.k.config["notify"] = {"command": "true", "dropped_marker": "no channels"}
+        self.assertTrue(self.k.notify()["sent"], "the digest was sent")
+        self.assertFalse(self.k.pending_for_chair(int(self.k._setting("notify_seq") or 0)),
+                         "a delivered message is no longer new")
+
+    def test_an_undelivered_message_stays_owed(self):
+        self._post("chair", "which key?")
+        self.assertTrue(self.k.pending_for_chair(0))
+        self.k.config["notify"] = {"command": "false"}
+        self.assertFalse(self.k.notify()["sent"])
+        self.assertTrue(self.k.pending_for_chair(int(self.k._setting("notify_seq") or 0)),
+                        "a failed send leaves the question owed")
+
+
+class TheChairsInboxAnswers(LaneCase):
+    """A digest the Chair cannot answer is a broadcast. `holon msg` offered send, inbox and
+    request and no reply, and `thread_id` was a column no path in the kernel ever wrote — so a
+    conversation was not representable: every message opened its own thread, and the answer to a
+    question was indistinguishable from a new remark about something else.
+
+    `msg reply` posts into the thread it answers and `msg thread` reads that thread in order.
+    No schema change: the column exists, and this is its first caller."""
+
+    def test_a_reply_joins_the_thread_it_answers(self):
+        ask = self.k.work.post_message(f"emp:{self.dev1}", "chair", "which key?", kind="question")
+        reply = self.k.work.post_message("chair", f"emp:{self.dev1}", "the staging key",
+                                          kind="answer", thread_id=ask)
+        rows = self.k.work.messages(to_refs=["chair"], limit=10)
+        by_id = {m["id"]: m for m in rows}
+        self.assertEqual(by_id[ask]["thread_id"], by_id[reply]["thread_id"],
+                         "the answer reads in the thread it answers")
+
+    def test_an_unrelated_message_starts_its_own_thread(self):
+        a = self.k.work.post_message(f"emp:{self.dev1}", "chair", "first", kind="question")
+        b = self.k.work.post_message(f"emp:{self.dev2}", "chair", "unrelated", kind="question")
+        self.assertNotEqual(self.k.work.messages(to_refs=["chair"], limit=10)[0]["thread_id"],
+                            self.k.work.messages(to_refs=["chair"], limit=10)[1]["thread_id"],
+                            "two questions are two threads")
+
+    def test_a_thread_reads_as_a_conversation(self):
+        ask = self.k.work.post_message(f"emp:{self.dev1}", "chair", "which key?", kind="question")
+        self.k.work.post_message("chair", f"emp:{self.dev1}", "the staging key",
+                                 kind="answer", thread_id=ask)
+        thread = self.k.work.thread(ask)
+        self.assertEqual([m["body"] for m in thread], ["which key?", "the staging key"],
+                         "the thread is the question and its answer, in order")
+
+    def test_a_question_the_chair_answered_is_no_longer_owed(self):
+        """The digest owes a question until the Chair answers it; a reply acks it, so the same
+        line is not re-sent on every heartbeat until something else advances the cursor."""
+        ask = self.k.work.post_message(f"emp:{self.dev1}", "chair", "which key?", kind="question")
+        self.assertTrue(self.k.pending_for_chair(0), "the question is owed")
+        self.k.work.reply(ask, "chair", "the staging key")
+        self.assertFalse(self.k.pending_for_chair(0), "answered, so nothing is owed")
+        thread = self.k.work.thread(ask)
+        self.assertEqual([m["body"] for m in thread], ["which key?", "the staging key"],
+                         "the answer reads inside the question's thread")
+
+
+class EveryMessageNamesWhoSpoke(LaneCase):
+    """The channel's only real asset is that a message's sender is the kernel's assertion, not the
+    body's claim. `cmd_msg_send` passes `_sender(args, k)`, which resolves the authenticated
+    principal, and `--as <id>` is refused when it disagrees with it.
+
+    That is the law this class asserts rather than assumes: if a body could claim a colleague's
+    identity, the digest would name the wrong employee and the Chair would answer the wrong one.
+    The adapter is told to read `messages.sender` and `messages.task_id` — the two links that
+    exist — rather than a platform-side identity."""
+
+    def test_a_message_carries_the_sender_the_kernel_resolved(self):
+        ask = self.k.work.post_message(f"emp:{self.dev1}", "chair", "which key?", kind="question")
+        m = self.k.work.messages(to_refs=["chair"], limit=1)[0]
+        self.assertEqual(m["sender"], f"emp:{self.dev1}", "the sender is the authenticated employee")
+        self.assertEqual(m["id"], ask)
+
+    def test_a_reply_names_its_own_sender_not_the_one_answered(self):
+        ask = self.k.work.post_message(f"emp:{self.dev1}", "chair", "which key?", kind="question")
+        self.k.work.reply(ask, "chair", "the staging key")
+        thread = self.k.work.thread(ask)
+        self.assertEqual(thread[0]["sender"], f"emp:{self.dev1}", "who asked")
+        self.assertEqual(thread[1]["sender"], "chair", "who answered — the kernel's assertion")
+
+    def test_a_message_belongs_to_the_work_it_is_about(self):
+        w = self.add("Build report", dept="eng", task_class="ops", risk="low")
+        mid = self.k.work.post_message(f"emp:{self.dev1}", "chair", "this task is blocked",
+                                       kind="question", task_id=w["id"])
+        got = [m for m in self.k.work.messages(to_refs=["chair"], limit=10) if m["id"] == mid][0]
+        self.assertEqual(got["task_id"], w["id"], "the message names the work it is about")
+
+    def test_a_reply_carries_the_answered_messages_task(self):
+        w = self.add("Build report", dept="eng", task_class="ops", risk="low")
+        ask = self.k.work.post_message(f"emp:{self.dev1}", "chair", "blocked", kind="question",
+                                       task_id=w["id"])
+        self.k.work.reply(ask, "chair", "do it this way")
+        thread = self.k.work.thread(ask)
+        self.assertEqual([m["task_id"] for m in thread], [w["id"], w["id"]],
+                         "the answer stays attached to the work the question was about")
+
+    def test_the_chair_reaches_a_reply_and_an_employee_reaches_one(self):
+        """`msg reply` is the one command both directions need: an employee answering a colleague,
+        and the Chair answering a body. Actored `employee`, it reaches an MCP-mounted body through
+        the derived fence, and the Chair reaches it because the Chair may do anything."""
+        from holon.cli import REGISTRY
+        reply = [c for c in REGISTRY if c.path == ("msg", "reply")][0]
+        self.assertEqual(reply.actor, "employee")
+        from holon.mcp import agent_commands
+        self.assertIn(("msg", "reply"), agent_commands(),
+                      "a mounted body may answer a colleague")
+
+
+class TheChannelIsReachableFromTheCli(LaneCase):
+    """W1 and W2 are only real if the commands that reach them exist. `msg send` had no way to
+    name a `question` or a `request` — it posted a `dm`, the one kind the digest does not chase —
+    so the whole employee → Chair path was unreachable from the CLI while the kernel supported
+    it. And a Chair that named itself with `--as chair` produced `emp:chair`, a sender no employee
+    key resolves to, which every later reader would treat as a body.
+
+    Measured on a real instance: ask with `--kind question`, answer without `--as`, and the
+    conversation lands as `emp:<id> → chair` [question, acked] and `chair → emp:<id>` [answer]."""
+
+    def _cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cli.main(["--home", str(self.home.root), "--json", *argv])
+        text = out.getvalue().strip()
+        return rc, (json.loads(text) if text else None), err.getvalue()
+
+    def test_msg_send_can_name_the_kinds_the_digest_chases(self):
+        from holon.cli import REGISTRY
+        send = [c for c in REGISTRY if c.path == ("msg", "send")][0]
+        kinds = next((dict(kw).get("choices") for a, kw in send.args if "--kind" in a), None)
+        self.assertIn("question", kinds or [], "a question is postable from the CLI")
+        self.assertIn("request", kinds or [], "so is a request")
+        # and it posts as that kind, not merely offers it: the whole employee → Chair path was
+        # unreachable while `--kind` was absent, because `dm` is the one kind the digest does
+        # not chase.
+        rc, out, _ = self._cli("msg", "send", "chair", "which key?", "--kind", "question",
+                              "--as", "emp_emp_x", "--literal")
+        self.assertEqual(rc, 0, out)
+        row = self.k.work.messages(to_refs=["chair"], limit=1)[0]
+        self.assertEqual(row["kind"], "question", f"it posted as a question: {row['kind']}")
+        self.assertTrue(self.k.pending_for_chair(0), "and the digest owes it")
+
+    def test_a_reply_goes_back_to_whoever_asked(self):
+        """The reply's recipient is the answered message's *sender*, not its recipient: an
+        employee asking the Chair is answered to `emp:<id>`, and a body asking a colleague is
+        answered back to that colleague, so the conversation is reachable from either inbox."""
+        rc, ask, _ = self._cli("msg", "send", "chair", "which key?", "--kind", "question",
+                                "--as", "emp_emp_x", "--literal")
+        self.assertEqual(rc, 0, ask)
+        rc, reply, _ = self._cli("msg", "reply", ask["id"], "the staging key", "--literal")
+        self.assertEqual(rc, 0, reply)
+        thread = self.k.work.thread(ask["id"])
+        self.assertEqual([m["sender"] for m in thread], ["emp:emp_emp_x", "chair"],
+                         "the thread names both parties the way the kernel resolved them")
+        self.assertEqual([m["to_ref"] for m in thread], ["chair", "emp:emp_emp_x"],
+                         "the answer goes back to whoever asked")
+
+    def test_the_chair_naming_itself_as_an_employee_is_refused(self):
+        """`--as chair` from the Chair is not an employee id: it produced `emp:chair`, which no
+        employee key resolves to and which every later reader would treat as a body."""
+        rc, ask, _ = self._cli("msg", "send", "emp:emp_x", "which key?", "--kind", "question", "--literal")
+        self.assertEqual(rc, 0, ask)
+        rc, _, err = self._cli("msg", "reply", ask["id"], "x", "--as", "chair", "--literal")
+        self.assertEqual(rc, FORBIDDEN, "the Chair naming itself as an employee is refused")
+        self.assertIn("not an employee", err)

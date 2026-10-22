@@ -1080,10 +1080,44 @@ class Work:
             " VALUES (?,?,?,?,?,?,?,?,?)", (mid, now(), sender, to_ref, kind, task_id, thread_id or mid, body, ack_required))
         return mid
 
+    def reply(self, message_id: str, sender: str, body: str, kind: str = "answer",
+               ack_required: int = 0) -> str:
+        """Answer a message, in the thread it belongs to.
+
+        The reply goes to **whoever asked** — the answered message's sender, not its recipient —
+        so a Chair answering a body writes to `emp:<id>` and an employee answering a colleague
+        writes back to them, and the whole conversation is reachable through either party's inbox.
+        The answered message also stops being owed to the Chair: a question that stays
+        `acked_at IS NULL` after it has been answered is re-sent on every heartbeat until
+        something else advances the cursor."""
+        with write_txn(self.conn):
+            asked = self.conn.execute("SELECT sender, to_ref, thread_id, task_id FROM messages WHERE id=?",
+                                      (message_id,)).fetchone()
+            if asked is None:
+                raise ValueError(f"no message {message_id}")
+            mid = self._message(sender, body, asked[0], kind, asked[3], asked[2], ack_required)
+            self.conn.execute("UPDATE messages SET acked_at=? WHERE id=? AND acked_at IS NULL",
+                              (now(), message_id))
+            return mid
+
     def post_message(self, sender: str, to_ref: str, body: str, kind: str = "dm", task_id: str | None = None,
                      thread_id: str | None = None, ack_required: int = 0) -> str:
         with write_txn(self.conn):
             return self._message(sender, body, to_ref, kind, task_id, thread_id, ack_required)
+
+    def thread(self, message_id: str) -> list[dict]:
+        """The conversation a message belongs to, oldest first.
+
+        `_message` writes `thread_id or mid`, so a message that starts a conversation carries its
+        own id as its thread. That made `thread_id` a column nothing read and no path wrote: a
+        reply landed in a fresh thread and the answer to a question was indistinguishable from a
+        new remark about something else. `msg reply` now passes the answered message's thread, and
+        this renders what that bought."""
+        t = self.conn.execute("SELECT thread_id FROM messages WHERE id=?", (message_id,)).fetchone()
+        if t is None:
+            return []
+        return [dict(r) for r in self.conn.execute(
+            "SELECT * FROM messages WHERE thread_id=? ORDER BY ts, rowid", (t[0],)).fetchall()]
 
     def messages(self, task_id: str | None = None, to_refs: list[str] | None = None, kind: str | None = None,
                  unacked: bool = False, limit: int = 50) -> list[dict]:

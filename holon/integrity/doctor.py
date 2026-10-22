@@ -15,6 +15,7 @@ from holon.cli import _distribution_root   # the same rule `holon init` records,
 from holon.core import vocab
 from holon.core.db import connect, event_hash, now
 from holon.execution import autonomy
+import time
 
 # the strategy seam's versions this Holon reads (CONTRACT §9a); a store declaring another is
 # reported, not guessed at
@@ -282,7 +283,7 @@ def run(k) -> list[dict]:
     # declared [scope] root covers it; anything else is a stray, and the fix is to declare
     # it or remove it — never to let it keep growing unnamed.
     _vocab = {"config", "execution", "capabilities", "bylaws", "skills", "kb", "genome",
-              "adapters", "backups", "ventures", "governance"}
+              "adapters", "backups", "ventures", "governance", ".clock"}
     used = {Path(r[0]).resolve().name for r in q("SELECT workdir FROM tasks WHERE workdir IS NOT NULL "
                                                  "AND workdir<>''") if Path(r[0]).parent.resolve()
             == k.home.root.resolve()}
@@ -325,6 +326,27 @@ def run(k) -> list[dict]:
     n = w.execute("SELECT count(*) FROM runs WHERE status='running' AND lease_until < ?", (now(),)).fetchone()[0]
     if n:
         add("warning", "runs.expired", f"{n} runs past their lease: the heartbeat (`holon tick`) is not running")
+
+    # the heartbeat's liveness stamp (G3): the clock organ (the gateway, or the kernel's
+    # own timer) runs `holon tick` every 2 minutes and stamps .clock/last_tick with the unix
+    # seconds of the last successful tick. Three cadences without a word (6+ minutes) means
+    # the heartbeat is dead — schedules stop firing, leases stop renewing, held results are
+    # never handed in — and nothing else says so. An absent stamp on a young instance stays
+    # silent (no tick has run yet); a stale one is the warning, and a fresh one silences it.
+    stamp = k.home.root / ".clock" / "last_tick"
+    if stamp.exists():
+        try:
+            age_min = (time.time() - int(stamp.read_text().strip())) / 60
+            if age_min > 6:
+                add("warning", "heartbeat.stale",
+                    f"the heartbeat's last tick stamp (.clock/last_tick) is {int(age_min)} minutes old: the "
+                    "clock (`holon tick` every 2 minutes — the systemd timer or the gateway's clock organ) has "
+                    "stopped, so due routines never fire and expired leases never renew (restart it, and see the "
+                    "tick's errors in the journal / the gateway's log)")
+        except (ValueError, OSError):
+            add("warning", "heartbeat.stale",
+                "the heartbeat's tick stamp (.clock/last_tick) is unreadable: it should hold one integer, "
+                "the unix seconds of the last successful tick")
 
     # the audit trail
     prev = ""

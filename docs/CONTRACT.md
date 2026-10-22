@@ -8,6 +8,7 @@
 - [4. Leases](#4-leases)
 - [5. Staleness](#5-staleness)
 - [6. Identity](#6-identity)
+- [6a. Messages](#6a-messages)
 - [7. Adapters](#7-adapters)
 - [8. Native tools (MCP)](#8-native-tools-mcp)
 - [9. The read API (apiversion 4)](#9-the-read-api-apiversion-4)
@@ -153,6 +154,14 @@ is submitted and again when an executor claims the work; if they changed, the ex
 cancelled and a fresh plan stage queued. A retry after a partial execution therefore usually
 replans; that is deliberate, because the findings changed.
 
+**The heartbeat's liveness stamp.** Whatever runs the heartbeat — the systemd timer, or a
+harness that embeds it (the operant gateway's clock organ) — a successful `holon tick` writes
+the unix seconds of that tick to `<home>/.clock/last_tick` (one integer, best-effort: a tick
+that cannot write it still did its work). Doctor reads the stamp: silent when fresh, a
+`heartbeat.stale` warning after three cadences without a word (6+ minutes at the 2-minute
+cadence), because a dead heartbeat means due routines never fire, leases never renew and held
+results are never handed in — and no other check sees that.
+
 ## 6. Identity
 
 The CLI authenticates every call. A run token (`HOLON_RUN_TOKEN`, minted per claim) lets an
@@ -165,6 +174,26 @@ agents run as their own Unix user and reach the organization through the broker,
 only run tokens and employee keys and only the commands an employee needs (`holon mcp`'s tools,
 `submit`, `whoami`, `help`, `task list`, `plan queue`). `holon help --json` lists the actor class
 each command requires.
+
+## 6a. Messages
+
+A message is the kernel's record of one thing an actor said to another: `messages` carries
+the sender, the recipient, the kind (`dm, channel, request, question, answer, proposal`), the
+work it is about, and the thread it belongs to. The sender is **the kernel's assertion, never
+the body's claim**: `msg send` and `msg reply` resolve the authenticated principal, and `--as
+<id>` is refused when it disagrees with it. A runtime that renders messages must read
+`messages.sender` and `messages.task_id` — the two links that exist — and must not re-derive
+identity from its own platform-side handle.
+
+`holon msg send`, `msg inbox` and `msg request` are the primitives; `msg reply <message-id>`
+answers in the thread it answers and acks what it answered; `msg thread <message-id>` reads a
+conversation. `msg reply` and `msg thread` are actored `employee`, so a mounted body reaches
+them through the derived MCP fence, and the Chair reaches them because the Chair may do
+anything.
+
+Unacked `question` and `request` messages addressed to `chair` fold into the Chair's digest
+(`pending_for_chair`) and are acked when the digest is actually delivered. A `dm` to the Chair is
+a human writing to a human and is not chased.
 
 ## 7. Adapters
 

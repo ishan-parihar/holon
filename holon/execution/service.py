@@ -1819,6 +1819,16 @@ class Kernel:
             else:
                 self._spawn([sys.executable, "-m", "holon", "--home", str(self.home.root), "run-script", sid])
                 fired.append({"script": sid, "spawned": True})
+        # The heartbeat's liveness stamp: the last successful tick's unix seconds, at
+        # .clock/last_tick — the file the gateway's clock organ and the kernel's own
+        # timer both write, and the doctor's heartbeat.stale check reads. Best-effort by
+        # contract (organs.rs): a tick that cannot write it still did its work.
+        try:
+            clock_dir = self.home.root / ".clock"
+            clock_dir.mkdir(exist_ok=True)
+            (clock_dir / "last_tick").write_text(str(int(datetime.now(timezone.utc).timestamp())))
+        except OSError:
+            pass
         return {"swept": swept, "triggered": triggered, "fired": fired, "notified": notified, "delivered": delivered,
                 "salvaged": salvaged}
 
@@ -2082,7 +2092,27 @@ class Kernel:
                                (self._setting("notify_ts") or "",)).fetchone()[0]
         if n:
             lines.append(f"{n} delegated approvals sampled for your review (holon audit samples)")
+        lines.extend(self._pending_messages())
         return list(dict.fromkeys(lines))
+
+    def _pending_messages(self) -> list[str]:
+        """Messages addressed to the Chair that the Chair has not read yet.
+
+        The digest read `events JOIN tasks` and nothing else, so `msg send` and `msg request`
+        landed in `messages` and the Chair never learned of them: a body blocked on which key to
+        use had no path to its owner at all, and nothing reported the gap. `ack_required` and
+        `acked_at` already exist on the table, so 'unread' is that column rather than a new one.
+
+        Only the kinds that ask something of the Chair are owed: a `question` needs its answer, a
+        `request` needs its decision. A `dm` addressed to the Chair is a human writing to a human,
+        not work the kernel should chase, and `proposal` and `answer` are department-internal."""
+        out = []
+        for m in self.wconn.execute(
+                "SELECT id, sender, kind, body FROM messages WHERE to_ref=? AND acked_at IS NULL "
+                "AND kind IN ('question','request') ORDER BY ts", (vocab.CHAIR,)).fetchall():
+            what = (m["body"] or "").strip().replace("\n", " ")
+            out.append(f"{m['kind']} from {m['sender']}: {what[:160]} (holon msg thread {m['id']})")
+        return out
 
     def _setting(self, key: str) -> str | None:
         r = self.wconn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
@@ -2118,11 +2148,21 @@ class Kernel:
             ok, detail = p.returncode == 0 and not (dropped and dropped in overlap), overlap[-300:]
         except (OSError, subprocess.TimeoutExpired) as e:
             ok, detail = False, str(e)
+        ack = []
         with write_txn(self.wconn):
             if ok:  # OS-5: a failed send leaves its items owed, and the next heartbeat retries them
                 self.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('notify_seq', ?)", (str(top),))
+                # a question the Chair has been told is a question the Chair has read: without this
+                # the same line is re-sent on every heartbeat until something else advances the
+                # cursor, which is how a digest becomes noise nobody opens. The ids are collected
+                # inside this transaction and acked after it: `Work.ack` opens its own.
+                ack = [m[0] for m in self.wconn.execute(
+                    "SELECT id FROM messages WHERE to_ref=? AND acked_at IS NULL AND kind IN ('question','request')",
+                    (vocab.CHAIR,)).fetchall()]
             self.work._event("notify", "chair", None, "sent" if ok else "failed",
                              f"{len(lines)} items" + ("" if ok else f": {detail}"), actor="kernel")
+        if ack:
+            self.work.ack(ack)
         return {"items": len(lines), "sent": ok}
 
     def _deliver(self) -> list[str]:

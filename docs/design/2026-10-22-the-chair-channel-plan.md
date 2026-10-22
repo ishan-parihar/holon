@@ -1,6 +1,6 @@
 # The Chair channel: a plan for one verified path from the organization to its owner
 
-Status: proposed, awaiting the Chair's ratification before any code lands
+Status: **executed** (W1, W2, W3 landed, 2026-10-22). Gates 1 and 2 are closed; gates 0 and 3 remain the Chair's live actions.
 Scope: A (the holon distribution). Paperclip, ZeroClaw, the Hermes organism and the ventures
 migration are untouched by this plan; nothing here is evidence about them.
 
@@ -164,16 +164,21 @@ identity.
 
 | Gate | What must be true | Measured by | Status |
 |---|---|---|---|
-| 0 | No `isolation.off` | `holon doctor` | **open** — live |
+| 0 | No `isolation.off` | `holon doctor` | **open** — live, and the Chair's action |
 | 1 | The digest proves delivery | `test_a_command_that_drops_the_message_and_exits_zero_is_a_failed_send` | **closed** (2026-10-22) |
 | 2 | The units carry the reboot contract | `test_the_units_are_valid_and_the_timer_survives_a_reboot` | **closed** (2026-10-22) |
-| 3 | The heartbeat is actually enabled | `systemctl --user is-enabled holon-tick.timer` | **open** — currently `disabled` |
-| 4 | W1: an employee question reaches the digest | new guard | open |
-| 5 | W2: a reply joins the thread it answers | new guard | open |
-| 6 | W3: attribution asserted, not assumed | new guard | open |
+| 3 | The heartbeat is actually enabled | `systemctl --user is-enabled holon-tick.timer` | **open** — currently `disabled`, the Chair's action |
+| 4 | W1: an employee question reaches the digest | `test_an_employees_question_to_the_chair_reaches_the_digest` | **closed** (2026-10-22) |
+| 5 | W2: a reply joins the thread it answers | `test_a_reply_joins_the_thread_it_answers` | **closed** (2026-10-22) |
+| 6 | W3: attribution asserted, not assumed | `test_a_reply_goes_back_to_whoever_asked` | **closed** (2026-10-22) |
 
-W1–W3 are safe to write with gate 0 open, but they are **unsafe to run** until it closes: with
-agents running as the operator, the channel is a second path to the Chair's authority.
+Measured on a real instance end to end: `msg send chair "which key do I use?" --kind question
+--as <emp>` writes `emp:<id> → chair` [question, owed]; `msg reply <id> "the staging key"` writes
+`chair → emp:<id>` [answer] into the same thread and acks the question. Both directions run through
+`msg inbox`, and both new commands reach a mounted body through the derived MCP fence.
+
+W1–W3 are landed and green, but they are **not safe to run on the live instance while gate 0 is
+open**: with agents running as the operator, the channel is a second path to the Chair's authority.
 
 ## §5 What is deliberately not in this plan
 

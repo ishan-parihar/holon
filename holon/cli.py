@@ -129,7 +129,12 @@ def _me(args, k, required: bool = True) -> str | None:
         return p.employee_id
     if required and not args.__dict__.get("as_"):
         raise ValueError("--as <emp_id> is required")
-    return args.__dict__.get("as_")
+    as_ = args.__dict__.get("as_")
+    if as_ == p.actor:
+        # the Chair naming itself as an employee: without this it becomes `emp:chair`, a sender no
+        # employee key resolves to, and every later reader treats it as a body.
+        raise PermissionError(f"--as {as_!r} names the acting principal, not an employee; omit --as")
+    return as_
 
 
 # ── organization ──────────────────────────────────────────────────────────
@@ -993,12 +998,16 @@ def _sender(args, k) -> str:
 
 @command("msg send", "employee", "message a colleague, a department, the organization or the Chair",
          AS, arg("to", help="emp:<id> | dept:<slug> | org | chair"), arg("body"), arg("--task"),
+         arg("--kind", choices=list(vocab.MESSAGE_KINDS),
+             help="the message kind; the default is `dm`, or `channel` to a department or the org. "
+                  "Send `question` or `request` to the Chair and the digest owes it until it is answered "
+                  "or delivered"),
          arg("--literal", action="store_true", help="the body is literal text: a runtime relaying it must not "
              "let '@path' or '-' choose a file"))
 def cmd_msg_send(args, k):
     body = args.body if args.literal else _text_arg(args.body)
-    mid = k.work.post_message(_sender(args, k), args.to, body,
-                              kind="channel" if args.to.startswith(("dept:", "org")) else "dm", task_id=args.task)
+    kind = args.kind or ("channel" if args.to.startswith(("dept:", "org")) else "dm")
+    mid = k.work.post_message(_sender(args, k), args.to, body, kind=kind, task_id=args.task)
     _out(args, {"id": mid}, f"sent {mid} to {args.to}")
 
 
@@ -1007,6 +1016,24 @@ def cmd_msg_inbox(args, k):
     ms = k.inbox(_sender(args, k))
     _out(args, ms, "\n".join(f"{m['ts'][:16]} [{m['kind']}] {m['sender']} → {m['to_ref']}: {m['body'][:160]}"
                              for m in ms) or "inbox empty")
+
+
+@command("msg reply", "employee", "answer a message, in the thread it belongs to",
+         AS, arg("message", help="the message id you are answering"), arg("body"),
+         arg("--literal", action="store_true", help="the body is literal text: a runtime relaying it must not "
+             "let '@path' or '-' choose a file"))
+def cmd_msg_reply(args, k):
+    body = args.body if args.literal else _text_arg(args.body)
+    mid = k.work.reply(args.message, _sender(args, k), body)
+    _out(args, {"id": mid}, f"replied {mid} in the thread it answers")
+
+
+@command("msg thread", "employee", "read a conversation: the message and every reply to it",
+         AS, arg("message", help="any message id in the thread"), mutates=False)
+def cmd_msg_thread(args, k):
+    ms = k.work.thread(args.message)
+    _out(args, ms, "\n".join(f"{m['ts'][:16]} [{m['kind']}] {m['sender']} → {m['to_ref']}: {m['body'][:200]}"
+                             for m in ms) or "no such thread")
 
 
 @command("msg request", "employee", "ask another department for work (it becomes work there)",

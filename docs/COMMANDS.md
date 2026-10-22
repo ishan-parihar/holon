@@ -156,8 +156,10 @@ is not in this file fails `holon lint` — so this file can never drift from the
 | Command | Actor | What it does |
 |---|---|---|
 | `holon msg inbox` `--as` | employee | your messages (and your department's) |
+| `holon msg reply` `--as` `--literal` <message> <body> | employee | answer a message, in the thread it belongs to |
 | `holon msg request` `--as` `--intent` `--acceptance` `--service` `--priority` <dept> <title> | employee | ask another department for work (it becomes work there) |
-| `holon msg send` `--as` `--task` `--literal` <to> <body> | employee | message a colleague, a department, the organization or the Chair |
+| `holon msg send` `--as` `--task` `--kind` `--literal` <to> <body> | employee | message a colleague, a department, the organization or the Chair |
+| `holon msg thread` `--as` <message> | employee | read a conversation: the message and every reply to it |
 
 ## intactness
 

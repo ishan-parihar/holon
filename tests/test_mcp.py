@@ -77,6 +77,7 @@ class Protocol(KernelCase):
                    "holon_schedule_list": {"id"},
                    "holon_routine_list": {"id"},
                    "holon_playbook_list": {"name"},
+                   "holon_msg_inbox": {"id"},
                    "holon_events": {"id"}}
         self.assertTrue(listers.keys() <= exposed, "every id lister the fence promises is exposed")
         # a required positional is obtainable when a lister emits a row field that names it: the
@@ -97,7 +98,9 @@ class Protocol(KernelCase):
                     continue
                 # an id is obtainable when a lister emits it. `memory search` returns item rows
                 # carrying `id`, so `item_id` counts even though no command is called `memory list`.
-                aliases = {"item_id": "id"}
+                # `msg inbox` emits message rows carrying `id`, which is how `msg reply` and
+                # `msg thread` obtain the id they name.
+                aliases = {"item_id": "id", "message": "id"}
                 self.assertIn(aliases.get(kind, kind), obtainable,
                               f"holon {' '.join(c.path)} requires {kind}, which no exposed lister emits")
 
