@@ -33,11 +33,13 @@ writer; `holon lint` (bind.service, bind.pool) checks references; `holon bylaws 
 from __future__ import annotations
 
 import json
+import re
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 
 from holon.core.db import now, write_txn
+from holon.core.vocab import CHAIR
 
 
 def _mtime(path: Path) -> str:
@@ -235,3 +237,81 @@ def emit(k) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(lines))
     return out
+
+
+# ── the pooling workflow (A10, 2026-10-22 audit) ────────────────────────────
+# The units layer had the mechanism and no workflow: one manifest pools a capability, renders it
+# into every pooler's brief, fences its binaries — and nothing ever turned "a script a department
+# keeps running" into one. The live instance held a single manifest while ventures' scripts landed
+# wherever the venture kept them. `draft` proposes the manifest into a drafts area that changes no
+# state; `promote` (the Chair) moves it into the manifest directory after the same validation lint
+# runs — the KB's blueprint draft/promote shape, one level down.
+
+_DRAFT_VOCAB = re.compile(r"^[a-z][a-z0-9-]{1,39}$")
+_SERVICE_VOCAB = re.compile(r"^[a-z][a-z0-9-]{0,39}$")   # one-letter service ids are fine (kb's rule)
+
+
+def drafts_dir(home) -> Path:
+    return home.bylaws_units_dir.parent / "drafts"
+
+
+def _quote(s: str) -> str:
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+
+def draft(k, slug: str, charter: str, service: str, command: str, accepts: str = "",
+          returns: str = "", note: str = "", effect: str = "read", args: str = "",
+          health: str = "", category: str = "service", tier: str = "proposed",
+          pool_of: list[str] | None = None, owner: str = "", roots: list[str] | None = None) -> Path:
+    """An employee's proposal of a unit, written as a manifest into the drafts area. Changes no
+    state: the units tables, the reach and the registry are untouched until the Chair promotes
+    it. One service is required (the observed script); more can be added to the file by hand."""
+    if not _DRAFT_VOCAB.match(slug or ""):
+        raise ValueError(f"unit name {slug!r}: lowercase letters, digits and hyphens")
+    for name, v in (("service", service), ("command", command), ("charter", charter)):
+        if not (v or "").strip():
+            raise ValueError(f"{name} is empty: a draft says what it does and how it is called")
+    if not _SERVICE_VOCAB.match(service):
+        raise ValueError(f"service id {service!r}: lowercase letters, digits and hyphens")
+    body = [f"charter = {_quote(charter)}", f"category = {_quote(category)}",
+            f"tier = {_quote(tier)}",
+            f"roots = [{', '.join(_quote(r) for r in roots or [])}]",
+            f"pool_of = [{', '.join(_quote(p) for p in pool_of or [])}]",
+            "consumed = []", ""]
+    if owner:
+        body.append(f"owner = {_quote(owner)}")
+        body.append("")
+    body += ["[[services]]", f"id = {_quote(service)}", f"command = {_quote(command)}"]
+    for key, v in (("accepts", accepts), ("returns", returns), ("note", note),
+                   ("effect", effect), ("args", args), ("health", health)):
+        if v:
+            body.append(f"{key} = {_quote(v)}")
+    d = drafts_dir(k.home)
+    d.mkdir(parents=True, exist_ok=True)
+    out = d / f"{slug}.toml"
+    out.write_text("\n".join(body) + "\n")
+    return out
+
+
+def promote(k, slug: str, principal: str) -> Path:
+    """The Chair's ruling: move a draft into the manifest directory. The same validation lint
+    runs first (a unit that would fail its first lint does not land), and a name that is already
+    a unit is refused — the drafts area must never become a second, unvalidated manifest
+    directory."""
+    if principal != CHAIR and not principal.startswith("chair:"):
+        raise PermissionError(f"promoting a unit is the Chair's call, not {principal!r}")
+    f = drafts_dir(k.home) / f"{slug}.toml"
+    if not f.is_file():
+        raise LookupError(f"no draft {slug}")
+    if (k.home.bylaws_units_dir / f"{slug}.toml").exists():
+        raise ValueError(f"a unit {slug} already exists: two manifests of one capability is the "
+                         "redundancy the drafts area exists to prevent")
+    k.home.bylaws_units_dir.mkdir(parents=True, exist_ok=True)
+    staged = k.home.bylaws_units_dir / f"{slug}.toml"
+    staged.write_text(f.read_text())
+    problems = validate(k)
+    if problems:
+        staged.unlink()
+        raise ValueError("; ".join(problems))
+    f.unlink()
+    return staged

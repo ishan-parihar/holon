@@ -1560,6 +1560,33 @@ def cmd_bylaws_emit(args, k):
     _out(args, {"path": str(p)}, f"registry written to {p}")
 
 
+@command("bylaws draft", "employee", "propose a unit manifest from a capability your department keeps "
+         "running ad hoc (A10): it lands in bylaws/drafts/ and changes nothing until the Chair promotes it",
+         arg("slug"), arg("--charter", required=True), arg("--service", required=True),
+         arg("--command", required=True), arg("--accepts"), arg("--returns"), arg("--note"),
+         arg("--health"), arg("--pool-of", action="append", default=[]),
+         arg("--owner"))
+def cmd_bylaws_draft(args, k):
+    """The pooling workflow's proposal half: an employee names a script their department keeps
+    running and what it is for; the manifest lands in the drafts area, seeding nothing."""
+    from holon.bylaws import units
+    p = units.draft(k, args.slug, args.charter, args.service, args.command,
+                    accepts=args.accepts or "", returns=args.returns or "", note=args.note or "",
+                    health=args.health or "", pool_of=args.pool_of, owner=args.owner or "")
+    _out(args, {"draft": str(p)},
+         f"drafted {args.slug} -> {p}\n  it seeds nothing; the Chair promotes it: "
+         f"holon bylaws promote {args.slug}")
+
+
+@command("bylaws promote", "chair", "move a draft unit into bylaws/units/ after validation (A10): "
+         "the ruling that makes a proposed capability part of the organization",
+         arg("slug"))
+def cmd_bylaws_promote(args, k):
+    from holon.bylaws import units
+    p = units.promote(k, args.slug, args.principal.actor)
+    _out(args, {"unit": str(p)}, f"promoted {args.slug} -> {p}\n  `holon bylaws sync` to load it")
+
+
 @command("restore", "chair", "restore a backup into this instance (verifies its checksums first)", arg("path"),
          arg("--force", action="store_true", help="required: the instance's current state is replaced"),
          arg("--verify-only", action="store_true"))
