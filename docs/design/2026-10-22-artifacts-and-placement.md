@@ -1,7 +1,7 @@
 # Artifacts and placement: the operating layer the grades never reached
 
-Status: **in execution** (2026-10-22). §1's defects are being fixed now, each with a guard and a
-ledger row; §2's changes wait on the Chair. Scrubbed of operator context: every path cited is
+Status: **executed** (2026-10-22). §1's defects are fixed, each behind the guard that named it;
+§2's changes wait on the Chair. Scrubbed of operator context: every path cited is
 either the distribution's own or a variable.
 
 ## §0 What was measured
@@ -77,4 +77,12 @@ renders the run as the edge's source and `recall` answers "where is X" in one ca
 
 ## §4 Execution status
 
-- [x] 2026-10-22 §1 A1–A10 landed (guards green, ledger rows added); see AGENTS.md.
+- [x] 2026-10-22 §1 A1–A10 landed, each behind the guard that named it, each with its
+      AGENTS.md ledger row: A1/A2/A5/A6 in `cd2219f`, A3/A4/A7 in `246aaa5`, A10 in `6517f5d`,
+      A8/A9 in `6161d16` (the `register` pack found the markdown-separator bug in its own row
+      matcher while the guards proved it). The vendor pin the kb suite refused
+      (genome 2026.10.22-2 landed un-pinned, 17 red tests on main) was completed in `8c866b8`.
+      Final gates: 577 tests, strict lint 0/0, genome lint clean.
+- The live instance's first run of the new doctor checks named all seven rotted pointers from
+      the retired harness era, and a stray (`.clock/`) the audit itself had missed.
+- §2 (B1–B4) waits on the Chair, unchanged.
