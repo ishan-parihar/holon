@@ -363,6 +363,54 @@ class Operations(KernelCase):
         self.assertEqual(backup.verify(out["path"])["corrupt"], [])
 
 
+    def test_the_backup_keeps_only_what_its_keep_count_names(self):
+        """A live instance's daily backups had accumulated 443 MB across six directories and
+        nothing had ever removed one — the prune was a `ponytail:` deferral ("add a keep-N when
+        disk matters") and disk then mattered: 123 MB a day, on the one machine where the
+        organization exists nowhere else. A backup is worthless if the disk holding it fills.
+
+        Pruning is not silent: it keeps the newest `backup_keep` and reports what it removed, so
+        a run that lost older history says so."""
+        from holon.integrity import backup
+        dest = self.tmp / "bk"
+        for _ in range(4):
+            self.add("a task", dept="eng")
+            backup.backup(self.k, str(dest))
+        gone = backup.prune(dest, keep=2)
+        self.assertEqual(len(gone), 2, "two older backups are removed")
+        self.assertEqual(len(backup.backups(dest)), 2, "keep-N holds")
+        # the prune reports what it removed, and never the newest
+        self.add("another task", dept="eng")
+        for _ in range(4):
+            backup.backup(self.k, str(dest))
+        kept = {d.name for d in backup.backups(dest, keep=2)}
+        self.assertTrue(all(Path(g["path"]).name not in kept for g in gone), "the newest survive")
+
+    def test_a_backup_in_the_same_second_does_not_collide(self):
+        """Two backups in the same second (a manual `holon backup` beside the heartbeat's, or a
+        restored instance re-running the same tick) shared one path, and `mkdir` failed with
+        FileExistsError — so the second backup was lost, and 'a backup was taken today' was
+        reported when only one had been."""
+        from holon.integrity import backup
+        dest = self.tmp / "bk"
+        paths = {backup.backup(self.k, str(dest))["path"] for _ in range(3)}
+        self.assertEqual(len(paths), 3, "each backup gets its own directory")
+
+    def test_gc_prunes_the_backups_it_does_not_need(self):
+        """`[retention] backup_keep` was documented in BYLAWS §6 and read by nothing, so `holon gc
+        --apply` left every backup on disk while its own config named a count. gc now prunes past
+        the count, and reports what it removed rather than doing it silently."""
+        from holon.integrity import backup, gc
+        for _ in range(5):
+            backup.backup(self.k, str(self.home.root / "backups"))
+        p = gc.plan(self.k)
+        self.assertEqual(len(backup.backups(str(self.home.root / "backups"))), 5)
+        out = gc.apply(self.k, p)
+        self.assertEqual(len(out["backups_pruned"]), 2, "two older backups removed past keep=3")
+        self.assertEqual(len(backup.backups(str(self.home.root / "backups"))), 3)
+        self.assertTrue(all(b > 0 for b in [r["bytes"] for r in out["backups_pruned"]]),
+                        "the removed bytes are reported, not just the count")
+
     def test_a_present_external_store_declares_a_known_version(self):
         """R-6 (CONTRACT §9a): the strategy seam is dormant — a store that exists must declare an
         api_version the kernel knows, so the bundle's fail-open joins cannot read a schema blind."""

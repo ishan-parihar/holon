@@ -24,12 +24,13 @@ def plan(k) -> dict:
     runs_days, msgs_days = int(r.get("runs_days", 0)), int(r.get("messages_days", 0))
     now = datetime.now(timezone.utc)
     out: dict = {"runs_days": runs_days, "messages_days": msgs_days, "run_dirs": [], "messages": 0}
-    backup_to = Path(k.config["healing"]["backup_to"]).expanduser()
+    backup_to = Path(k.config["healing"]["backup_to"] or str(k.home.root / "backups")).expanduser()
     backups = sorted(backup_to.glob("holon-backup-*")) if backup_to.is_dir() else []
     newest = backups[-1] if backups else None
     age_days = ((now - datetime.fromtimestamp(newest.stat().st_mtime, timezone.utc)).days
                 if newest else None)
     out["backup"] = {"newest": str(newest) if newest else None, "age_days": age_days}
+    out["backup_dir"] = str(backup_to)
     if runs_days > 0:
         cutoff = _iso(now - timedelta(days=runs_days))
         for run in k.wconn.execute(
@@ -83,5 +84,9 @@ def apply(k, p: dict, force: bool = False) -> dict:
         cur = k.wconn.execute("DELETE FROM messages WHERE ts < ?", (cutoff,))
         msgs = cur.rowcount
     k.auth._put("gc:last_run", _iso(datetime.now(timezone.utc)))   # doctor nudges when this goes stale
+    from holon.integrity import backup as backup_mod
+    pruned = backup_mod.prune(str(p["backup_dir"]),
+                              int(k.config.get("retention", {}).get("backup_keep", 3)))
     return {"run_dirs_removed": removed, "run_dirs_trimmed_to_kept_files": kept,
-            "messages_deleted": msgs}
+            "messages_deleted": msgs,
+            "backups_pruned": [{"path": str(Path(r["path"]).name), "bytes": r["bytes"]} for r in pruned]}

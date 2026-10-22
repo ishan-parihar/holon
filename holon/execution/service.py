@@ -52,7 +52,7 @@ DEFAULT_CONFIG = {
     "healing": {"incident_dept": "it", "lease_expiries_for_incident": 2, "schedule_failures_for_incident": 3,
                 "run_failures_for_incident": 3, "doctor_every_min": 30, "backup_every_h": 24, "backup_to": "",
                 "build_regression_samples": 10, "build_regression_drop": 0.25},
-    "retention": {"runs_days": 0, "messages_days": 0, "backup_max_age_days": 7},
+    "retention": {"runs_days": 0, "messages_days": 0, "backup_max_age_days": 7, "backup_keep": 3},
     "pilot": {"depts": []},   # pilot departments: outside-reach floors at G4 — the Chair's call, job by job
     # G4 (the Chair-key-free external intake): [intake.dept.<slug>] names the grade floor and
     # the task classes a department's intake key may file. The key itself lives with the
@@ -2327,7 +2327,8 @@ class Kernel:
 
     def _backup(self) -> list[dict]:
         """Every `backup_every_h`, a consistent copy of the instance (the organization exists nowhere else);
-        a failure opens an incident. ponytail: no pruning, backups are small; add a keep-N when disk matters."""
+        a failure opens an incident. The older backups past `[retention] backup_keep` are then pruned and
+        reported: a backup that fills the disk it protects is worthless."""
         h = self.config["healing"]
         last = self._setting("backup_ts")
         if not h["backup_every_h"] or (last and last > (datetime.now(timezone.utc) - timedelta(
@@ -2336,8 +2337,12 @@ class Kernel:
         from holon.integrity import backup
         with write_txn(self.wconn):
             self.wconn.execute("INSERT OR REPLACE INTO settings VALUES ('backup_ts', ?)", (now(),))
+        dest = h["backup_to"] or str(self.home.root / "backups")
         try:
-            return [{"backup": backup.backup(self, h["backup_to"] or str(self.home.root / "backups"))["path"]}]
+            took = [{"backup": backup.backup(self, dest)["path"]}]
+            took.extend({"backup_pruned": f"{r['bytes'] / 1048576:.0f} MB in {Path(r['path']).name}"}
+                        for r in backup.prune(dest, int(self.config["retention"]["backup_keep"])))
+            return took
         except OSError as e:
             r = self._incident("Incident: the scheduled backup failed", f"`holon backup` failed: {e}\nFix the "
                                "cause (disk, permissions, `[healing] backup_to`); done when the next backup succeeds.")

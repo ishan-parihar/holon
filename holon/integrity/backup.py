@@ -30,8 +30,41 @@ def _sha(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
+def backups(dest: str, keep: int | None = None) -> list[Path]:
+    """The backup directories under `dest`, oldest first. `keep` returns only the newest `keep`."""
+    found = sorted(d for d in Path(dest).expanduser().resolve().glob("holon-backup-*")
+                   if d.is_dir() and (d / "manifest.json").exists())
+    return found if keep is None else found[-keep:]
+
+
+def prune(dest: str, keep: int = 3) -> list[dict]:
+    """Drop the older backups, keeping the newest `keep`, and report what was removed.
+
+    A backup that fills the disk it protects is worthless, and nothing had ever removed one: the
+    live instance held 443 MB in six directories, 123 MB a day, on the one machine where the
+    organization exists nowhere else. The removal is reported rather than silent, so a run that
+    lost older history says so.
+    """
+    found = backups(dest)
+    if len(found) <= keep:
+        return []
+    removed = []
+    for old in found[:-keep]:
+        size = sum(f.stat().st_size for f in old.rglob("*") if f.is_file())
+        shutil.rmtree(old)
+        removed.append({"path": str(old), "bytes": size})
+    return removed
+
+
 def backup(k, dest: str, with_runs: bool = False) -> dict:
-    out = Path(dest).expanduser().resolve() / f"holon-backup-{now()[:19].replace(':', '').replace('-', '')}"
+    root = Path(dest).expanduser().resolve()
+    stamp = now()[:19].replace(":", "").replace("-", "")
+    out, n = root / f"holon-backup-{stamp}", 0
+    while out.exists():
+        # two backups in the same second (a manual one beside the heartbeat's, or a re-run)
+        # shared a path, and `mkdir` failed — losing the second while reporting a backup taken
+        n += 1
+        out = root / f"holon-backup-{stamp}-{n}"
     out.mkdir(parents=True)
     for name, conn in (("work.db", k.wconn), ("memory.db", k.mconn)):
         target = sqlite3.connect(out / name)
