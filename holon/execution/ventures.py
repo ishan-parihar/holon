@@ -293,10 +293,21 @@ def _would_refuse(k, rows: list[dict], already: list[dict]) -> list[dict]:
     # R-1's half of the prediction: what the APPLY would refuse, forecast without writing. The
     # apply skips a protocol that declares a foreign runtime; a survey that never calls it must
     # say so, or the pool reports clean and gets dropped — the silence twice measured before.
+    #
+    # A row the status tuple ALREADY skips is not exempt from this prediction, and that is the
+    # measured regression this loop now guards: `if r["title"] in named: continue` used to skip it,
+    # so a protocol that declared both a retired status and a cadence no unattended lane can
+    # justify reported only "the protocol declares itself paused" — the refusal that was the whole
+    # reason anyone looked at the row was swallowed. Measured 2026-10-23 on the real corpus, where
+    # BOTH cadence refusals (`reddit-karma-lane-2h-draft-post`, 12 fires a day, and
+    # `dad-arch-strategist-listener`, 26) declare a retired status as well and vanished behind it.
+    # The status skip is real and stays first; a refusal found alongside it is appended to that
+    # row's reason, so one row can carry both and neither is lost.
     for r in rows:
-        if r["title"] in named:
-            continue
-        if r.get("foreign_runtime"):
+        skipped_by_status = r["title"] in named
+        if skipped_by_status:
+            row = next(s for s in out if s["title"] == r["title"])
+        if not skipped_by_status and r.get("foreign_runtime"):
             out.append({"title": r["title"], "reason": "refused: relevance — this job declares a runtime "
                                                   "this kernel does not serve (`runtime: "
                                                   f"{r['provenance']['fields'].get('runtime')}`); a proposal "
@@ -307,23 +318,31 @@ def _would_refuse(k, rows: list[dict], already: list[dict]) -> list[dict]:
             cls = k.classify(r["title"], r["intent"], r.get("command"))
         except Exception as e:  # a classifier that is down is not a reason to hide the refusal
             cls = {"lane": None, "error": str(e)[:80]}
+        refusal = None
         if cls.get("lane") == "script" and not r.get("command"):
-            out.append({"title": r["title"],
-                        "reason": (f"this job looks deterministic (script, "
-                                   f"{(cls.get('confidence') or 0):.0%}): give it as a script with "
-                                   f"--command, or say why an agent must do it")})
+            refusal = (f"this job looks deterministic (script, "
+                       f"{(cls.get('confidence') or 0):.0%}): give it as a script with "
+                       f"--command, or say why an agent must do it")
         elif cls.get("lane") is None and not r.get("command") and k._fires_often(r.get("cron") or ""):
             # The other refusal, and the one the model's silence hides: with no decision model
             # there is no lane to compare against, and a job that fires every few minutes as a
             # full routine buys a body on every firing (288 a day for a */5 cron). The apply
             # refuses it, so the survey must too — otherwise the dry run again reports a clean
             # pool that the apply drops.
-            out.append({"title": r["title"],
-                        "reason": (f"no decision model is available and this job fires on "
-                                   f"'{r.get('cron')}' ({k._per_day(r.get('cron') or '')} times a day): "
-                                   f"a full lane would dispatch a body on every firing. Configure the "
-                                   f"classifier, give it as a script with --command, or say --why an "
-                                   f"agent must do it")})
+            refusal = (f"no decision model is available and this job fires on "
+                       f"'{r.get('cron')}' ({k._per_day(r.get('cron') or '')} times a day): "
+                       f"a full lane would dispatch a body on every firing. Configure the "
+                       f"classifier, give it as a script with --command, or say --why an "
+                       f"agent must do it")
+        if refusal is None:
+            continue
+        if skipped_by_status:
+            # Both are true of the same row. The status skip is the kernel's decision; the
+            # refusal is what a reader cannot re-derive from the file, so it is appended
+            # rather than replacing it.
+            row["reason"] = f"{row['reason']}; ALSO: {refusal}"
+        else:
+            out.append({"title": r["title"], "reason": refusal})
     return out
 
 

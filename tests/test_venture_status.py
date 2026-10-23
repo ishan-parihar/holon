@@ -107,3 +107,57 @@ class StatusVocabulary(KernelCase):
                                 "the corpus-wide count this guard was written against was 29;"
                                 " a pool tree with fewer superseded declarations is not the"
                                 " corpus this guard was measured on")
+
+
+class RefusalsAreNotShadowed(KernelCase):
+    """A survey must report a refusal it cannot make you hear.
+
+    `_would_refuse` predicts what the apply would decline, and it starts from the
+    skips already collected — so a protocol the status tuple skips is never reached
+    by the cadence check (`if r["title"] in named: continue`). That line is
+    invisible until a protocol declares BOTH a retired status AND a cadence no
+    unattended lane can justify. Then the survey reports "the protocol declares
+    itself paused", the Chair sees an ordinary skip, and the refusal that was the
+    whole reason for looking at that row is lost.
+
+    Measured 2026-10-23 on the real corpus after `62d7a1d`: both cadence refusals
+    in the corpus (`reddit-karma-lane-2h-draft-post` at 12 fires a day,
+    `dad-arch-strategist-listener` at 26) declare `paused`/`superseded` as well, so
+    both vanished behind the status skip. The guard below is built from a synthetic
+    protocol carrying both facts, so it holds on any checkout.
+    """
+
+    def _protocol(self, name: str, status: str, schedule: str) -> Path:
+        pool = self.tmp / "pool" / name
+        (pool / "cron-jobs").mkdir(parents=True, exist_ok=True)
+        (pool / "cron-jobs" / f"{name}.md").write_text(
+            f"---\nname: {name}\nstatus: {status}\nschedule: '{schedule}'\n---\n\n## Purpose\nDo the thing.\n"
+        )
+        return pool
+
+    def _reason(self, out: dict, title: str) -> str:
+        return next((s["reason"] for s in out.get("skipped", []) if s["title"] == title), "")
+
+    def test_a_retired_protocol_with_an_unjustifiable_cadence_names_both_reasons(self):
+        """The regression: a protocol that declares itself retired AND fires too often
+        must report the cadence too, not swallow it. The status skip is real and
+        correct; the refusal is the part a reader cannot re-derive from the file."""
+        pool = self._protocol("retired-and-frequent", "paused", "*/30 9-21 * * *")
+        out = cli.venture_import(pool, "t", dry_run=True, k=self.k)
+        reason = self._reason(out, "retired-and-frequent")
+        self.assertIn("declares itself paused", reason,
+                      "the status skip is honoured")
+        self.assertIn("26 times a day", reason,
+                      "and the cadence refusal is named alongside it: a survey that reports"
+                      " only the status skip hides the row that most needs the Chair")
+
+    def test_a_refusal_is_reported_even_when_nothing_else_would_skip_the_row(self):
+        """The control: without a retired status, the same cadence still refuses. This
+        pins that the refusal machinery works, so a failure above is the shadowing
+        and not a dead check."""
+        pool = self._protocol("active-and-frequent", "", "*/30 9-21 * * *")
+        out = cli.venture_import(pool, "t", dry_run=True, k=self.k)
+        reason = self._reason(out, "active-and-frequent")
+        self.assertIn("26 times a day", reason,
+                      "an unretired protocol with the same cadence still refuses; if this"
+                      " fails while the test above fails, the cadence guard itself is off")
