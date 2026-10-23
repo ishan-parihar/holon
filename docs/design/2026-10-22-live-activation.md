@@ -211,6 +211,44 @@ can do with existing commands, and needs no code change.
 The two `ready` stages right now are exactly the instances the warning names:
 `verify: Disk usage report — 2026-10-22T07:01` and `execute: Notes digest — 2026-10-22T08:01`.
 
+## 4c. Closing the loop: what measuring found that the record did not say
+
+The Chair's review flagged that this record never reported back whether the work satisfied its
+requirements. Measuring it produced two corrections and one substantive repair.
+
+**(1) The live heartbeat has not dispatched a body this session.** The `plan` and `approve` stages
+of the 08:01 notes-digest work read `done`, which reads as a body having worked them. The event
+log says otherwise: they are `kernel` copies of the recurring plan, written at 08:01:31 in the
+same instant the work was created, with **no run row and no employee_id**. The run ledger for
+that work is empty, and every tick run during this session logged `fired 0 schedules`.
+
+So the heartbeat is alive and the timer is enabled, but **it has not yet proved it can dispatch
+an agent on this instance**. The most recent real run is an operant `verify` that succeeded
+2026-10-21T18:03, before this session. The next recurring firing is 2026-10-23T06:00Z, and that
+is the first real evidence either way. The `HeartbeatFoundation` guards were written against
+exactly this and pass in tests; that is not the same claim, and the record now says so.
+
+**(2) Every live employee is bound to the `operant` driver, not `jcode`.** The adapter-conformance
+question therefore has **no bearing on this instance's live operations**. The adapter suite passes
+29/29 (including `test_the_run_token_reaches_a_stdio_mcp_server`, the seam recorded as failing),
+which is code-level proof, not a live jcode body. `holon adapter test jcode` on the live instance
+ran 25+ minutes producing no output before it was stopped — the same "explores, never submits"
+symptom the register records.
+
+**(3) Two real defects were found and fixed, because measuring rather than trusting surfaced
+them.** Recorded as `9aa9d31` with red-first guards, mutation proof, and ledger rows:
+
+- the mini-YAML reader unescaped single-quoted scalars, so a pool's
+  `cmd: '… \"healthy\" …'` imported as `"healthy"` — a command that is not the one approved;
+- the same reader mishandled folds in quoted scalars (a double-quoted `\` is YAML's escaped
+  line break and joins with nothing; a single-quoted `\` is literal and folds with a space);
+- `scope.stray` collected workdir names one level down, so a root directory that holds a live
+  work's workdir was reported as owned by nothing.
+
+**Verified from measurement, not inspection:** the live corpus, 20 real pool files read against
+PyYAML, went from **2 divergences to 0**; full suite **606 tests OK**; strict lint 0/0; three
+mutations of the reader each fail a guard; live instance 0 errors / 1 warning.
+
 ---
 
 ## 5. Channels: how they are configured, and where the surface area is
