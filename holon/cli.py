@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sqlite3
 import sys
 from dataclasses import dataclass, field
@@ -85,6 +86,39 @@ def manifest() -> list[dict]:
     return [{"command": " ".join(c.path), "actor": c.actor, "mutates": c.mutates, "help": c.help,
              "options": [a[0] for a, _ in c.args if a and a[0].startswith("-")],
              "positionals": [a[0] for a, _ in c.args if a and not a[0].startswith("-")]} for c in REGISTRY]
+
+
+# The actor classes a chat channel may offer the Chair as a button (2026-10-23). `chair` is the
+# obvious one, but a strict chair-only list would ship a channel with no landing screen and no
+# way to answer an employee: `status` is `any` and `msg reply` is `employee`. Those two are the
+# shared surface — safe to offer because the actor gate is enforced where the command runs, not
+# where the button is drawn, so the bot pressing `status` and a body pressing `status` are the
+# same command under different principals. `kernel` and `intake` are never a Chair action: one is
+# the kernel's own heartbeat, the other a department's door.
+CHAIR_ACTION_ACTORS = ("chair", "any", "employee")
+
+
+def chair_actions() -> list[tuple[str, ...]]:
+    """Every registry command a chat channel may offer the Chair, derived from its actor class.
+
+    Derived, never hand-listed: the registry already states who may do what, and a twin list in a
+    chat adapter would drift — the same defect the MCP fence had. `tests/test_mcp.py` pins both
+    halves, including the actors that must be offered even though they are not chair-only."""
+    return sorted(c.path for c in REGISTRY if c.actor in CHAIR_ACTION_ACTORS)
+
+
+def chair_action_meta(path: tuple[str, ...]) -> dict:
+    """One offered action as a channel needs it: the command, who may run it, whether it writes,
+    and its help text. `confirm` is deliberately NOT computed here — the registry carries no such
+    metadata, so the confirm rule for destructive commands is the adapter's rendering concern,
+    driven by the `--force` argument the command itself declares. See
+    `docs/design/2026-10-23-the-chair-control-surface.md`."""
+    c = next((x for x in REGISTRY if x.path == tuple(path)), None)
+    if c is None:
+        return {}
+    return {"command": " ".join(c.path), "actor": c.actor, "mutates": c.mutates, "help": c.help,
+            "options": [a[0] for a, _ in c.args if a and a[0].startswith("-")],
+            "positionals": [a[0] for a, _ in c.args if a and not a[0].startswith("-")]}
 
 
 # ── output helpers ────────────────────────────────────────────────────────
@@ -771,6 +805,13 @@ def cmd_routine_fire(args, k):
 # The keys the importer reads as a routine field. Everything else the protocol carries
 # is provenance: read, recorded, never silently dropped (M1, the 2026-10-20 bridge plan).
 _READ_KEYS = ("name", "schedule", "description", "no_agent", "script", "deliver", "status")
+# R-1, the relevance rule's runtime half (the Chair's ruling, 2026-10-23). A protocol that
+# declares where its work runs is answering "is this job this organization's?", and these answers
+# mean no: the clock and the data live on a box this kernel does not serve (`vps`, `remote`, a
+# systemd unit elsewhere), or the work is a person's (`manual`). Mechanism only — no product is
+# named (law 2); the kernel's own drivers and the kernel itself never match, so a job that Holon
+# does serve is never fenced. Measured live: exactly the two that had to be cancelled.
+_FOREIGN_RUNTIME_RE = re.compile(r"^(vps|remote|manual|systemd|off-host|elsewhere|external)\b", re.I)
 # The keys that are the routine's *protocol* rather than its metadata: they become the
 # routine's playbook (a versioned protocol with a rubric), not prose in the intent.
 _PROTOCOL_KEYS = ("skills", "enabled_toolsets")
@@ -848,7 +889,21 @@ def legacy_cron(path: Path) -> dict:
                           "false", "no", "0"),
             "source": str(path),
             "skills": skills, "enabled_toolsets": toolsets,
-            "provenance": {"source": str(path), "fields": dict(carried), "dropped": []}}
+            "provenance": {"source": str(path), "fields": dict(carried), "dropped": []},
+            # R-1 (the Chair's ruling, 2026-10-23): a proposal comes from relevance to THIS
+            # organization, not from the bare existence of a legacy system's protocol files. The
+            # declaration that matters is the protocol's own: when it names a runtime this kernel
+            # does not serve — `runtime: vps-systemd`, `runtime: manual`, `runtime: <other box>` — the
+            # job's data, its clock and its people live on a system the organization neither owns
+            # nor can reach, and importing it schedules work nothing here can do. (These two were
+            # measured live: a legacy pool's trading monitor and its weekly reconciliation.) The
+            # runtime is a field the importer reads and preserves but never judged; now it judges.
+            #
+            # The workdir is NOT the discriminator, and it was wrong to think so: an imported
+            # department's scope roots ARE the pool's own directories (ventures.venture_import), so a
+            # pool outside the instance is the normal, correct case. The refusal is the declaration,
+            # not the location.
+            "foreign_runtime": _FOREIGN_RUNTIME_RE.search(str(meta.get("runtime") or "")) is not None}
 
 
 def venture_import(pool, dept: str, dry_run: bool = True, k=None) -> dict:
@@ -864,7 +919,18 @@ def cmd_routine_import(args, k):
     rows = []
     for f in args.files:
         r = legacy_cron(Path(f).expanduser())
-        if args.apply and not r["paused"]:
+        # R-1's prediction: the relevance refusal is named in the SURVEY, not only on the apply. A
+        # dry run that prints a clean line for a file the apply would drop is the silence this
+        # command already carried twice (a paused protocol reported as imported; a script-lane
+        # refusal invisible until --apply). The rule is the importer's; this is its forecast.
+        if r["foreign_runtime"]:
+            r["error"] = ("refused: this job declares a runtime this kernel does not serve "
+                          f"(`runtime: {r['provenance']['fields'].get('runtime')}`), so its data and its "
+                          "clock live on another system. A proposal comes from relevance to this "
+                          "organization — the job's own terms, an objective or a decomposition — not "
+                          "from the existence of a legacy system's protocol files. Declare the kernel's "
+                          "runtime, or drop `runtime:`, and it imports as this organization's own")
+        elif args.apply and not r["paused"]:
             try:
                 a = k.add_routine(r["title"], r["intent"], dept=args.dept, cron=r["cron"], command=r["command"],
                                   workdir=r["workdir"], deliver=r["deliver"], strict=False, imported=True)

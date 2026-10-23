@@ -51,6 +51,39 @@ class Protocol(KernelCase):
         for name in mcp.AGENT_BLOCKLIST:
             self.assertNotIn(tuple(name.split()), exposed, f"{name} is on the blocklist")
 
+
+    def test_chair_actions_are_derived_from_the_actor_class_not_hand_listed(self):
+        """The bot controls surface (2026-10-23): a chat channel offers buttons, and the set it may
+        offer must come from the law the registry already states. A hand-listed twin would drift —
+        the same defect as the MCP fence — and a drifted Chair surface is worse than an inert one:
+        a button the Chair cannot press trains them to ignore the channel. So `chair_actions()` is
+        derived, and this proves both halves: every chair-actor command is offered, and nothing an
+        agent may reach is ever presented as a Chair action."""
+        from holon.cli import chair_actions
+        offered = set(chair_actions())
+        # HALF 1: everything only the Chair may do is offered, or the channel cannot do its job.
+        for c in REGISTRY:
+            if c.actor == "chair":
+                self.assertIn(c.path, offered,
+                              f"holon {' '.join(c.path)} is chair-only but no button offers it")
+        # HALF 2: nothing the kernel runs by itself (kernel, intake) is ever a Chair action.
+        for c in REGISTRY:
+            if c.actor in ("kernel", "intake"):
+                self.assertNotIn(c.path, offered,
+                                 f"holon {' '.join(c.path)} is {c.actor}, not a Chair action")
+        # HALF 3, the one the first draft got wrong: `status` is `any` and `msg reply` is
+        # `employee`, so a strict chair-only list would ship a channel with no landing screen
+        # and no way to answer an employee. Those two actors are the shared surface and must be
+        # offered too — which is safe precisely because the actor gate is enforced at the CLI
+        # seam, so the bot pressing `status` and a body pressing `status` run the same command
+        # under different principals.
+        for path in (("status",), ("plan", "queue"), ("msg", "reply"), ("msg", "thread"),
+                     ("task", "list"), ("org",), ("doctor",)):
+            self.assertIn(path, offered,
+                          f"holon {' '.join(path)} is the shared surface the channel is built on")
+        self.assertIn(("plan", "approve"), offered, "the approval surface is the point of the channel")
+        self.assertGreater(len(offered), 40, f"the Chair surface is large: {len(offered)}")
+
     def test_a_command_the_registry_declares_any_reaches_the_fence(self):
         """The drift guard's positive half: a command registered `any` is agent-visible the day it
         is registered, with no hand-listed step to forget. `task list` is the one the omission hid."""
