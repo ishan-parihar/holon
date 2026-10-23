@@ -139,6 +139,18 @@ class Lint(KernelCase):
             self.assertNotIn(name, gated,
                              f"moves.md:{line} says `holon {name}` needs no approval, but the "
                              f"registry gates it with --force -- the claim is false")
+        # and the SKILL.md lookup table: a row naming a gated command must carry its flag, or an
+        # agent following the table is refused. The table makes no approval claim, so the loop
+        # above cannot see it -- this loop reads the same text a reader does.
+        table = (skill / "SKILL.md").read_text()
+        for m in re.finditer(r"`\$holon ([a-z][\w -]*?)(?=[`|)]|$)", table):
+            phrase = m.group(1).strip()
+            name = phrase.split(" --")[0].strip()
+            line = table[:m.start()].count("\n") + 1
+            if name in gated:
+                self.assertIn("--force", phrase,
+                              f"SKILL.md:{line} names the gated `holon {name}` without its flag; "
+                              f"an agent following this table is refused")
         # the reach check: the corrected text no longer makes the claim, so the loop above asserts
         # nothing. Prove the pattern still finds the shape it was written for, or the guard below
         # would drift silent the moment the phrasing changed form.

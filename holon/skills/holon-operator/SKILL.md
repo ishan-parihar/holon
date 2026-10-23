@@ -46,7 +46,7 @@ a pipeline's** — you propose with evidence, you do not reach around it.
 | **remove** one | `$holon dept export <slug> --to <dir>` first, then `$holon task cancel` its live work | Chair |
 | **refactor** one | `$holon dept profile <slug> <profile>`, or `$holon hr set-driver <emp> --driver <d>` | Chair |
 | **expand** one | `$holon hr hire …`; a `[scope.dept.<slug>]` root, a `[smoke.dept.<slug>]` check, a task class in `holon.toml` | Chair |
-| **condense** one | `$holon dept profile <slug> <older profile>`; `$holon hr reassign <emp> …`; `$holon gc --apply` | Chair |
+| **condense** one | `$holon dept profile <slug> <older profile>`; `$holon hr reassign <emp> …`; `$holon gc --apply --force` (the Chair's call — it refuses without a recent backup) | Chair |
 | **heal** it | the fix as a registered guard (`$holon guards`); `$holon incident waive <work id> --note "…"` to close without one | Chair |
 | **evolve** it | the retro's action, as planned work; the `holon-steward` skill's evolution reference is the protocol | the approver its grade names |
 
