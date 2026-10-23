@@ -21,6 +21,7 @@ is worse than no reader: the charter and the check commands are what the departm
 """
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -28,7 +29,11 @@ from holon import cli
 from holon.execution import ventures
 from tests.helpers import KernelCase
 
-POOLS = Path("/home/ishanp/.hermes/organism/ventures")
+# The pools are the operator's B-side tree, never this repo's. A hard-coded path made the suite
+# machine-dependent (it failed here on a B-side file while the checkout was clean), so the corpus
+# is located by environment and the comparison skips when it is absent: the self-contained guards
+# below carry the rule on any checkout, and this test adds the real files where they exist.
+POOLS = Path(os.environ.get("HOLON_POOLS") or "/home/ishanp/.hermes/organism/ventures")
 VENTURE = POOLS / "career-pipeline"
 
 
@@ -38,6 +43,8 @@ class YamlReader(KernelCase):
     def test_it_reads_every_pools_yaml_the_way_a_yaml_library_does(self):
         """The comparison: the kernel's reader against a real YAML library, on every
         pool's own files. Where the two differ, the kernel's reader is wrong."""
+        if not POOLS.is_dir():
+            self.skipTest(f"no pools at {POOLS}; set HOLON_POOLS to run the corpus comparison")
         import yaml
         checked = 0
         for pool in sorted(POOLS.iterdir()):
@@ -126,6 +133,36 @@ class YamlReader(KernelCase):
         f2 = self.tmp / "empty.yaml"
         f2.write_text("key: |-\nother: 1\n")
         self.assertEqual(ventures._mini_yaml(f2), {"key": "", "other": 1})
+
+    def test_an_escaped_quote_inside_a_double_quoted_scalar_reads_as_a_quote(self):
+        """A live pool's rewritten smoke.yaml embeds a python -c one-liner inside a
+        SINGLE-quoted scalar (`cmd: '…d.get(\"healthy\")…'`), and the kernel's reader unescaped the
+        backslash-quote pairs — but YAML keeps them literal in single-quoted strings, so the
+        imported check command silently differed from the pool's text: the shell would see
+        `"healthy"` where the pool wrote `\"healthy\"`. A reader that rewrites the operator's
+        command text imports a command that is not the one that was approved. Found by the
+        real corpus (architectural-leads, 2026-10-22); self-contained here so the rule holds
+        on any checkout."""
+        import yaml
+        text = (
+            "checks:\n"
+            "- id: probe\n"
+            "  cmd: 'cd v && python3 -c \"import json,sys; d=json.load(sys.stdin); "
+            "assert d.get(\\\"healthy\\\"), d.get(\\\"findings\\\")\"'\n"
+        )
+        f = self.tmp / "esc.yaml"
+        f.write_text(text)
+        mine = ventures._mini_yaml(f)
+        ref = yaml.safe_load(text)
+        self.assertEqual(mine["checks"][0]["cmd"], ref["checks"][0]["cmd"],
+                         "a single-quoted scalar keeps its backslashes literally, the way a "
+                         "YAML library does")
+        self.assertIn('\\"', mine["checks"][0]["cmd"],
+                     "in single quotes a backslash-quote pair is two literal characters")
+        # and the double-quoted form, where YAML DOES process the escape
+        f2 = self.tmp / "dq.yaml"
+        f2.write_text('key: "a \\\"quoted\\\" word"\n')
+        self.assertEqual(ventures._mini_yaml(f2)["key"], yaml.safe_load(f2.read_text())["key"])
 
 
 class VentureBuilder(KernelCase):

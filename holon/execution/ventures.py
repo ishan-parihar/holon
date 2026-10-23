@@ -94,7 +94,14 @@ def _mini_yaml(path: Path) -> dict:
     def scalar(text: str):
         text = text.strip()
         if len(text) >= 2 and text[0] == text[-1] and text[0] in "\"'":
-            return _unescape(text[1:-1])
+            # Only a DOUBLE-quoted scalar carries escapes: a single-quoted one keeps its
+            # backslashes literally (YAML's only escape there is '' for a quote). Unescaping
+            # a single-quoted scalar rewrites the text — a pool's one-line
+            # `cmd: '… \"healthy\" …'` would import as `"healthy"`, a command that is
+            # not the one the operator approved. The continued-line path below gates on the
+            # same distinction; this is its single-line sibling, and the live corpus found
+            # the gap (architectural-leads, 2026-10-22).
+            return _unescape(text[1:-1]) if text[0] == '"' else text[1:-1].replace("''", "'")
         if text in ("true", "True"):
             return True
         if text in ("false", "False"):
@@ -154,12 +161,15 @@ def _mini_yaml(path: Path) -> dict:
                 parts.append(piece.rstrip("\\").rstrip())
                 j += 1
             joined = " ".join(parts)
+            quote = joined[0] if joined[:1] in "\"'" else ""
             if len(joined) > 1 and joined[0] == joined[-1] and joined[0] in "\"'":
                 joined = joined[1:-1]
             # the escapes first (\uXXXX, \xXX), then the escaped space that joins a
-            # continued line — YAML's line-fold marker
-            joined = _unescape(joined)
-            joined = joined.replace("\\ ", " ")
+            # continued line — YAML's line-fold marker. A single-quoted scalar is skipped:
+            # its backslashes are literal (see `scalar`, the single-line sibling).
+            if quote == '"':
+                joined = _unescape(joined)
+                joined = joined.replace("\\ ", " ")
             return joined, max(j, i + 1)
         if text == "":
             return None, i + 1
