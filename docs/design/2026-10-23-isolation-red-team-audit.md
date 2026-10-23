@@ -1,6 +1,6 @@
 # The isolation red-team audit — measured, and the gap in its operationalization
 
-Status: 2026-10-23. Live instance `/home/ishanp/holon` (read-only). Repo public `9248e3b`.
+Status: 2026-10-23. Live instance `/home/ishanp/holon` (read-only). Repo public `793f60e`.
 Every number below is from a command run against the live instance or a fresh one; nothing here
 is asserted from reading the source.
 
@@ -25,7 +25,7 @@ redteam.py` attacks it the way a body would. What held:
 | the run directory | a symlink planted at `result.json` | refused (O_NOFOLLOW), not followed |
 | the run directory's ACL | the agent's grant | exactly `rwx` on the dir, `r--` on the kernel's files, `other::---`, sticky |
 
-Three defects found, each with a guard, each mutation-verified.
+Five defects found, each with a guard, each mutation-verified.
 
 ### 1a. The isolated harness was the *less* filtered of the two branches
 
@@ -101,6 +101,26 @@ Nothing downstream trusts the proposal: `apply`, the broker's allowed uids and d
 read the config, so a user that exists but is not named changes nothing, and a name that is written
 but whose user does not exist is still the `isolation.runner` error the kernel raised in 2026-10-22.
 
+### 1e. Then the fixed output named a step that cannot work
+
+Making the plan reachable was not enough — the sequence it printed had to be walkable. Measured:
+step 3 said `systemctl --user enable --now holon-broker (install.py writes the unit)`, and
+`install.py` writes that unit **only when `agent_user` is already in `holon.toml`** (`install.py`
+line 222: `["holon-broker.service"] if isolated else []`). On a cold start the config is not yet
+written, so the unit does not exist and the told command fails — the third instance in this
+ledger of a remediation naming a command that cannot work, and this one was mine.
+
+Fixed: the sequence now names `python3 install.py --systemd` at step 3, *after* the config write
+that makes it write the broker unit. Proved end-to-end on a fresh instance, not by reading the
+flag: with `agent_user` set, `install.py --systemd --no-start` writes
+`~/.config/systemd/user/holon-broker.service`. A guard walks every line the plan prints and fails
+on a line that names `holon-broker` and `systemctl` without naming `install.py`.
+
+Two defects in the same command found by re-reading its own output rather than trusting the edit:
+the step-4 line lost its `f` prefix (printing the literal `{plan['agent_user']}`), and the
+no-`--write` path was interpolating a `{w}` placeholder by a post-hoc string replace. Both are gone;
+both paths now render cleanly, which is the whole point of printing a sequence a person will type.
+
 ---
 
 ## 2. What is on the live instance: nothing
@@ -126,7 +146,7 @@ holon isolation plan --write /tmp/holon-isolation.sh   # review it: it now runs 
 sudo sh /tmp/holon-isolation.sh                        # root: the agent user and its runner service
 # then write the [isolation] block the plan printed into holon.toml, and:
 holon isolation apply --force                           # 73 setfacl commands (the ACLs)
-systemctl --user enable --now holon-broker              # install.py writes this unit
+python3 install.py --systemd                            # writes holon-broker, now that agent_user is set
 holon doctor                                            # the isolation checks, probed as holon-agent
 ```
 
@@ -154,7 +174,12 @@ read is not read for it. A guard now holds that.
 
 ## 5. Verdict
 
-The mechanism is sound — three of its seams I attacked incorrectly, and the two defects I found
-inside it are fixed with guards. The **system is not on**: the boundary is absent from the live
-instance by one root command, and until this change its absence was invisible to the only thing
-that reports unattended. Both halves are now fixed; the root command is the Chair's.
+The mechanism is sound — all five seams I attacked held, and the five defects I found inside it are
+fixed with guards. One of the five was mine: making the plan reachable is not enough, the sequence
+it prints has to be walkable, and the first version told the Chair to run a command that could not
+work. A guard now walks every line.
+
+The **system is not on**: the boundary is absent from the live instance by one root command, and
+until this change its absence was invisible to the only thing that reports unattended. Everything
+except the root command is fixed; the root command is the Chair's, and the plan that produces it
+now runs from the state the instance is actually in.

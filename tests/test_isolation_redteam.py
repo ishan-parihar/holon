@@ -225,19 +225,32 @@ class Reach(KernelCase):
 
         The plan must name the user it would create, so a cold start can read it and
         then write it into holon.toml; everything downstream still checks it."""
-        from holon.integrity import doctor
-        self.k.auth.init_chair_key()
-        # no [isolation] section: this is the state a cold start is in
-        self.home.config_file.write_text(self.pipeline + "\n" + self.config)
-        k = Kernel(self.home)
-        out = pathlib.Path(self.tmp / "root.sh")
         from holon import cli
-        plan = next(c for c in cli.REGISTRY if c.path == ("isolation", "plan"))
-        args = types.SimpleNamespace(write=str(out), json=False)
-        cli.cmd_isolation_plan(args, k)          # must not raise
-        k.close()
-        script = out.read_text()
+        import io, contextlib
+        self.k.auth.init_chair_key()
+        # no [isolation] section: the state a cold start is in
+        self.home.config_file.write_text(self.pipeline + "\n" + self.config)
+        root = pathlib.Path(self.tmp / "root.sh")
+        k = Kernel(self.home)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.cmd_isolation_plan(types.SimpleNamespace(write=str(root), json=False), k)
+        printed = buf.getvalue()
+        script = root.read_text()
         self.assertIn("useradd", script, "the plan names the user it would create")
+        # and the sequence it prints must be walkable: each command it names has to exist. Step 3
+        # once said `systemctl --user enable --now holon-broker (install.py writes the unit)`, and
+        # install.py writes that unit only when agent_user is ALREADY in holon.toml (measured on
+        # the live instance: no broker unit, and the config unwritten) — so a cold start following
+        # the plan would have been told to start a unit nothing had written. The same defect class
+        # the ledger records twice: a remediation naming a command that cannot work.
+        for line in printed.splitlines():
+            if "holon-broker" in line and "systemctl" in line and "install.py" not in line:
+                self.fail(f"the plan names a step that does not write the broker unit: {line!r}")
+        self.assertIn("install.py", printed,
+                      "the broker unit's writer must be named: install.py writes it once agent_user "
+                      "is in holon.toml, which is the step before it")
+        k.close()
 
 
 class Deployment(KernelCase):
