@@ -110,6 +110,43 @@ class Lint(KernelCase):
                         "holon hr hire", "holon gc", "holon guards", "holon incident waive"):
             self.assertIn(command, text, f"the skill names no command for {command}")
 
+    def test_a_skills_claim_that_a_move_needs_no_approval_is_true(self):
+        """The operator skill is what an agent reads to change the system that does the work, so a
+        claim that one of its moves needs no approval is a claim about a gate. `moves.md` said
+        `holon gc --apply` "is the one move here that needs no approval, because it only collects
+        what policy already decided" -- and measured on a fresh instance, `gc --apply` alone is
+        refused with `not allowed: no backup newer than 7 days ... or --force`. It needs the
+        Chair's approval in exactly one of two forms, and the skill told the agent otherwise.
+
+        Derived from the registry, not restated: for every command the skill calls unapprovable,
+        check whether the registry gates it. A new gate on a command the skill frees is caught."""
+        import pathlib
+        import re
+        from holon import cli
+        skill = (pathlib.Path(__file__).resolve().parents[1] / "holon" / "skills" / "holon-operator")
+        moves = (skill / "references" / "moves.md").read_text()
+        gated = {" ".join(c.path) for c in cli.REGISTRY
+                 if "--force" in [a[0] for a, _ in (c.args or [])]}
+        registered = {" ".join(c.path) for c in cli.REGISTRY}
+        # a claim of the form "`$holon X ...` ... needs no approval"
+        pattern = r"`\$holon ([a-z][\w -]*?)`[^`]{0,240}?needs no approval"
+        for m in re.finditer(pattern, moves):
+            phrase = m.group(1).strip()
+            name = phrase.split(" --")[0].strip()          # the command path, without its flags
+            line = moves[:m.start()].count("\n") + 1
+            self.assertIn(name, registered,
+                          f"moves.md:{line} names `holon {phrase}`, whose path `{name}` is not registered")
+            self.assertNotIn(name, gated,
+                             f"moves.md:{line} says `holon {name}` needs no approval, but the "
+                             f"registry gates it with --force -- the claim is false")
+        # the reach check: the corrected text no longer makes the claim, so the loop above asserts
+        # nothing. Prove the pattern still finds the shape it was written for, or the guard below
+        # would drift silent the moment the phrasing changed form.
+        self.assertIsNone(re.search(pattern, "`$holon gc --apply` collects what retention already decided."),
+                          "the pattern must not fire on a sentence with no approval claim")
+        self.assertIsNotNone(re.search(pattern, "`$holon gc --apply` is the one move that needs no approval"),
+                             "the pattern must fire on an approval claim, or this guard is vacuous")
+
     def test_the_operator_skill_is_scoped_against_the_system_design_skill(self):
         """Two skills that both cover a department's shape are two answers to one question. The
         boundary is stated in both directions so a reader picks one deliberately."""
@@ -580,6 +617,20 @@ class Retention(KernelCase):
         self.home.config_file.write_text(text)
         self.k.close()
         self.k = Kernel(self.home)
+
+    def test_force_is_the_chairs_call_to_collect_with_no_backup(self):
+        """The second half of the gc gate, which the retention guard's first half does not reach.
+
+        `test_apply_refuses_without_a_recent_backup_then_collects` proves the refusal and the
+        backup escape hatch. This proves the other one: `--force` collects with no backup at all,
+        which is the Chair's call to make. The operator skill's `moves.md` said `holon gc --apply`
+        "is the one move here that needs no approval" -- both of these lines are why that was false,
+        and the claim guard (`test_a_skills_claim_that_a_move_needs_no_approval_is_true`) reads the
+        registry, so it stays green if the gate stops being enforced. This one reads the runtime."""
+        from holon.integrity import gc
+        self._closed_work_with_old_run()
+        self._configure()
+        self.assertEqual(gc.apply(self.k, gc.plan(self.k), force=True)["run_dirs_removed"], 3)
 
     def test_gc_plans_but_never_deletes_on_a_dry_run(self):
         t, c = self._closed_work_with_old_run()

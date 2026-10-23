@@ -42,8 +42,11 @@ be safe. A move performed without these is a preference with a command on it.
   work needs, a slot nobody claims, a scope root nothing reads.
 - **A department that stopped moving is a candidate to pause**, not to delete; its memory is the
   organization's only record of what it learned there.
-- **`$holon gc --apply` collects what retention has already expired.** It is the one move here that
-  needs no approval, because it only collects what policy already decided.
+- **`$holon gc --apply` collects what retention has already expired.** It collects only what
+  policy already decided, but it is *not* unapprovable: without a backup newer than
+  `[retention] backup_max_age_days` it is refused with `not allowed: no backup newer than 7 days`,
+  and `--force` is the Chair's call to collect anyway. Run `holon backup` first, or name the force
+  deliberately.
 
 ## heal
 
