@@ -219,29 +219,42 @@ validation round ran the names rather than the module.
 
 ## 2. What is on the live instance: nothing
 
-| Layer | State |
+| Layer | State (re-measured 2026-10-23, 21:15–21:45) |
 |---|---|
-| `[isolation]` config | **no section at all** in `holon.toml` |
-| the agent user | **does not exist** (`id holon-agent`: no such user) |
+| `[isolation]` config | **no section at all** — the config the kernel reads is `$HOLON_HOME/holon.toml` and on this deployment that file is **absent**, so the instance runs on defaults and `doctor` separately reports `security.auth` ("no Chair key", open mode) |
+| the agent user | **does not exist** (`id holon-agent-<instance>`: no such user) |
 | the runner unit | **not installed** (`/etc/systemd/system`: none) |
-| the broker unit | **not installed** (`systemctl --user list-unit-files`: tick and the mirror only) |
+| the broker unit | **installed against the wrong instance, and not running.** Corrected: the first version of this table said "not installed", and a re-measurement on 2026-10-23 at 21:15 found `~/.config/systemd/user/holon-broker.service` — `disabled`, `inactive`, and written against a **scratch** `HOLON_HOME`, not the instance that carries the work |
+
+**And the deployment is split in two**, which is what makes "the live instance" ambiguous in a
+way this section cannot be: the instance that carries the work (`HOLON_HOME` holding 166 tasks and
+1530 events, with a heartbeat writing it every two minutes) and the scratch one the installed tick
+unit names (5 events). The tick timer writes the second every 2 minutes; something else writes the
+first on the same cadence. Seven concurrent agent sessions are running on this host. This is the
+deployment's to resolve and is recorded rather than fixed, because a kernel change here would be
+the conflation AGENTS.md law 10 exists to prevent.
+
+What follows is measured on the instance that carries the work, because that is the one a boundary
+would have to protect.
 
 `2026-10-22-live-activation.md` §4 measured this three days earlier and named the one blocker:
 root must create the agent user, one command away. It is still not created, and `agent_user` was
 subsequently reset to empty — which downgrades the finding from an `isolation.runner` *error* (the
 kernel refusing to let agents run as its own user once an agent user is promised) to the
-`isolation.off` warning of §1c.
+`isolation.off` error of §1c.
 
 Non-interactive `sudo` is not available in this session, so the root step is the Chair's to take.
-The command is written and waiting (§1d fixed the step that made it unwritable from a cold start):
+The command is written and waiting (§1d fixed the step that made it unwritable from a cold start,
+and §1g fixed the numbering that made step 1 unlabelled):
 
 ```sh
-holon isolation plan --write /tmp/holon-isolation.sh   # review it: it now runs from this state
-sudo sh /tmp/holon-isolation.sh                        # root: the agent user and its runner service
-# then write the [isolation] block the plan printed into holon.toml, and:
-holon isolation apply --force                           # 73 setfacl commands (the ACLs)
-python3 install.py --systemd                            # writes holon-broker, now that agent_user is set
-holon doctor                                            # the isolation checks, probed as holon-agent
+holon isolation plan          # prints steps 1 ... 4 for this instance
+holon isolation plan --write /tmp/holon-isolation.sh   # write step 1's script to a file
+sudo sh /tmp/holon-isolation.sh   # 1. root: the agent user and the runner service
+                                  # 1.5. write the printed [isolation] block into holon.toml
+holon isolation apply --force     # 2. the ACLs (29 on the live instance; the count is per instance)
+python3 install.py --systemd      # 3. writes holon-broker, now that agent_user is set
+holon doctor                      # 4. the isolation checks, probed as the agent user
 ```
 
 The reach that plan would grant was measured and is sound: the department's own roots and the two
