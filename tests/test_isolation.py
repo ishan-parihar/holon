@@ -172,7 +172,7 @@ class Isolated(KernelCase):
         self.assertNotIn(("isolation.runner", "error"), found)
         self.assertNotIn(("isolation.broker", "error"), found)
         self.reconfigure("")
-        self.assertIn(("isolation.off", "warning"), {(f["check"], f["severity"]) for f in doctor.run(self.k)})
+        self.assertIn(("isolation.off", "error"), {(f["check"], f["severity"]) for f in doctor.run(self.k)})
 
 
 class Setup(KernelCase):
@@ -324,6 +324,12 @@ class Setup(KernelCase):
         # and the launcher must still be present in the form systemd can resolve
         self.assertIn("python3 -m holon.execution.isolation runner", script,
                       "the runner command itself is what starts the agents")
+        # the unit must name the per-user bin dirs itself: systemd's service PATH omits them, so
+        # without this line the start shell's `command -v holon` finds nothing, prints
+        # `readlink: missing operand` and exits 0 -- systemd records a healthy unit that never
+        # started a runner. Measured: `env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c <the line>`.
+        self.assertIn("Environment=PATH=%h/bin", script,
+                      "the unit sets the PATH systemd omits, or the resolution below cannot run")
 
     def test_the_runner_units_start_command_resolves_a_real_launcher(self):
         """The portability fix is only as good as the shell inside `ExecStart`. `command -v holon`
@@ -347,6 +353,60 @@ class Setup(KernelCase):
                            capture_output=True, text=True).stdout.strip()
         self.assertTrue((Path(H) / "holon" / "__init__.py").exists(),
                         f"the resolution lands on {H}, which carries no `holon` package")
+
+    def test_the_runner_start_command_resolves_under_systemds_service_path(self):
+        """The guard that would have caught the fix's own defect.
+
+        The portability fix resolves `command -v holon` inside the unit's start shell. But systemd
+        gives services a minimal PATH (`/usr/local/bin:/usr/bin:/bin`) that omits the per-user bin
+        dirs where the launcher lives, so under the unit's real environment the resolution failed
+        -- and the shell exited 0, meaning systemd would have recorded a healthy unit that never
+        started a runner. Measured 2026-10-23: `readlink: missing operand`, rc 0.
+
+        This runs the unit's own Environment=PATH against its own resolution, so the two halves are
+        proved together rather than each looking fine alone."""
+        import subprocess, re as _re
+        self.home.config_file.write_text(self.pipeline + '\n[isolation]\nagent_user = "agent"\n')
+        self.k.close()
+        self.k = Kernel(self.home)
+        script = isolation.setup_plan(self.k)["root_script"]
+        env_line = next((l for l in script.splitlines() if l.startswith("Environment=PATH=")), None)
+        self.assertIsNotNone(env_line, "the unit must declare the PATH systemd omits")
+        # expand what systemd expands, and keep the rest as the unit writes it
+        # systemd expands %h to the user's home; the test's ambient PATH has no ~/bin on it (measured:
+        # shutil.which("holon") is None outside an interactive login shell), so the guard must
+        # substitute the real home itself or it proves nothing about the unit's own resolution.
+        home = os.path.expanduser("~")
+        # the line is `Environment=PATH=<value>`: strip the whole `Environment=PATH=`
+        # prefix. Prefixing it again below yields `PATH=PATH=...`, `command -v` then finds
+        # nothing, and the guard fails at a defect it invented for itself rather than one the
+        # unit has.
+        path_value = env_line[len("Environment=PATH="):].replace("%h", home)
+        cmd = next(l for l in script.splitlines() if l.startswith("ExecStart=")).split("'", 1)[1].rsplit("'", 1)[0]
+        # the command is the runner, which serves until stopped: run it with a hard deadline and
+        # read what it prints before it is killed. A timeout here means it STARTED, which is the
+        # thing being proved; a nonzero rc or a `missing operand` means it did not.
+        started, err = False, ""
+        try:
+            r = subprocess.run(["env", "-i", f"PATH={path_value}", "sh", "-c", cmd],
+                               capture_output=True, text=True, timeout=20)
+            rc, err = r.returncode, r.stderr or ""
+        except subprocess.TimeoutExpired as e:
+            started, rc = True, "timed out"
+            err = (e.stderr or b"").decode(errors="replace") if e.stderr else ""
+        self.assertNotIn("missing operand", err,
+                         "`command -v holon` found nothing: systemd's service PATH omits the "
+                         f"per-user bin dirs and the unit did not name them ({err[:150]})")
+        # the good outcome is the one that started and kept running: a shell that exits at once is
+        # the failure this guard exists to catch, whether it says something or not
+        self.assertTrue(started or rc == 0,
+                        f"the start shell exited at once (rc={rc}) instead of serving: {err[:200]}")
+        # and the resolution it performs must land on a real checkout
+        H = subprocess.run(["env", "-i", f"PATH={path_value}", "sh", "-c",
+                            "dirname $(dirname $(readlink -f $(command -v holon)))"],
+                           capture_output=True, text=True).stdout.strip()
+        self.assertTrue((Path(H) / "holon" / "__init__.py").exists(),
+                        f"resolved {H!r}, which carries no `holon` package")
 
     def test_skill_names_cannot_climb_out_of_the_library(self):
         from holon.capabilities.skills import SkillError

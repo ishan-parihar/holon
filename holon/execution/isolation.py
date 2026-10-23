@@ -364,7 +364,17 @@ def reach(k) -> dict:
         exe = d.command.split()[0] if d.command.split() else ""
         found = shutil.which(exe) if exe else None
         if found:
-            reads.add(Path(found).resolve())
+            # The harness's reach is the tree its command resolves into, not the one path
+            # `shutil.which` returns. A launcher is a file that execs siblings from its own
+            # directory and often sets LD_LIBRARY_PATH to it first (measured 2026-10-23 on the
+            # live harness: a 505-byte launcher beside a 171 MB payload), so granting the
+            # launcher alone denies the payload and the department cannot start its body.
+            # The whole directory is granted as a read: a harness install is not a place to
+            # be selective, and everything in it is executable code the agent is about to
+            # run anyway. Its home (`[env]`, the writes above) stays the only writable part.
+            bin_path = Path(found).resolve()
+            reads.add(bin_path.parent)
+            reads.add(bin_path)
     return {"writes": sorted(p.resolve() for p in writes if p.exists()),
             "reads": sorted(p.resolve() for p in reads if p.exists()), "runs": k.home.runs_dir.resolve()}
 
@@ -418,11 +428,15 @@ After=network-online.target
 [Service]
 User={agent}
 WorkingDirectory=/var/lib/{agent}
-# No PYTHONPATH pinned to the planning checkout: the 2026-10-21 rule, applied here. The
-# kernel's own launcher (`bin/holon`) resolves its checkout and exports PYTHONPATH itself, so a
-# moved or deleted worktree does not kill every agent process with nothing in the journal saying
-# why. The runner is a module __main__, so the launcher's `python3 -m holon` cannot reach it; the
-# unit instead resolves the tree at start time from the launcher it already has on PATH.
+# No PYTHONPATH pinned to the planning checkout: the 2026-10-21 rule, applied here. The unit names
+# no tree, so a moved or deleted worktree does not kill every agent process with nothing in the
+# journal naming the cause.
+# systemd's service PATH omits per-user bin dirs, where the `holon` launcher lives (the tick unit
+# carries the same line for the same reason). Without it, `command -v holon` finds nothing below and
+# the start shell prints `readlink: missing operand` -- and exits 0, so systemd records a healthy
+# unit that never started a runner. Measured on 2026-10-23 under
+# `env -i PATH=/usr/local/bin:/usr/bin:/bin`.
+Environment=PATH=%h/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/bin/sh -c 'H=$(dirname $(dirname $(readlink -f $(command -v holon)))) && PYTHONPATH="$H" exec {sys.executable} -m holon.execution.isolation runner --address {iso["runner"]} --allow-uid {me.pw_uid}'
 Restart=always
 RestartSec=10
