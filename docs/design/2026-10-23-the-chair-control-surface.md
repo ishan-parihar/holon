@@ -254,9 +254,15 @@ So two of the three destructive commands already require an explicit `--force`, 
 job is simply **never to pass it on the first tap** — the two-step is a rendering rule, not new
 kernel machinery. That is a much smaller change than I first proposed.
 
-The exception is real and worth naming: **`isolation apply` has no gate**, and it rewrites the
-ACLs of the whole instance. If it becomes button-reachable it needs one, and that is a kernel-side
-argument addition (`--force`), not something the adapter should paper over.
+The exception is real and worth naming: **`isolation apply` had no gate**, and it rewrites the
+ACLs of the whole instance.
+
+**Now closed** (`7518afa`): `isolate apply` requires an explicit `--force`, and the real CLI
+refuses with *"isolation apply rewrites every ACL on this instance; pass --force (read `holon
+isolation plan` first)"*. Mutation-verified — removing the gate fails the test, and the failure
+shows the command proceeding to real `setfacl` calls, which is what the gate stops. `isolation
+plan` stays ungated on purpose: reading what *would* happen is how you decide whether to spend the
+force.
 
 ### The free-text path, which matters more than buttons
 
