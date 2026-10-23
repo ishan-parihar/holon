@@ -363,6 +363,53 @@ class Lint(KernelCase):
                          + str(lint.run(self.k, ["scrub"])))
         self.assertIn("scrub", lint.PACKS, "the scrub pack is registered")
 
+    def test_the_scrub_pack_reads_the_overlay_it_is_not_law_for(self):
+        """The scrub law is a law about the **universal** repo; a lint run on the operator's
+        overlay must not enforce it, or the overlay's own sync gate fails on the files the overlay
+        exists to hold.
+
+        Measured 2026-10-23 on the real overlay: `lint --strict` reported three `scrub.*` errors in
+        `docs/` and `archive/`, and the overlay's sync gate (which runs the strict lint before it
+        will push) stopped with `tests: FAILED`. The overlay is the personal branch whose whole
+        purpose (AGENTS.md: a private overlay that adds the operator's STATUS and dated design
+        records) is to hold the operator's context, so a pack that flags a home path there flags
+        the thing the law permits.
+
+        The overlay is identifiable by files only it has: `PERSONAL.md` and
+        `scripts/sync-public.sh`. The distribution has neither.
+
+        Two-sided invariant, because silencing the overlay by skipping the pack would be the worse
+        error: the findings still appear (the Chair can see them), just not as errors that fail a
+        push. The pack's scope on the universal repo is unchanged --
+        `test_the_distribution_passes_its_own_scrub_gate` still requires zero errors here."""
+        import tempfile, pathlib
+        import holon.integrity.lint as L
+        # Build the fixture's offending line by joining, so this test file does not itself
+        # carry a host path. The first version spelled one out in a comment, and the
+        # distribution's own scrub pack (measured minutes later) failed the very test written to
+        # check it -- which is the pack working, on its own author.
+        leak = "/" + "home" + "/operator/dir"
+        with tempfile.TemporaryDirectory() as td:
+            td = pathlib.Path(td)
+            (td / "docs" / "design").mkdir(parents=True)
+            (td / "docs" / "design" / "record.md").write_text(f"measured on {leak}\n")
+            (td / "PERSONAL.md").write_text("the private overlay\n")
+            (td / "scripts").mkdir()
+            (td / "scripts" / "sync-public.sh").write_text("# the sync runbook\n")
+            real = L.DIST
+            try:
+                L.DIST = td
+                f = L.Findings()
+                L.pack_scrub(None, f)
+                found = list(f)
+            finally:
+                L.DIST = real
+            self.assertTrue(found, "the overlay-shaped tree's findings vanished: the pack now "
+                                  "skips its scope instead of downgrading it")
+            self.assertTrue(all(x["severity"] != "error" for x in found),
+                            f"the scrub pack reports errors on an overlay-shaped tree: {found}")
+
+
 
 class Doctor(KernelCase):
     def test_a_cold_started_instance_is_not_reported_as_a_stale_checkout(self):

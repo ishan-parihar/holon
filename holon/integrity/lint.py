@@ -885,7 +885,21 @@ def pack_scrub(k, f: Findings) -> None:
     The defect is not that a path is private; it is that a published document names one host, so
     the next reader cannot tell an observation from an assumption, and a fork inherits a tree it
     cannot run. Each finding names the file and the offending text so the fix is a substitution.
-    """
+
+    The law is about the **universal** repo, and the operator's overlay is the one place it
+    permits that context -- AGENTS.md: "Ops logs and design records with operator context live in
+    the overlay". Measured 2026-10-23, the pack enforced it on the overlay regardless, so the
+    overlay's own sync gate (which runs the strict lint before it will push) failed on the files
+    the overlay exists to hold, and a sync gate that always fails is a gate nobody reads.
+
+    So the pack detects the overlay and **downgrades** rather than skips: the findings still
+    print, because the Chair should be able to see them, but they are warnings rather than errors,
+    so a push is not blocked by the tree the law points at. Detection is by the files that exist
+    only in an overlay -- `PERSONAL.md` and `scripts/sync-public.sh`; the distribution has
+    neither, so there is no operator context to mistake for a leak. It is not a config key,
+    because the overlay and the universal checkout are the same code."""
+    overlay = (DIST / "PERSONAL.md").is_file() or (DIST / "scripts" / "sync-public.sh").is_file()
+    severity = "warning" if overlay else "error"
     files: list[Path] = []
     for name in SCRUB_FILES:
         files.append(DIST / name)
@@ -901,15 +915,15 @@ def pack_scrub(k, f: Findings) -> None:
         for i, line in enumerate(text.splitlines(), 1):
             m = HOME_PATH.search(line)
             if m:
-                f.add("error", "scrub.home", rel,
+                f.add(severity, "scrub.home", rel,
                       f"names a host's home directory ({m.group(1)}): instance specifics belong "
                       f"in the operator's overlay, not this repo")
             if TOKEN.search(line):
-                f.add("error", "scrub.token", rel,
+                f.add(severity, "scrub.token", rel,
                       "carries a bot-token shape; a token belongs in the instance's config, never "
                       "in a published file")
             elif CHAT_ANCHOR.search(line) and CHAT_ID.search(line) and not SYNTHETIC.search(line):
-                f.add("error", "scrub.chat_id", rel,
+                f.add(severity, "scrub.chat_id", rel,
                       "names a chat id (line %d): the Chair's channel is instance state, not a "
                       "documented value" % i)
 
