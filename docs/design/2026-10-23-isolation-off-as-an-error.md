@@ -41,8 +41,13 @@ A note on how the first two columns were obtained, because the difference is eas
 the live `holon doctor` is run from the checkout (`python3 -m holon --home …`), so it sees
 uncommitted edits. The first column is from a detached worktree at HEAD
 (`git worktree add --detach`), which carries the committed `add("warning", …)`; the second from
-the same command run in the working tree, which carries the edit's `add("error", …)`. Measured
-both on 2026-10-23: **the deployed organization still runs the warning.**
+the same command run in the working tree, which carries the edit's `add("error", …)`.
+
+**Superseded in the same session.** That closing sentence — "the deployed organization still runs
+the warning" — was true when written and false an hour later: the severity change is now committed
+and pushed, so the live instance reports **1 error / 0 warnings** and every tick opens the incident
+until the boundary is applied. The columns are kept because they record how the measurement was
+taken and why the two were confusable, not because the left one still describes the deployment.
 
 The last row is the whole of the cost, and it is the row that decides this.
 
