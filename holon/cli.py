@@ -1765,9 +1765,19 @@ def cmd_isolation_plan(args, k):
 
 
 @command("isolation apply", "chair", "apply the isolation ACLs (agents reach only their trees, run directories "
-         "and binaries; every other entry on the way is denied to them)")
+         "and binaries; every other entry on the way is denied to them)",
+         arg("--force", action="store_true",
+             help="confirm the whole-instance ACL rewrite: `holon isolation plan` first, and read it"))
 def cmd_isolation_apply(args, k):
     from holon.execution import isolation
+    # The one destructive command that had no gate at all (measured 2026-10-23, while deciding
+    # what a chat surface may offer): `restore` and `keys gc` require an explicit `--force`, this
+    # one rewrote every ACL between the kernel's user and every agent with a bare return-press.
+    # `isolation plan` stays ungated on purpose — reading what would happen is how you decide
+    # whether to spend the force.
+    if not args.force:
+        raise ValueError("isolation apply rewrites every ACL on this instance; pass --force "
+                         "(read `holon isolation plan` first)")
     plan = isolation.setup_plan(k)
     failed = isolation.apply(plan)
     _out(args, {"applied": len(plan["acl"]) - len(failed), "failed": failed},

@@ -194,6 +194,35 @@ class Setup(KernelCase):
         self.assertFalse(any(kb_root == p or kb_root in p.parents for p in writes),
                          "the KB tree is never a write: the kernel is its writer")
 
+    def test_isolate_apply_refuses_without_force(self):
+        """`isolate apply` rewrites the ACLs of the whole instance — the boundary between the
+        kernel's user and every agent. A channel that renders it as a one-tap button, or a
+        mis-pressed return, would re-fence the organization with no second look. `restore` and
+        `keys gc` already require an explicit `--force`; this command had no such argument at all,
+        so it was the one destructive action a fat-finger could spend. Measured 2026-10-23 while
+        deciding which commands the bot surface may offer: `restore` and `keys gc` declare
+        `--force`, `isolation apply` declared nothing."""
+        from holon.execution import isolation
+        self.home.config_file.write_text(self.pipeline + '\n[isolation]\nagent_user = "agent"\n')
+        self.k.close()
+        self.k = Kernel(self.home)
+        from holon import cli
+        apply_cmd = next(c for c in cli.REGISTRY if c.path == ("isolation", "apply"))
+        self.assertIn("--force", [a[0] for a, _ in apply_cmd.args],
+                      "the destructive command declares the gate, like restore and keys gc")
+        # and the gate actually refuses: a mis-pressed return, or a one-tap button, is stopped
+        import types
+        no_force = types.SimpleNamespace(force=False, json=False)
+        with self.assertRaises(ValueError) as caught:
+            apply_cmd.fn(no_force, self.k)
+        self.assertIn("--force", str(caught.exception), "the refusal names what to pass")
+        # the plan itself stays ungated: reading what WOULD happen is how you decide whether to
+        # spend the force. A gated survey would tell you nothing until you already agreed.
+        plan_cmd = next(c for c in cli.REGISTRY if c.path == ("isolation", "plan"))
+        self.assertNotIn("--force", [a[0] for a, _ in plan_cmd.args],
+                         "reading the plan must never require the force")
+        self.assertTrue(isolation.setup_plan(self.k)["acl"], "the plan is still inspectable")
+
     def test_the_agent_may_only_traverse_toward_what_it_needs(self):
         top = self.tmp / "home"
         (top / "projects" / "acme").mkdir(parents=True)
