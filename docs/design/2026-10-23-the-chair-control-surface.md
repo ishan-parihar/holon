@@ -278,7 +278,7 @@ The order that keeps every step verifiable, and the gate each step owes:
 | # | Step | Gate before it counts | Status |
 |---|---|---|---|
 | 1 | `chair_actions()` in the kernel, derived from `REGISTRY` | a guard pinning both halves of the derivation | **landed `dbfb878`** |
-| 2 | structured `pending_for_chair` rows: `{id, kind, sender, body, age}` beside the prose | the digest still renders for a plaintext `[notify] command` (backwards compatible) |
+| 2 | structured digest rows beside the prose | the digest still renders for a plaintext `[notify] command` (backwards compatible) | **landed `956bef6`** |
 | 3 | `adapters/telegram/` render + session, long-poll only | a fake Bot API (`tests/fake_telegram.py`) with the same shape as `tests/fake_notion.py` |
 | 4 | wire it as the live `[notify] command` | **one test crosses the seam with the real artifact**: a real prepared digest rendered into a real `sendMessage` call |
 | 5 | `--force` gating for destructive buttons | a guard that the adapter never passes `--force` on a first tap, and that `isolation apply` gains its own gate before it is button-reachable |
@@ -287,8 +287,30 @@ Step 4 is the one that makes it real, and it is the one most easily skipped — 
 AGENTS.md records for interface packages: *"an interface package is done only when one test
 crosses the seam with the other side's real artifact."*
 
+### Step 2 landed, and the live probe caught a defect the tests would not have
+
+`digest_rows()` (`956bef6`) returns one structured row per prose line, **derived from those lines**
+rather than restated, so order, dedupe and count cannot drift from what the Chair reads. The prose
+stays — the live `[notify] command` is a plaintext shell and the prose is the contract.
+
+Running it against the live instance found a defect in my own first cut that the test suite had no
+shape to catch: the owed question's prose ends `(holon msg thread msg_01M5K…)` and the id contains
+an **uppercase** letter. A lowercase-only id class silently dropped the action from every row that
+names a message — a button that cannot answer an employee's question is precisely the gap this
+surface exists to close, and it would have failed invisibly. The class is now case-sensitive on
+purpose, and a guard pins that exact live row shape.
+
+```
+kind=question  action=msg thread msg_01M5K5QDAWEE967TFED0M30ACN   ← pressable
+kind=notice    action=None                                       ← classifier-down, named as unpressable
+```
+
+The row without an id still appears in the button surface, labelled as having no action — an
+unpressable row the Chair can see is better than a silently dropped one.
+
 ### The honest risk
 
-The largest risk is not Telegram. It is that **step 2 changes the kernel's contract**, and
-`pending_for_chair()` is currently consumed by the adapter as prose. A structured field must be
-additive — the prose stays, the structure rides beside it — or this breaks the live digest.
+The largest risk is not Telegram. It is that **step 3 changes where the adapter runs**, and the
+adapter must hold the Chair key on the host *outside every sandbox*. That is the one property no
+test can prove without the isolation boundary actually being applied — and it is not, so the
+`holon-broker` step and the adapter step must land together or not at all.
