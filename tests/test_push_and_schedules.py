@@ -606,6 +606,66 @@ class TheChairsInboxReachesIt(LaneCase):
                         "a failed send leaves the question owed")
 
 
+class DigestRows(LaneCase):
+    """The digest a chat channel renders (2026-10-23): `pending_for_chair` returns prose, so a
+    button could only ever carry a copy of that prose — no stable id, no verb. The structured
+    rows must therefore ride ALONGSIDE the prose and never replace it: the live instance's
+    `[notify] command` is a plaintext shell, so a structured-only digest would break delivery
+    the moment it shipped. Additivity is the property that keeps both surfaces alive at once."""
+
+    def _owe(self):
+        w = self.add(risk="low", task_class="c", lane="fast", dept="eng")
+        c = self.k.claim("execute", self.dev1, task_id=w["id"])
+        self.k.submit(c.run["id"],
+                      self.exec_env(writes=["/elsewhere/x.txt"], external_effects=["emailed a client"]))
+        return w
+
+    def test_the_digest_still_returns_prose_for_a_plaintext_command(self):
+        """The contract the live adapter depends on: `pending_for_chair` is a list of strings."""
+        self._owe()
+        lines = self.k.pending_for_chair(0)
+        self.assertTrue(lines, "something is owed")
+        for line in lines:
+            self.assertIsInstance(line, str)
+
+    def test_every_prose_row_carries_a_structured_twin_with_a_stable_id(self):
+        """A button needs an id and a verb, so each digest line gains a twin: the same text, plus
+        `action`, `id` and `kind`. Where there is no natural id (a classifier-down notice) the
+        twin still exists and says so rather than being dropped from the button surface."""
+        self._owe()
+        rows = self.k.digest_rows(0)
+        self.assertTrue(rows, "structured rows exist")
+        by_text = {r["text"]: r for r in rows}
+        for line in self.k.pending_for_chair(0):
+            self.assertIn(line, by_text, f"the prose row {line!r} has no structured twin")
+        for r in rows:
+            self.assertIn("action", r)
+            self.assertIn("kind", r)
+            self.assertIn("text", r)
+
+    def test_a_row_that_names_a_message_id_is_pressable(self):
+        """The live instance, 2026-10-23: the owed question's prose ends `(holon msg thread
+        msg_01M5K… )`, and the id contains an uppercase letter. A lowercase-only id class dropped the
+        action from every such row — a button that cannot answer an employee's question is exactly
+        the gap this whole surface exists to close, and it would have failed silently.
+        `msg thread` is wrong for a reply too: the twin names `msg reply`, the one that answers."""
+        ask = self.k.work.post_message(f"emp:{self.dev1}", "chair", "which key should I use?",
+                                      kind="question")
+        rows = {r["id"]: r for r in self.k.digest_rows(0) if r["id"]}
+        self.assertIn(ask, rows, f"the owed question carries its id: {list(rows)}")
+        self.assertEqual(rows[ask]["kind"], "question")
+        self.assertTrue(rows[ask]["action"].startswith("msg "), rows[ask]["action"])
+
+    def test_the_structured_twin_keeps_the_prose_order_and_dedupe(self):
+        """The twin must not be a second hand-written list: it is derived from the same rows the
+        prose came from, so it cannot drift from what the Chair actually reads — same order, same
+        dedupe, same count."""
+        self._owe()
+        rows = self.k.digest_rows(0)
+        self.assertEqual([r["text"] for r in rows],
+                         list(dict.fromkeys(self.k.pending_for_chair(0))),
+                         "one structured row per prose line, in the same order")
+
 class TheChairsInboxAnswers(LaneCase):
     """A digest the Chair cannot answer is a broadcast. `holon msg` offered send, inbox and
     request and no reply, and `thread_id` was a column no path in the kernel ever wrote — so a

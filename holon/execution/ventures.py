@@ -290,8 +290,18 @@ def _would_refuse(k, rows: list[dict], already: list[dict]) -> list[dict]:
     survey say what the apply would say — which is the whole point of a survey."""
     out = list(already)
     named = {s.get("title") for s in out}
+    # R-1's half of the prediction: what the APPLY would refuse, forecast without writing. The
+    # apply skips a protocol that declares a foreign runtime; a survey that never calls it must
+    # say so, or the pool reports clean and gets dropped — the silence twice measured before.
     for r in rows:
         if r["title"] in named:
+            continue
+        if r.get("foreign_runtime"):
+            out.append({"title": r["title"], "reason": "refused: relevance — this job declares a runtime "
+                                                  "this kernel does not serve (`runtime: "
+                                                  f"{r['provenance']['fields'].get('runtime')}`); a proposal "
+                                                  "comes from relevance to this organization, not from the "
+                                                  "existence of a legacy system's protocol files"})
             continue
         try:
             cls = k.classify(r["title"], r["intent"], r.get("command"))
@@ -412,6 +422,15 @@ def venture_import(k, pool: Path, dept: str, dry_run: bool = True) -> dict:
     for r in rows:
         if r["paused"]:
             continue  # already named in the summary: the operator's own pause, not a failure
+        # R-1: a job its own protocol places on a runtime this kernel does not serve is not this
+        # organization's work. Importing it would schedule a body against data it cannot reach —
+        # the live instance's two cancelled routines, exactly. Named here, not silently dropped.
+        if r.get("foreign_runtime"):
+            skipped.append({"title": r["title"], "reason": "refused: relevance — this job declares a runtime "
+                                                      "this kernel does not serve (`runtime: "
+                                                      f"{r['provenance']['fields'].get('runtime')}`): its data and "
+                                                      "its clock live on another system"})
+            continue
         try:
             k.add_routine(r["title"], r["intent"], dept=dept, cron=r["cron"], command=r["command"],
                           workdir=r["workdir"], deliver=r["deliver"], strict=False, imported=True)

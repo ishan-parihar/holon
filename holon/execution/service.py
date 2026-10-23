@@ -2095,6 +2095,38 @@ class Kernel:
         lines.extend(self._pending_messages())
         return list(dict.fromkeys(lines))
 
+    def digest_rows(self, since_seq: int) -> list[dict]:
+        """The digest a chat channel renders: one structured row per prose line, derived from it.
+
+        A button needs a stable id and a verb. The prose could only ever carry a copy of itself, so
+        the twin is parsed from the same `pending_for_chair` lines rather than restated — order,
+        dedupe and count all ride along, which is what keeps a button from pointing at a row the
+        Chair does not see. `text` stays: the live `[notify] command` is a plaintext shell, so the
+        prose is the contract and these rows ride beside it. See
+        `docs/design/2026-10-23-the-chair-control-surface.md`."""
+        import re
+        # The prose names the command that resolves the row, in parentheses at the end:
+        # `(holon msg thread <id>)` or `(holon task show <id>)`. Matching the tail rather than
+        # counting parentheses matters — the classifier-down line carries JSON with unbracketed
+        # braces and nested parens, and a global count would reject the rows that do have an id.
+        rows = []
+        for line in self.pending_for_chair(since_seq):
+            row = {"text": line, "id": None, "kind": "notice", "action": None}
+            # the id character class is case-sensitive on purpose: a message id is
+            # `msg_01M5K…`, and a lowercase-only class silently drops the action from every row
+            # that names a message — the whole point of the structured twin.
+            m = re.search(r"\((?:holon )?([a-zA-Z][a-zA-Z ]+?) ([a-zA-Z][a-zA-Z0-9_]{5,})\)$",
+                          line.strip())
+            if m:
+                row["id"] = m.group(2)
+                row["action"] = " ".join(x for x in (m.group(1).strip(), m.group(2)) if x)
+                row["kind"] = "decision" if line.startswith(("approve?", "sampled")) else "question"
+            elif line.startswith(("approve?", "question on", "failed:", "incident:", "lane breach")) \
+                    or re.match(r"^(question|request) from ", line):
+                row["kind"] = "decision" if line.startswith("approve?") else "question"
+            rows.append(row)
+        return rows
+
     def _pending_messages(self) -> list[str]:
         """Messages addressed to the Chair that the Chair has not read yet.
 

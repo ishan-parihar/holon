@@ -231,18 +231,22 @@ class Routines(LaneCase):
         often = [(r["title"], r["cron"]) for r in rows
                  if isinstance(r["cron"], str) and r["cron"].startswith("*/")]
         self.assertTrue(often, "the pool carries a job that fires every few minutes")
+        # The Chair's 2026-10-23 ruling: a proposal comes from relevance to THIS organization, not
+        # from the existence of a legacy system's protocol files. Measured on this machine's only
+        # pool: every protocol declares `runtime: vps-systemd` or `runtime: manual*` — the data and
+        # the clock live on the trading system's own box, and the Chair cancelled all of them. So
+        # the lane guard's own premise (this pool's jobs land as routines) no longer holds, and the
+        # guard now asserts the ruling: the frequent jobs are refused by name, not silently
+        # dropped, and the refusal is the relevance rule rather than a lane heuristic.
         on_file = venture_import(self.k, POOL, "pilot", dry_run=False)
-        self.assertGreater(on_file["routines"], 0, "the import filed its routines")
+        self.assertEqual(0, on_file["routines"], on_file)
         # a refusal is named, not a silent drop: this is the whole point of the survey
         for title, cron in often:
-            if f"Routine: {title}" not in {w["title"] for w in self.k.work.list(kind="work")}:
-                reasons = [s["reason"] for s in on_file["skipped"] if s["title"] == title]
-                self.assertTrue(reasons, f"{title} was dropped without a reason")
-                self.assertRegex(reasons[0], "times a day",
-                                 "the reason names the cost, so the Chair can act on it")
-            else:
-                self.fail(f"{title} fires on '{cron}' as a full routine: a body per firing, "
-                          "with no decision model to say a script would do")
+            reasons = [s["reason"] for s in on_file["skipped"] if s["title"] == title]
+            self.assertTrue(reasons, f"{title} was dropped without a reason")
+            self.assertIn("relevance", reasons[0].lower(), reasons[0])
+        # and the survey said so before the apply ran
+        self.assertTrue(all(s["reason"].lower().count("relevance") for s in survey["skipped"]), survey["skipped"])
 
 
 class Classifier(LaneCase):
