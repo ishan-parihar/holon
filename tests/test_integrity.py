@@ -314,7 +314,7 @@ class Doctor(KernelCase):
         found = rules(doctor.run(self.k))
         self.assertTrue({"graph.stuck", "graph.claimed_run"} <= found, found)
 
-    def test_no_remediation_names_a_command_the_gate_would_refuse(self):
+    def test_no_remediation_names_a_command_whose_gate_would_refuse_it(self):
         """A warning that names the fix must name the fix that WORKS. `doctor` is what an operator
         reads when something is wrong, so its strings are instructions: following one and being
         handed an error is worse than having been told nothing.
