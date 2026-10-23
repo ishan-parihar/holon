@@ -223,6 +223,38 @@ class Setup(KernelCase):
                          "reading the plan must never require the force")
         self.assertTrue(isolation.setup_plan(self.k)["acl"], "the plan is still inspectable")
 
+    def test_the_plans_printed_instruction_is_the_one_that_works(self):
+        """The plan is the kernel telling the Chair how to spend its one root step, so a printed
+        command the kernel would then refuse is worse than no instruction at all — the Chair
+        follows the kernel's own words and gets an error back.
+
+        Adding `--force` to `isolation apply` broke exactly this: the plan still printed
+        `holon isolation apply` bare, and following it raised ValueError. The instruction must
+        carry the flag the command now requires, so the kernel's words and its gate agree."""
+        from holon import cli
+        apply_cmd = next(c for c in cli.REGISTRY if c.path == ("isolation", "apply"))
+        needs_force = "--force" in [a[0] for a, _ in apply_cmd.args]
+        self.home.config_file.write_text(self.pipeline + '\n[isolation]\nagent_user = "agent"\n')
+        self.k.close()
+        self.k = Kernel(self.home)
+        # read what the plan command PRINTS rather than re-deriving the string: this guard is
+        # about the kernel's own words, so it has to look at those words.
+        from holon.execution import isolation
+        plan = isolation.setup_plan(self.k)
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            with contextlib.suppress(SystemExit):
+                cli.main(["--home", str(self.home.root), "isolation", "plan"])
+        printed = captured.getvalue() or (
+            f"2. as you: holon isolation apply   ({len(plan['acl'])} setfacl commands)\n")
+        self.assertIn("isolation apply", printed, "the plan names the apply step")
+        if needs_force:
+            self.assertIn("--force", printed.replace("--force ", "--force"),
+                          "the printed instruction carries the flag the command requires")
+            # and it is the apply line that carries it, not a stray mention elsewhere
+            apply_line = next(l for l in printed.splitlines() if "isolation apply" in l)
+            self.assertIn("--force", apply_line, f"the apply line carries the flag: {apply_line!r}")
+
     def test_the_agent_may_only_traverse_toward_what_it_needs(self):
         top = self.tmp / "home"
         (top / "projects" / "acme").mkdir(parents=True)

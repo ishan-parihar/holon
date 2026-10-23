@@ -332,7 +332,7 @@ does not learn the mapping exists.
 ```sh
 sudo sh /var/tmp/ishanp-agentic/rescue/isolation-root-step.sh   # root: the agent user + its runner
 # re-add [isolation] agent_user (step 1.5, below), then:
-holon --home /home/ishanp/holon isolation apply                  # the ACLs (needs the user to exist)
+holon --home /home/ishanp/holon isolation apply --force           # the ACLs (needs the user to exist)
 systemctl --user enable --now holon-broker                       # install.py writes this unit
 holon --home /home/ishanp/holon doctor                            # the isolation checks, probed as holon-agent
 ```

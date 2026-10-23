@@ -1758,7 +1758,7 @@ def cmd_isolation_plan(args, k):
     if args.write:
         Path(args.write).write_text(plan["root_script"])
     _out(args, plan, (f"1. as root, once: sudo sh {args.write}\n" if args.write else plan["root_script"] + "\n")
-         + f"2. as you: holon isolation apply   ({len(plan['acl'])} setfacl commands)\n"
+         + f"2. as you: holon isolation apply --force   ({len(plan['acl'])} setfacl commands)\n"
          f"3. start the broker: systemctl --user enable --now holon-broker (install.py writes the unit)\n"
          f"4. holon doctor: the isolation checks probe what {plan['agent_user']} can reach\n\n"
          f"writes: {', '.join(plan['writes']) or '-'}\nreads: {', '.join(plan['reads'])}\nruns: {plan['runs']}")

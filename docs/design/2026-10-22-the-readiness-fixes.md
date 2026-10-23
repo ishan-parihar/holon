@@ -53,7 +53,7 @@ holon isolation plan --write /tmp/holon-isolation.sh    # review it first
 sudo sh /tmp/holon-isolation.sh
 
 # 2. as you — the ACLs (harmless to re-run)
-holon isolation apply
+holon isolation apply --force
 
 # 3. the broker unit: install.py writes it ONLY when [isolation] agent_user is set,
 #    and this instance's units were written before isolation was configured — so the

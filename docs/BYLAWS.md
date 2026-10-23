@@ -354,7 +354,7 @@ Both services listen on abstract Unix sockets and check the caller's uid. Set up
 ```sh
 holon isolation plan --write /tmp/holon-isolation.sh   # review it
 sudo sh /tmp/holon-isolation.sh                        # root: the agent user and its runner service
-holon isolation apply                                  # you: the ACLs
+holon isolation apply --force                          # you: the ACLs (--force: it rewrites every one)
 python3 install.py --systemd                           # writes and starts holon-broker
 holon doctor                                           # the isolation checks
 ```
