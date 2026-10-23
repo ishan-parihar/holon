@@ -212,8 +212,20 @@ def handle_runner(conn: socket.socket, allowed_uids: set[int]) -> None:
         req = _recv(f)
         if req is None:
             return
+        # The process gets ONLY the environment its caller asked for. The runner
+        # inherits its service's whole environment (its systemd unit sanitizes nothing
+        # beyond NoNewPrivileges, and on a host whose user manager carries a credential
+        # — measured 2026-10-23, a real API key in `systemctl --user show-environment` —
+        # that name arrives inside every agent process), and merging `os.environ` under
+        # the caller's dict hands a body with a shell everything the service sees.
+        # drivers.run's own contract is "only the run's environment (never the kernel's)";
+        # the non-isolated branch filters the Chair and key names explicitly, so the
+        # isolated one must not be the less filtered of the two. An agent user whose
+        # reach is fenced by ACLs must not be handed back through the environment what
+        # the ACLs deny it.
+        env = dict(req.get("env") or {})
         try:
-            proc = subprocess.Popen(req["cmd"], shell=True, cwd=req["cwd"], env={**os.environ, **req.get("env", {})},
+            proc = subprocess.Popen(req["cmd"], shell=True, cwd=req["cwd"], env=env,
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
         except OSError as e:
             _send(conn, {"exit_code": 127, "stdout": "", "stderr": f"runner: {e}"})
@@ -393,7 +405,6 @@ def setup_plan(k) -> dict:
         else:
             acl.append(["setfacl", "-m", f"u:{agent}:{mode.replace('X', 'x')}", str(p)])
     unit = f"holon-runner-{k.auth.instance_id}"
-    dist = Path(__file__).resolve().parents[2]
     root = f"""#!/bin/sh
 # Holon isolation: the part only root can do, once (docs/BYLAWS.md §11). Creates the agent user and the
 # runner service that starts agent processes as that user for this instance's kernel (uid {me.pw_uid}).
@@ -407,8 +418,12 @@ After=network-online.target
 [Service]
 User={agent}
 WorkingDirectory=/var/lib/{agent}
-Environment=PYTHONPATH={dist}
-ExecStart={sys.executable} -m holon.execution.isolation runner --address {iso["runner"]} --allow-uid {me.pw_uid}
+# No PYTHONPATH pinned to the planning checkout: the 2026-10-21 rule, applied here. The
+# kernel's own launcher (`bin/holon`) resolves its checkout and exports PYTHONPATH itself, so a
+# moved or deleted worktree does not kill every agent process with nothing in the journal saying
+# why. The runner is a module __main__, so the launcher's `python3 -m holon` cannot reach it; the
+# unit instead resolves the tree at start time from the launcher it already has on PATH.
+ExecStart=/bin/sh -c 'H=$(dirname $(dirname $(readlink -f $(command -v holon)))) && PYTHONPATH="$H" exec {sys.executable} -m holon.execution.isolation runner --address {iso["runner"]} --allow-uid {me.pw_uid}'
 Restart=always
 RestartSec=10
 NoNewPrivileges=yes
