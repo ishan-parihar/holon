@@ -164,6 +164,25 @@ class YamlReader(KernelCase):
         f2.write_text('key: "a \\\"quoted\\\" word"\n')
         self.assertEqual(ventures._mini_yaml(f2)["key"], yaml.safe_load(f2.read_text())["key"])
 
+        # the continued-line form, the same rule across the fold: a single-quoted scalar
+        # wrapped over two lines keeps its backslashes, a double-quoted one does not. Both
+        # paths unescape, so both need the gate.
+        wrapped_single = ("checks:\n- id: w\n  cmd: 'first line\\\n"
+                          "    second line with \\\"healthy\\\" in it'\n")
+        fs = self.tmp / "ws.yaml"
+        fs.write_text(wrapped_single)
+        mine_s, ref_s = ventures._mini_yaml(fs), yaml.safe_load(wrapped_single)
+        self.assertEqual(mine_s["checks"][0]["cmd"], ref_s["checks"][0]["cmd"],
+                         "a single-quoted scalar wrapped across a fold keeps its backslashes")
+        self.assertIn('\\\"', mine_s["checks"][0]["cmd"])
+        wrapped_double = ('checks:\n- id: w\n  cmd: "first line\\\n'
+                          '    second line with \\"healthy\\" in it"\n')
+        fd = self.tmp / "wd.yaml"
+        fd.write_text(wrapped_double)
+        self.assertEqual(ventures._mini_yaml(fd)["checks"][0]["cmd"],
+                         yaml.safe_load(wrapped_double)["checks"][0]["cmd"],
+                         "a double-quoted scalar wrapped across a fold DOES unescape")
+
 
 class VentureBuilder(KernelCase):
     """M4. One command reads a venture's four artifacts."""

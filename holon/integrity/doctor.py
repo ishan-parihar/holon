@@ -284,9 +284,15 @@ def run(k) -> list[dict]:
     # it or remove it — never to let it keep growing unnamed.
     _vocab = {"config", "execution", "capabilities", "bylaws", "skills", "kb", "genome",
               "adapters", "backups", "ventures", "governance", ".clock"}
-    used = {Path(r[0]).resolve().name for r in q("SELECT workdir FROM tasks WHERE workdir IS NOT NULL "
-                                                 "AND workdir<>''") if Path(r[0]).parent.resolve()
-            == k.home.root.resolve()}
+    # A work's workdir may sit *inside* a root directory no work names directly — the recurring
+    # plans point at `<root>/routines/<plan>`, and `routines/` is declared by that use. So every
+    # ancestor from the workdir up to the instance root is declared, not only the leaf.
+    used = set()
+    for r in q("SELECT workdir FROM tasks WHERE workdir IS NOT NULL AND workdir<>''"):
+        p = Path(r[0]).expanduser().resolve()
+        if p.is_relative_to(k.home.root.resolve()):
+            used.update(p.relative_to(k.home.root.resolve()).parts)
+
     covered = [Path(x).expanduser().resolve() for group in (k.config.get("scope", {}).get("roots") or [],
                *(d.get("roots") or [] for d in (k.config.get("scope", {}).get("dept") or {}).values()))
                for x in group]

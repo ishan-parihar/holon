@@ -152,22 +152,39 @@ def _mini_yaml(path: Path) -> dict:
         quoted_open = (text.endswith("\\") or text.startswith('"') or text.startswith("'")) and not (
             len(text) > 1 and text[0] == text[-1] and text[0] in "\"'")
         if quoted_open:
-            parts = [text.rstrip("\\").rstrip()]
+            # Is the value double- or single-quoted? The distinction decides what a
+            # trailing backslash means at the end of a continued line, so it is asked
+            # once, on the text as written, before any of it is stripped.
+            dq = text.lstrip()[:1] == '"'
+            # In a double-quoted scalar a single trailing backslash escapes the line
+            # break: YAML drops the marker AND the fold space, joining with nothing. In a
+            # single-quoted scalar a backslash is literal — it stays, and the fold joins
+            # with a space. Every other line ends its fold with a space. Stripping the
+            # marker indiscriminately rewrote all three.
+            def ends_in_escaped_break(s: str) -> bool:
+                return dq and s.endswith("\\") and not s.endswith("\\\\")
+            parts = [text]
             j = i + 1
             while j < len(lines) and lines[j][0] > indent:
                 piece = lines[j][1]
                 if piece.startswith("- "):
                     break  # a list, not a continuation
-                parts.append(piece.rstrip("\\").rstrip())
+                parts.append(piece)
                 j += 1
-            joined = " ".join(parts)
-            quote = joined[0] if joined[:1] in "\"'" else ""
+            # the first line's own trailing whitespace is never part of the value
+            joined = parts[0].rstrip()
+            for piece in parts[1:]:
+                if ends_in_escaped_break(joined):
+                    # the previous line's marker escapes the break: it is dropped and
+                    # this one joins directly to it, with no fold space at all
+                    joined = joined[:-1].rstrip() + piece.strip()
+                else:
+                    joined += " " + piece.strip()
             if len(joined) > 1 and joined[0] == joined[-1] and joined[0] in "\"'":
                 joined = joined[1:-1]
-            # the escapes first (\uXXXX, \xXX), then the escaped space that joins a
-            # continued line — YAML's line-fold marker. A single-quoted scalar is skipped:
-            # its backslashes are literal (see `scalar`, the single-line sibling).
-            if quote == '"':
+            # the escapes (\uXXXX, \xXX) only in a double-quoted scalar, then the escaped
+            # space YAML writes to keep a leading space at a fold.
+            if dq:
                 joined = _unescape(joined)
                 joined = joined.replace("\\ ", " ")
             return joined, max(j, i + 1)

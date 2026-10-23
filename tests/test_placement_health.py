@@ -74,6 +74,21 @@ class StrayRootDirectories(KernelCase):
         self.assertEqual([f for f in doctor.run(self.k) if f["check"] == "scope.stray"], [],
                           "a used workdir or kernel vocabulary dir is not a stray")
 
+    def test_a_root_directory_whose_child_a_work_names_is_not_stray(self):
+        """The live instance, 2026-10-22: the recurring plans' workdirs were re-pointed from the
+        retired era's scratchpads to `<root>/routines/<plan>`, and doctor cried `scope.stray`
+        about `routines/` itself — because the check collected workdir names one level down
+        (`used` held `disk-usage` and `notes-digest`, never `routines`). A directory that holds
+        a live work's workdir is declared by that use at every level, so a root that groups
+        per-plan directories is exactly as legitimate as a root used directly."""
+        group = self.home.root / "routines"
+        (group / "disk-usage").mkdir(parents=True)
+        (group / "notes-digest").mkdir(parents=True)
+        self.add("Routine: Disk usage report", workdir=str(group / "disk-usage"))
+        self.add("Routine: Notes digest", workdir=str(group / "notes-digest"))
+        findings = [f for f in doctor.run(self.k) if f["check"] == "scope.stray"]
+        self.assertEqual([], findings, f"a root directory a work's workdir sits inside is declared: {findings}")
+
     def test_a_scope_root_covers_its_own_root_directory(self):
         """[scope] roots are the Chair's declaration of where a department may work: a
         directory under one is declared, not stray."""
