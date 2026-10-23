@@ -255,6 +255,24 @@ class Setup(KernelCase):
             apply_line = next(l for l in printed.splitlines() if "isolation apply" in l)
             self.assertIn("--force", apply_line, f"the apply line carries the flag: {apply_line!r}")
 
+    def test_no_remediation_names_a_command_the_gate_would_refuse(self):
+        """A message that names the fix must name the fix that WORKS. `doctor` tells the operator
+        which command repairs the boundary, and two of its remediation strings said
+        `holon isolation apply` bare — so the moment isolation is applied and one of those errors
+        fires, the operator is told to run a command that returns ValueError. Latent, not live:
+        those checks are unreachable while `isolation.off` is still a warning, which is exactly why
+        it would have shipped unseen."""
+        from holon import cli
+        gate = next(c for c in cli.REGISTRY if c.path == ("isolation", "apply"))
+        needed = [a[0] for a, _ in gate.args if a[0].startswith("--")]
+        self.assertTrue(needed, "the gate declares its flag; if it did not, this guard is moot")
+        src = (Path(__file__).resolve().parents[1] / "holon" / "integrity" / "doctor.py").read_text()
+        for line in src.splitlines():
+            if "isolation apply" not in line or "holon isolation apply" not in line:
+                continue
+            self.assertIn("--force", line,
+                          f"a remediation names the apply command without its flag: {line.strip()}")
+
     def test_the_agent_may_only_traverse_toward_what_it_needs(self):
         top = self.tmp / "home"
         (top / "projects" / "acme").mkdir(parents=True)

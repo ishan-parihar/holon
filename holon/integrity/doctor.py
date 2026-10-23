@@ -43,9 +43,11 @@ def _isolation(k, add) -> None:
     for f in p["readable_secrets"]:
         add("error", "isolation.secrets", f"the agent user can read {f}")
     for f in p["unwritable"]:
-        add("error", "isolation.reach", f"the agent user cannot write {f}, which is in its reach (holon isolation apply)")
+        add("error", "isolation.reach", f"the agent user cannot write {f}, which is in its reach "
+                                        "(holon isolation apply --force)")
     for f in p["unreadable"]:
-        add("error", "isolation.reach", f"the agent user cannot read {f}, which it needs (holon isolation apply)")
+        add("error", "isolation.reach", f"the agent user cannot read {f}, which it needs "
+                                        "(holon isolation apply --force)")
     try:
         with isolation.connect(k.isolation["broker"], timeout=5):
             pass
