@@ -314,6 +314,48 @@ class Doctor(KernelCase):
         found = rules(doctor.run(self.k))
         self.assertTrue({"graph.stuck", "graph.claimed_run"} <= found, found)
 
+    def test_no_remediation_names_a_command_the_gate_would_refuse(self):
+        """A warning that names the fix must name the fix that WORKS. `doctor` is what an operator
+        reads when something is wrong, so its strings are instructions: following one and being
+        handed an error is worse than having been told nothing.
+
+        The generalization of the `isolation apply --force` fix. Measured on a fresh instance:
+        `gc --apply` alone returns `ValueError: ... or --force`, and `gc --apply --force` works.
+        But `retention.overdue` still said `holon gc --apply` -- the gate exists and the string did
+        not know it did. That is the same defect, the same surface, a second command.
+
+        Derived, not restated: the registry is walked for every command that declares `--force`, and
+        each of `doctor.py`'s mentionings of one is checked in place -- not by a whitelist of
+        strings. A dry-run mention is exempt (dry-run genuinely needs no force); an apply is not.
+        An earlier version of this guard used a negative lookahead that silently made it vacuous,
+        which is why the check is on the mention in its sentence, not on its trailing text."""
+        import pathlib
+        import re
+        from holon import cli
+        gated = [" ".join(c.path) for c in cli.REGISTRY
+                 if "--force" in [a[0] for a, _ in (c.args or [])]]
+        self.assertIn("gc", gated, "gc refuses --apply without --force; if it stopped, this guard is moot")
+        self.assertIn("isolation apply", gated, "the isolation gate the last round fixed")
+        src = pathlib.Path(doctor.__file__).read_text()
+        checked = 0
+        for name in gated:
+            for m in re.finditer(r"holon %s\b" % re.escape(name), src):
+                lineno = src[:m.start()].count("\n") + 1
+                line_text = src[src.rfind("\n", 0, m.start()) + 1:
+                                src.find("\n", m.start())]
+                # a dry-run mention is a look-before-you-leap instruction, and needs no force.
+                # Check the warning's whole line, since the word and the command share a sentence.
+                if "dry-run" in line_text or "dry run" in line_text:
+                    continue
+                window = " ".join(src[m.start():m.end() + 60].split())
+                checked += 1
+                self.assertIn("--force", window,
+                              f"doctor names `{name}` without the flag it requires (line {lineno}): "
+                              f"{window[:90]}")
+        self.assertGreaterEqual(checked, 3,
+                                "doctor names the gated commands it tells the operator to run; "
+                                "if that count fell, this guard drifted silent")
+
     def test_separation_of_duties_is_audited_in_history(self):
         t = self.add(dept="eng", task_class="demo")
         self.plan_and_approve(t, assignee=self.dev1, writes=[])

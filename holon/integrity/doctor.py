@@ -126,7 +126,7 @@ def run(k) -> list[dict]:
         last = k._setting("gc:last_run")
         if not last or last < (datetime.now(timezone.utc) - timedelta(days=window)).strftime("%Y-%m-%dT%H:%M:%S.%fZ"):
             add("warning", "retention.overdue",
-                f"no `holon gc --apply` in over {window} days (last: {last or 'never'}) — run directories and "
+                f"no `holon gc --apply --force` in over {window} days (last: {last or 'never'}) — run directories and "
                 "messages past [retention] sit uncollected; dry-run `holon gc` first, back up, then apply")
 
     # U1/U3: the bylaws's synced view must not be older than its source, nor the registry than the sync
