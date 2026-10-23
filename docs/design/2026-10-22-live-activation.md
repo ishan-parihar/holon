@@ -1,7 +1,7 @@
 # The heartbeat, the channel, and the live activation — measured
 
-Status: 2026-10-22T20:46Z. Live instance `/home/ishanp/holon`. Repo public `563bb2c` · 598 tests ·
-lint 0/0. Backup taken before any change: `/var/tmp/ishanp-agentic/rescue/backup-pre-activation`
+Status: 2026-10-22T20:46Z. Live instance `$HOLON_HOME`. Repo public `563bb2c` · 598 tests ·
+lint 0/0. Backup taken before any change: `<scratch>/rescue/backup-pre-activation`
 (1146 files).
 
 Three approvals acted on. **Two are fully live. One is blocked on a single root command, and that
@@ -117,7 +117,7 @@ runs:   <instance>/execution/runtime/runs/
 
 ```
 setfacl -m "u:nosuchuser9999:rwx" <file>   → setfacl: Option -m: Invalid argument near character 3
-setfacl -m "u:ishanp:rwx"        <file>   → applied: user:ishanp:rwx
+setfacl -m "u:<operator>:rwx"        <file>   → applied: user:<operator>:rwx
 ```
 
 ACLs work on this btrfs. The failure is that **`holon-agent` does not exist yet**, and creating it
@@ -161,7 +161,7 @@ Doing it out of order is what produced the error above.
 - **`isolation.off`** — expected: `agent_user` is not set, so agents run as the kernel's user.
   This is the one the root step closes, and it is the highest-consequence warning in the list.
 - **`workdir.missing` × 2 and `artifacts.dangling` × 7** — the live record points at B-side
-  scratchpads under `/var/tmp/ishanp-agentic/claude-1000/…-hermes-organism/…/scratchpad/…` that
+  scratchpads under `<scratch>/claude-1000/…-hermes-organism/…/scratchpad/…` that
   the retired harness era left behind. Isolation changes nothing here: `[isolation] writes` is the
   pioneer-qf scope only, so those paths are outside the agent's reach either way. These are a
   record-keeping problem — restore the files, or supersede the results — now visible because the
@@ -266,7 +266,7 @@ Yours are currently:
 
 ```
 [notify]  command = "operant org holon notify --reason heartbeat --text {message}"
-[chair]   channels = ["telegram:5297486612"]   (was none until 2026-10-22)
+[chair]   channels = ["telegram:<the Chair's chat id>"]   (was none until 2026-10-22)
 ```
 
 So once the destination was named, the kernel computes, the adapter delivers, and the digest
@@ -274,10 +274,10 @@ now **reaches you**. Before this session's activation, `[chair] channels` was em
 "nobody" was the correct output.
 
 **[2026-10-22, activated]** The Chair channel is now wired and delivering:
-`channels = ["telegram:5297486612"]`. The id was not guessed — it is the `admins` entry already
+`channels = ["telegram:<the Chair's chat id>"]`. The id was not guessed — it is the `admins` entry already
 declared in the live gateway config, and the Telegram API confirms it is a private chat
-(`@ishan_parihar`), which is exactly the identity the kernel's comment asked for. The bot is live
-(`@ip_operant_testing_bot`).
+(`the operator's own account`), which is exactly the identity the kernel's comment asked for. The bot is live
+(`the operator's test bot`).
 
 The kernel's own seam is proven, not just the adapter's: a real owed item
 (`msg send chair … --kind question`) ticked through the heartbeat and recorded
@@ -330,11 +330,11 @@ does not learn the mapping exists.
 ## 6. The one action left, and why it is safe to do now
 
 ```sh
-sudo sh /var/tmp/ishanp-agentic/rescue/isolation-root-step.sh   # root: the agent user + its runner
+sudo sh <scratch>/rescue/isolation-root-step.sh   # root: the agent user + its runner
 # re-add [isolation] agent_user (step 1.5, below), then:
-holon --home /home/ishanp/holon isolation apply --force           # the ACLs (needs the user to exist)
+holon --home $HOLON_HOME isolation apply --force           # the ACLs (needs the user to exist)
 systemctl --user enable --now holon-broker                       # install.py writes this unit
-holon --home /home/ishanp/holon doctor                            # the isolation checks, probed as holon-agent
+holon --home $HOLON_HOME doctor                            # the isolation checks, probed as holon-agent
 ```
 
 `[isolation] agent_user` is currently **absent** from `holon.toml` — re-add it at the same
@@ -345,8 +345,8 @@ time as the root step, or the `isolation.runner` error above returns:
 agent_user = "holon-agent"
 ```
 
-The backup at `/var/tmp/ishanp-agentic/rescue/backup-pre-activation/` covers the way back, and the
-runbook is `/var/tmp/ishanp-agentic/isolation-one-root-step.md`. The root script it names is
+The backup at `<scratch>/rescue/backup-pre-activation/` covers the way back, and the
+runbook is `<scratch>/isolation-one-root-step.md`. The root script it names is
 byte-identical to what the kernel's own `isolation setup_plan` generates, and regenerable with
 `holon isolation plan` — an earlier version of this handoff named a path under `/tmp`, which no
 longer existed.

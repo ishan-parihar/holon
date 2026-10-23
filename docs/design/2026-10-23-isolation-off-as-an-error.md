@@ -1,6 +1,6 @@
 # `isolation.off` as an error, and the incident it opens every tick
 
-Status: 2026-10-23. Live instance `/home/ishanp/holon`. Repo public `34c58d8`.
+Status: 2026-10-23. Live instance `$HOLON_HOME`. Repo public `34c58d8`.
 Measured, not asserted: every number below is from a command run against the live instance
 or a fresh one.
 

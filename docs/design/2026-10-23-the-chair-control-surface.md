@@ -1,6 +1,6 @@
 # The Chair channel as a live control surface — architecture, measured
 
-Status: 2026-10-23. Repo `cf26467`. Live instance `/home/ishanp/holon`.
+Status: 2026-10-23. Repo `cf26467`. Live instance `$HOLON_HOME`.
 
 You asked for three things: a new bot token, the old one retired, and an architecture for a
 button-driven interaction surface that lets you operate and align the organization from your
@@ -15,28 +15,28 @@ phone. This record answers each, and it separates what is **measured and done** 
 
 | | id | username | name |
 |---|---|---|---|
-| old | 8889773233 | `ip_operant_testing_bot` | Operant Testing Bot |
-| **new** | 8332461139 | `@ip_holon_bot` | **Holon AgenticOS** |
+| old | <the old bot's id> | `the operator's test bot` | Operant Testing Bot |
+| **new** | <the production bot's id> | `the production notification bot` | **Holon AgenticOS** |
 
-so the production identity is now `@ip_holon_bot`, which is what you intended.
+so the production identity is now `the production notification bot`, which is what you intended.
 
 **Where tokens actually lived** — measured, not assumed. Two independent sources, both of which
 your own operator notes said had to be rotated together (`~/.operant/org/employees/dispatcher/
 MEMORY.md`: *"If zeroclaw, rotate `.env` + `operant.toml` token and restart gateway"*):
 
 ```
-/home/ishanp/.operant/operant.toml:109   telegram_token = "8889773233:…"
-/home/ishanp/.operant/.env:2             TELEGRAM_BOT_TOKEN=8889773233:…
+~/.operant/operant.toml:109   telegram_token = "<the old bot's id>:…"
+~/.operant/.env:2             TELEGRAM_BOT_TOKEN=<the old bot's id>:…
 ```
 
 Rotating only one would have left the gateway on the old bot. **Both were replaced**, the gateway
-was restarted, and the running process now resolves the new bot. Backups: `/var/tmp/ishanp-agentic/
+was restarted, and the running process now resolves the new bot. Backups: `<scratch>/
 operant.toml.bak`, `env.bak`, `operant.new.toml`, `env.new`.
 
 ### The one thing I cannot do for you
 
 ```
-curl getChat?chat_id=5297486612   →  {"ok":false,"error_code":400,
+curl getChat?chat_id=<the Chair's chat id>   →  {"ok":false,"error_code":400,
                                       "description":"Bad Request: chat not found"}
 getUpdates                        →  []
 ```
@@ -46,7 +46,7 @@ fails with `chat not found`. I proved the wiring is correct rather than guess at
 test with the old token restored delivered cleanly (`chair notify: 1 sent, 0 failed`), which
 isolates the cause to the missing conversation and nothing else.
 
-**To close it: send `/start` to `@ip_holon_bot` once.** The moment you do, the digest reaches it
+**To close it: send `/start` to `the production notification bot` once.** The moment you do, the digest reaches it
 with no further change. Until then the kernel keeps the item owed and records the failure by name
 rather than marking it sent — which is exactly the `dropped_marker` behaviour working correctly.
 
@@ -87,7 +87,7 @@ organization: 3 departments, 7 employees · auth: configured
 
 ```
 ['decision model unavailable (rubric): HTTP 429 …',
- 'question from emp:emp_01M4RAJZDXGFHHQSDGJA23ZJBE: Awaiting your /start to @ip_holon_bot …
+ 'question from emp:emp_01M4RAJZDXGFHHQSDGJA23ZJBE: Awaiting your /start to the production notification bot …
   (holon msg thread msg_01M5K5QDAWEE967TFED0M30ACN)']
 ```
 
@@ -118,7 +118,7 @@ lives in the kernel.** Everything below lives in `adapters/`.
 **The Chair key is a capability, not a session.** Measured:
 
 ```
-/home/ishanp/.config/holon/keys/01m4sf0wr27mgs9e1327aqxp1z.chair    0600  uid 1000
+~/.config/holon/keys/01m4sf0wr27mgs9e1327aqxp1z.chair    0600  uid 1000
 ```
 
 `security.principal()` resolves a local process holding that key to `Principal("chair")`. And
@@ -133,7 +133,7 @@ boundary isolation already enforces, applied to a new seat.
 ```mermaid
 flowchart TD
   subgraph PHONE["Your phone"]
-    TG["@ip_holon_bot<br/>buttons + text"]
+    TG["the production notification bot<br/>buttons + text"]
   end
   subgraph HOST["The host — the kernel's user, outside every sandbox"]
     AD["adapters/telegram/<br/>the channel adapter"]

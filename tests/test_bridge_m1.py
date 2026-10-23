@@ -33,7 +33,7 @@ status: "active"
 sub_system: "loop"
 no_agent: false
 axe_awareness: true
-deliver: "telegram:5297486612:129032"
+deliver: "telegram:123456789:129032"
 workdir: ""
 model: "large-stack"
 provider: "Kilo"

@@ -34,7 +34,7 @@ from tests.helpers import KernelCase
 # rule everywhere (the same contract test_bridge_m4.py already documents).
 CORPUS = Path(__file__).resolve().parents[2] / "ventures"
 if not CORPUS.is_dir():
-    CORPUS = Path(os.environ.get("HOLON_POOLS") or "/home/ishanp/.hermes/organism/ventures")
+    CORPUS = Path(os.environ.get("HOLON_POOLS") or Path.home() / ".ventures" / "ventures")
 
 
 class StatusVocabulary(KernelCase):

@@ -109,8 +109,8 @@ installer. What exists is `[isolation] agent_user` — the **Linux user** the
 agents run as. Measured with `isolation.reach()` against the live config:
 
 ```
-reads:   /home/ishanp/Documents/github/my-projects/holon   (the checkout)
-writes:  /home/ishanp/Documents/github/my-projects/pioneer-qf  (+ core, data, logs)
+reads:   <projects>/holon   (the checkout)
+writes:  <projects>/pioneer-qf  (+ core, data, logs)
 runs:    <instance>/execution/runtime/runs/
 ```
 

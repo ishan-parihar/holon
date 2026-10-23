@@ -33,7 +33,7 @@ from tests.helpers import KernelCase
 # machine-dependent (it failed here on a B-side file while the checkout was clean), so the corpus
 # is located by environment and the comparison skips when it is absent: the self-contained guards
 # below carry the rule on any checkout, and this test adds the real files where they exist.
-POOLS = Path(os.environ.get("HOLON_POOLS") or "/home/ishanp/.hermes/organism/ventures")
+POOLS = Path(os.environ.get("HOLON_POOLS") or Path.home() / ".ventures" / "ventures")
 VENTURE = POOLS / "career-pipeline"
 
 
@@ -189,6 +189,8 @@ class VentureBuilder(KernelCase):
 
     def pool(self, tmp: Path) -> Path:
         """A scratch copy of a venture pool, so a test never writes to the real one."""
+        if not VENTURE.is_dir():
+            self.skipTest(f"no venture at {VENTURE}; set HOLON_POOLS to run the builder against the real corpus")
         dst = tmp / "venture"
         shutil.copytree(VENTURE, dst, ignore=shutil.ignore_patterns("data", "archive", "kb", "logs"))
         return dst
@@ -254,6 +256,8 @@ class VentureBuilder(KernelCase):
 
     def test_the_builder_reads_every_pool(self):
         """The builder is not specific to one pool: it reads all ten."""
+        if not POOLS.is_dir():
+            self.skipTest(f"no pools at {POOLS}; set HOLON_POOLS to run this against the real corpus")
         for pool in sorted(POOLS.iterdir()):
             if not pool.is_dir() or not (pool / "cron-jobs").is_dir():
                 continue

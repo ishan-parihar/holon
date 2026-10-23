@@ -1,6 +1,6 @@
 # Verifying the `--force` gate, and the third place it was needed
 
-Status: 2026-10-23. Live instance `/home/ishanp/holon`. Repo public `ad16fb1`.
+Status: 2026-10-23. Live instance `$HOLON_HOME`. Repo public `ad16fb1`.
 No state changed in this session; every conclusion below is from a mutation or a real command.
 
 The `--force` gate on `isolation apply` (`7518afa`) was validated by reading its own consumer, and
@@ -63,11 +63,11 @@ one. Neither is a restatement of the other.
 
 ## 4. The runbook — the defect that would have actually cost a step
 
-`/var/tmp/ishanp-agentic/isolation-one-root-step.md` is the handoff the Chair follows for the root
+`<scratch>/isolation-one-root-step.md` is the handoff the Chair follows for the root
 isolation step. Its step 2 read:
 
 ```sh
-python3 -m holon --home /home/ishanp/holon isolation apply       # 83 setfacl commands
+python3 -m holon --home $HOLON_HOME isolation apply       # 83 setfacl commands
 ```
 
 Bare. Following it returns ValueError, one command into the Chair's only remaining manual step,
