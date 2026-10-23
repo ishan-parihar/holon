@@ -195,6 +195,26 @@ concurrent agent sessions are running. This is the deployment's problem to resol
 it as a kernel defect would be the conflation AGENTS.md law 10 exists to prevent; it is recorded
 here because it changes what "is it deployed?" means for the Chair's root command.
 
+### 1h. Two guards whose docstrings described the defect they were written beside
+
+Enumerating every guard in the module to confirm the map's "all five probes held" row found two
+whose docstrings asserted the **unfixed** behaviour of defect 1a: the runner "starts a process with
+the runner's whole environment plus the caller's dict merged over it", and the caller "can override
+any credential". Both stopped being true when 1a was fixed, and both assertions kept passing because
+neither tests the claim its docstring makes — each asserts the half that was never in dispute
+(the caller's own value reaches the spawn).
+
+That is a distinct failure from a false document: a reader of the guard names concludes a credential
+reaches the spawn when it does not. Settled by re-measurement, not by reading the code — with a
+real credential in the runner's inherited environment (**not** a marker of my own in the test's
+process), the spawn prints `unset`. The two docstrings now state what they assert, point at
+`test_the_isolated_harness_gets_only_the_runs_environment` for the other half, and record that the
+assertion outliving its description is how a suite looks green after its premise changed.
+
+The general lesson the module now carries: **a guard's name and docstring are a claim, and the
+claim is part of what must be validated.** The map's own rows are the same risk, which is why this
+validation round ran the names rather than the module.
+
 ---
 
 ## 2. What is on the live instance: nothing

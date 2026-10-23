@@ -74,21 +74,38 @@ class RedTeam(KernelCase):
 
     # ── the runner's environment ───────────────────────────────────────────
     def test_a_spawned_process_can_read_a_credential_the_runner_inherited(self):
-        """The runner starts a process with the runner's whole environment plus the
-        caller's dict merged over it. A credential in the runner's environment is
-        therefore inside the spawn, and the caller can override any name.
+        """A caller-supplied env name reaches the spawned process — that is what the run's
+        environment is *for*.
 
-        The systemd unit that starts the runner sanitizes nothing beyond
-        NoNewPrivileges, so in a deployment where the operator's session
-        environment reaches the service, every such name is the agent's.
-        """
+        This asserts the half of the runner's contract that was never in dispute, and the
+        half that must not regress while fixing the other: a run carries its own env (its
+        tokens, its endpoints), so a caller's value must arrive. Measured 2026-10-23 with
+        an `x` in the caller's dict: the spawn prints `x`.
+
+        The disputed half is in
+        `test_the_isolated_harness_gets_only_the_runs_environment`: a name the runner
+        *inherited* must not arrive. That defect was real and is fixed, so two things must
+        both hold — the caller's dict arrives, and nothing else does. The docstring here
+        used to claim the inherited environment is "merged over", which stopped being true
+        when 1a was fixed; the assertion kept passing because it never tested the merge.
+        That is the drift this docstring now corrects: an assertion that outlives its own
+        description is how a suite looks green after its premise changed."""
         code, out, err = isolation.run(self.runner, "echo ${RT_SECRET:-unset}", "/", {"RT_SECRET": "x"}, 30)
         self.assertEqual(out.strip(), "x", "a caller-supplied env value reaches the spawned process")
 
     def test_the_runner_hands_the_caller_power_over_any_inherited_name(self):
-        """A name the inherited environment already carries can be overridden by the
-        caller: the merge is the caller over the runner, so HOLON_HOME, PYTHONPATH
-        and any credential are all replaceable."""
+        """A name the caller supplies wins, and only the caller's names arrive.
+
+        Measured 2026-10-23: `HOLON_HOME` is overridable to `/tmp/rt`. This is about the
+        **caller's** dict, which is the run's own environment and authoritative for it.
+
+        The docstring's earlier half — "a name the inherited environment already carries
+        can be overridden ... the caller can override any credential" — described 1a's
+        defect: the merge of the runner's inherited environment, which is how a credential
+        the runner starts with became the agent's. Fixed, so there is no longer an
+        inherited environment to override; the remaining truth is that the run's own names
+        are the caller's to set. Kept, because the assertion is still the right one to
+        watch while that boundary is subject to change."""
         code, out, _ = isolation.run(self.runner, "echo ${HOLON_HOME:-unset}", "/", {"HOLON_HOME": "/tmp/rt"}, 30)
         self.assertEqual(out.strip(), "/tmp/rt", "the caller's value wins over the inherited one")
 
