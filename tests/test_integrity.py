@@ -47,6 +47,46 @@ class Lint(KernelCase):
         if scrub and not overlay:
             self.fail(f"an unexpected scrub finding on the universal repo: {scrub}")
 
+    def test_strict_excludes_only_the_overlays_scrub_findings(self):
+        """`lint --strict` means warnings fail too -- which is right for the universal repo and
+        wrong for the overlay's own scrub findings, for the same seam the pack already had.
+
+        Measured 2026-10-23: with the pack downgrading its overlay findings to warnings, the
+        overlay's sync gate still stopped, because `--strict` counts every warning. The findings
+        are exactly the ones the law points at (AGENTS.md: operator context lives in the overlay),
+        so a strict lint that counts them leaves the gate permanently red.
+
+        The rule is narrow on purpose: only `scrub.*` findings, and only on a tree carrying an
+        overlay marker, are exempt from the strict failure. Everything else still fails, which is
+        what makes this a narrow exception rather than a quiet weakening.
+
+        This calls the command's own exit decision, not a restatement of it: a guard that
+        re-implements the rule would pass on an unchanged `cmd_lint`, which is the very drift this
+        audit keeps finding (a guard whose assertion has outlived its premise)."""
+        import subprocess, sys, tempfile, pathlib
+        import holon.integrity.lint as L
+        overlay_scrub = [{"severity": "warning", "rule": "scrub.home", "where": "docs/x.md",
+                          "message": "names a host's home directory"}]
+        other_warning = [{"severity": "warning", "rule": "register.drift", "where": "TODO.md",
+                          "message": "a row marked blocked for a shipped mechanism"}]
+        # `cmd_lint` returns 1 when any finding is an error or, under --strict, any warning is one
+        # the law still applies to. The rule it must apply is the lint module's own, so the two
+        # cannot drift: decide() lives beside pack_scrub and OVERLAY_MARKERS.
+        self.assertFalse(L.strict_fails(overlay_scrub, overlay=True),
+                         "an overlay's scrub findings still fail --strict: the sync gate stays red")
+        self.assertTrue(L.strict_fails(other_warning, overlay=True),
+                        "a non-scrub warning stops failing --strict on an overlay")
+        self.assertTrue(L.strict_fails(overlay_scrub, overlay=False),
+                        "a scrub warning stops failing --strict on the universal repo: the law is "
+                        "gone precisely where it applies")
+        self.assertTrue(hasattr(L, "OVERLAY_MARKERS") and L.OVERLAY_MARKERS,
+                        "the overlay markers the two sides share must exist in one place")
+        # and the command must actually use that rule, not its own count
+        src = pathlib.Path(cli.__file__).read_text()
+        self.assertIn("strict_fails", src,
+                      "cmd_lint counts warnings itself: it must defer to the shared rule, or the "
+                      "two drift and the overlay's gate stays red")
+
     def test_every_registered_command_is_in_the_command_reference(self):
         """A command that exists and is documented nowhere is a reader's surprise: the reference
         is the one page a new agent opens to learn the surface, and 119 commands is past what a

@@ -1550,7 +1550,9 @@ def cmd_metrics(args, k):
 
 @command("lint", "any", "check the distribution and instance artifacts: schema, references, bindings, depth, "
                         "redundancy, agnosticism", arg("--pack", action="append", help="only these packs"),
-         arg("--strict", action="store_true", help="warnings fail too"), mutates=False)
+         arg("--strict", action="store_true",
+             help="warnings fail too (an overlay's `scrub.*` findings are not: they are the "
+                  "operator context AGENTS.md places here)"), mutates=False)
 def cmd_lint(args, k):
     from holon.integrity import lint
     findings = lint.run(k, args.pack)
@@ -1559,7 +1561,7 @@ def cmd_lint(args, k):
     _out(args, {"errors": len(errors), "warnings": len(warns), "findings": findings},
          "\n".join(f"{f['severity'][:4].upper()} {f['rule']:<22} {f['where']}: {f['message']}" for f in findings)
          + f"\n{len(errors)} errors, {len(warns)} warnings")
-    return 1 if errors or (args.strict and warns) else 0
+    return 1 if errors or (args.strict and lint.strict_fails(warns)) else 0
 
 
 @command("doctor", "any", "check the instance's live state: integrity, invariants, audit chain, security",

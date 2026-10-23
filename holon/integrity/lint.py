@@ -886,6 +886,33 @@ SCRUB_PATHS = (("ARCHIVE", "archive"), ("DOCS", "docs"), ("TESTS", "tests"))
 OVERLAY_MARKERS = ("PERSONAL.md", "scripts/sync-public.sh")
 
 
+def is_overlay() -> bool:
+    """Whether this checkout is an operator's overlay rather than the universal repo.
+
+    Both sides of the scrub law need the same answer -- the pack, to decide a finding's
+    severity, and `lint --strict`, to decide whether the finding fails the run -- and the
+    two drifting apart is exactly what happened on 2026-10-23: the pack downgraded and the
+    strict count still failed the overlay's sync gate. One function, one answer.
+    """
+    return any(DIST.joinpath(m).exists() for m in OVERLAY_MARKERS)
+
+
+def strict_fails(findings: list[dict], overlay: bool | None = None) -> bool:
+    """`--strict` requires no warnings the law still applies to.
+
+    On the universal repo every warning fails. On an overlay the `scrub.*` warnings do not,
+    because they are the operator context AGENTS.md's overlay section names as belonging
+    here -- a gate that always fails on them is a gate nobody reads. The exemption is the
+    narrowest that unblocks the gate: one rule family, one tree, and every other warning
+    (docs, register, agnosticism, contracts) still fails on both.
+    """
+    if overlay is None:
+        overlay = is_overlay()
+    return any(f["severity"] == "warning"
+               and not (overlay and f["rule"].startswith("scrub."))
+               for f in findings)
+
+
 def pack_scrub(k, f: Findings) -> None:
     """Instance specifics stay out of the universal repo (AGENTS.md, the overlay section).
 
@@ -902,7 +929,7 @@ def pack_scrub(k, f: Findings) -> None:
     So the pack detects the overlay (`OVERLAY_MARKERS`) and **downgrades** rather than skips: the
     findings still print, because the Chair should be able to see them, but they are warnings
     rather than errors, so a push is not blocked by the tree the law points at."""
-    overlay = any(DIST.joinpath(m).exists() for m in OVERLAY_MARKERS)
+    overlay = is_overlay()
     severity = "warning" if overlay else "error"
     files: list[Path] = []
     for name in SCRUB_FILES:
