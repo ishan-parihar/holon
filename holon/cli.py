@@ -884,9 +884,16 @@ def legacy_cron(path: Path) -> dict:
             # every protocol in the only importable pool declares no `status` at all, so the old
             # default (`!= "active"`) silently dropped every one of them, and the apply's
             # `except …: continue` reported `routines: 0` beside `protocols: 4`.
+            # `superseded` was the omission beside that rule: measured 2026-10-23 across the
+            # corpus, 29 of 62 protocol files declare `status: superseded` and every one of them
+            # imported as live, because the value was absent from this tuple. `quant-trading`'s
+            # two (`monthly-retrain`, `weekly-reconciliation`) have no routine in the live registry
+            # at all, so the import would have bought bodies for work the live system dropped.
+            # Quoting is not a factor: the front-matter reader above strips both quote
+            # kinds, so a `paused` or a `superseded` reached this tuple already normalized.
             "paused": str(meta.get("status", "active")).strip().strip("'").lower()
-                      in ("paused", "decommissioned", "disabled", "off", "retired", "archived",
-                          "false", "no", "0"),
+                      in ("paused", "superseded", "decommissioned", "disabled", "off",
+                          "retired", "archived", "false", "no", "0"),
             "source": str(path),
             "skills": skills, "enabled_toolsets": toolsets,
             "provenance": {"source": str(path), "fields": dict(carried), "dropped": []},
