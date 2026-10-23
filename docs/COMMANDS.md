@@ -184,7 +184,7 @@ is not in this file fails `holon lint` — so this file can never drift from the
 
 | Command | Actor | What it does |
 |---|---|---|
-| `holon isolation apply` | chair | apply the isolation ACLs (agents reach only their trees, run directories and binaries; every other entry on the way is denied to them) |
+| `holon isolation apply` `--force` | chair | apply the isolation ACLs (agents reach only their trees, run directories and binaries; every other entry on the way is denied to them) |
 | `holon isolation plan` `--write` | chair | the one-time setup that runs agents as [isolation] agent_user: a script for root and the ACLs this user applies |
 | `holon broker` | kernel | serve the organization to agents running as [isolation] agent_user (a user service) |
 | `holon mcp` | any | serve the organization as MCP tools over stdio (for MCP-capable harnesses) |
