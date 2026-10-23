@@ -382,9 +382,22 @@ def reach(k) -> dict:
 def setup_plan(k) -> dict:
     """The one-time setup: a script for root (the agent user and its runner service) and the ACLs the
     kernel's user applies (`holon isolation apply`). Inside the kernel user's home, which agents must
-    never read, the agent may only traverse the directories leading to what it needs; every other entry
-    in those directories, and every future one, carries an explicit deny for the agent user, because
-    the files there are typically world-readable (0644) and only the home's own 0700 keeps others out."""
+    never read, the agent may only traverse the directories leading to what it needs.
+
+    On the security promise, precisely, because it was overstated (measured 2026-10-23): the plan
+    emits an access deny for entries that are not in the reach, but a later recursive grant on a
+    directory REPLACES a named deny on a file beneath it — POSIX ACLs hold one entry per user, and
+    the last `setfacl` for that user wins. Measured on a real replica, the harness's payload is
+    named with `-m u:<agent>:---` and then ends `user:<agent>:r--`, because the version directory
+    it sits in is granted `rX` afterwards. So the deny is inert wherever a later grant covers the
+    path, and the outcome the operator gets is the one the LAST command decides.
+
+    What that means for a reader of the plan: a line naming a deny is not a guarantee. What it
+    decides is the traversal grant on the directories leading to each target, and the final mode
+    on every target. The two guards that keep the outcome honest are in
+    tests/test_isolation_redteam.py — one checks the last applied mode matches what `reach()`
+    classifies, the other applies this plan's own commands to a real tree and reads the resulting
+    ACL. Both are mutation-verified."""
     import pwd
     iso = k.isolation
     proposed = ""

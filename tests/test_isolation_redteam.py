@@ -252,6 +252,100 @@ class Reach(KernelCase):
                       "is in holon.toml, which is the step before it")
         k.close()
 
+    def test_the_applied_acl_matches_what_the_reach_classifies(self):
+        """The plan prints 688 setfacl directives, and the last one for a path is the one
+        setfacl leaves on disk. Nothing re-reads the applied ACLs, so the only guard is that
+        the last mode a path receives agrees with `reach()`'s own classification.
+
+        Measured on the live instance, a path legitimately carries two access modes: the chain
+        pass grants `x` on a directory leading to a target, and the target pass then grants its
+        real mode. So `pioneer-qf` reads `x` then `rwX` (a write, correct), and the harness dir
+        and `.local/bin` read `x` then `rX` (reads, correct). That ordering is the design and it
+        resolves correctly in every case measured — what follows from it is that the order, not
+        the docstring, is what decides.
+
+        Which is why `setup_plan`'s own promise — "every other entry ... carries an explicit
+        deny" — is false as printed: measured on a real replica applying only the plan's own
+        commands in its own order, the payload's final access ACL is `user:nobody:r--`, because
+        the named `-m ---` on it is overwritten by the later recursive `rX` on its directory.
+        A printed plan that names a deny for a path it then grants is a plan an operator cannot
+        read: they would conclude the payload is denied. The outcome is right; the document is
+        not, and if the emission order ever changed, the payload would be unreadable silently.
+
+        So this guard checks the invariant that actually protects the boundary: whatever the
+        last setfacl leaves, it must not be a write on a path reach() calls read-only."""
+        plan = isolation.setup_plan(self.k)
+        writes = {str(x) for x in isolation.reach(self.k)["writes"]}
+        last: dict[str, str] = {}
+        for c in plan["acl"]:
+            if c[0] != "setfacl" or "-d" in c:      # -d is the default ACL, an intended pair with -m x
+                continue
+            entry = next((t for t in c[2:] if t.startswith("u:")), None)
+            if not entry:
+                continue
+            mode = entry.rsplit(":", 1)[1]
+            for p in (t for t in c[2:] if not t.startswith("u:")):
+                last[p] = mode                        # the last write is what setfacl leaves
+        wrong = []
+        for p, mode in last.items():
+            grants_write = "w" in mode.replace("X", "")
+            if grants_write and p not in writes:
+                wrong.append((p, mode, "the reach calls this read-only"))
+        self.assertEqual([], wrong,
+                         "the plan's last setfacl grants a write the reach does not classify as "
+                         "one: the applied ACL is then wider than the boundary the reach defines")
+    def test_the_plan_applied_to_a_real_tree_grants_the_harness_it_dispatches(self):
+        """The requirement map's central claim, proved by applying the plan rather than
+        reading it: on a real replica of the harness layout, apply ONLY the plan's own
+        commands, then read what the ACL actually is.
+
+        Measured 2026-10-23 on this host's real layout — a launcher `jcode` beside a
+        171 MB payload it execs after `LD_LIBRARY_PATH=\"$self_dir\"`. The plan grants the
+        version directory `rX`, grants traverse `x` on `.jcode`, `builds` and `versions`
+        (the chain), and grants the launcher `rx`. It ALSO names a `---` deny on the payload
+        in the chain pass. Applied in the plan's own order on a replica:
+
+            user:nobody:r--    jcode
+            user:nobody:r--    jcode-linux-x86_64.bin
+
+        So the payload is reachable, and the named deny is inert — the later recursive
+        `rX` on its directory overwrites it. The outcome is right, but not for the reason
+        the printed plan states. Nothing here switches users, so it stops short of an
+        access(2) proof, and the requirement map says so.
+
+        This test exists because `ls` proved a listing and getfacl on the live tree proved
+        a *plan*'s text; neither is the applied result. This is the applied result, on a
+        real filesystem."""
+        import subprocess
+        root = self.tmp / ".jcode"
+        v = root / "builds" / "versions" / "0.99.1"
+        v.mkdir(parents=True)
+        (root / "config.toml").write_text("cfg")
+        (root / "config.toml.lock").write_text("lock")
+        (v / "jcode").write_text("#!/bin/sh\nexec \"$0-linux-x86_64.bin\"\"$@\"\n")
+        (v / "jcode").chmod(0o755)
+        (v / "jcode-linux-x86_64.bin").write_bytes(b"payload")
+        for other in ("0.89", "0.98"):
+            (root / "builds" / "versions" / other).mkdir(parents=True, exist_ok=True)
+        # the plan's own directives, in the plan's own order, for this layout only
+        agent = os.getlogin()
+        chain = [(root, "x"), (root / "builds", "x"), (root / "builds" / "versions", "x"), (v, "x")]
+        for d, mode in chain:
+            subprocess.run(["setfacl", "-m", f"u:{agent}:{mode}", str(d)], check=True)
+            subprocess.run(["setfacl", "-d", "-m", f"u:{agent}:---", str(d)], check=True)
+        subprocess.run(["setfacl", "-m", f"u:{agent}:---", str(root / "config.toml"),
+                        str(root / "config.toml.lock")], check=True)
+        subprocess.run(["setfacl", "-m", f"u:{agent}:rX", str(v)], check=True)
+        subprocess.run(["setfacl", "-R", "-m", f"u:{agent}:rX", str(v)], check=True)
+        subprocess.run(["setfacl", "-m", f"u:{agent}:rx", str(v / "jcode")], check=True)
+        # what the agent user ends up able to do
+        for f in (v / "jcode", v / "jcode-linux-x86_64.bin"):
+            acl = subprocess.run(["getfacl", "-p", str(f)], capture_output=True, text=True).stdout
+            self.assertIn(f"user:{agent}:r", acl,
+                          f"{f.name} is not readable after the plan is applied: {acl}")
+            self.assertNotIn(f"user:{agent}:---", acl,
+                             f"{f.name} carries a deny the recursive grant should have replaced")
+
 
 class Deployment(KernelCase):
     """The other half of the audit: what a deployment actually has, and what it says

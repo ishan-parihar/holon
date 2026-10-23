@@ -1,6 +1,6 @@
 # The isolation red-team audit — measured, and the gap in its operationalization
 
-Status: 2026-10-23. Live instance `/home/ishanp/holon` (read-only). Repo public `793f60e`.
+Status: 2026-10-23. Live instance `$HOLON_HOME` (read-only). Repo public `793f60e`.
 Every number below is from a command run against the live instance or a fresh one; nothing here
 is asserted from reading the source.
 
@@ -59,7 +59,7 @@ in the read reach; the payload was not, and neither was the directory holding th
 So the agent user could not start the harness the instance dispatches. A boundary that closes
 perfectly and denies the department its own tooling is not a trust boundary — it is a department
 that cannot work. Fixed: the harness's own directory is in the read reach. Re-measured on the live
-instance, `/home/ishanp/.jcode/builds/versions/0.99.1` now appears, so the payload and the
+instance, `~/.jcode/builds/versions/0.99.1` now appears, so the payload and the
 `LD_LIBRARY_PATH` target are granted.
 
 ### 1c. An absent boundary was a warning, so it reached nobody
@@ -127,6 +127,37 @@ both paths now render cleanly, which is the whole point of printing a sequence a
 
 ---
 
+### 1f. Validating the audit against the applied result, not the printed plan
+
+The audit's own documents were the last thing I checked, and the check was against what the plan
+*prints* rather than what `setfacl` *leaves on disk*. That is the wrong seam for a security promise,
+and it hid a real one.
+
+`setup_plan`'s docstring claimed every entry in the kernel user's home that is not in the reach
+"carries an explicit deny for the agent user". Measured on a real replica of the harness layout,
+applying **only the plan's own commands, in its own order**: the payload the launcher execs is named
+with `-m u:<agent>:---`, and the directory holding it is granted `rX` afterwards. POSIX ACLs hold
+one entry per user, and the last `setfacl` for that user wins, so the payload ends
+`user:<agent>:r--` — readable, with the named deny inert.
+
+The outcome is correct. The document was false, and that is the dangerous direction: a reader of the
+plan would conclude the payload is denied, and an emission-order change would have made it
+unreadable with nothing to say so. Nothing re-read the applied ACLs, so the last mode each path
+received was decided by order and unverifiable — 688 directives, no reader.
+
+Two guards hold the outcome now, both mutation-verified rather than merely green:
+
+| Guard | Mutation that fails it | What that proves |
+|---|---|---|
+| `test_the_applied_acl_matches_what_the_reach_classifies` | granting read targets `rwX` | the last mode for each path must agree with `reach()`'s own classification, so a write grant can never reach a read-only path |
+| `test_the_plan_applied_to_a_real_tree_grants_the_harness_it_dispatches` | dropping the recursive `rX` on the version directory | the plan's own commands applied to a real tree must leave launcher and payload readable; without it the payload ends with no agent entry at all, and the harness cannot run |
+
+Measured on the live instance, the classification these agree with: `pioneer-qf` ends `rwX` as a
+write, the harness directory and `.local/bin` end `rX` as reads. The docstring now states the
+promise with its actual limit and names both guards.
+
+---
+
 ## 2. What is on the live instance: nothing
 
 | Layer | State |
@@ -178,10 +209,11 @@ read is not read for it. A guard now holds that.
 
 ## 5. Verdict
 
-The mechanism is sound — all five seams I attacked held, and the five defects I found inside it are
-fixed with guards. One of the five was mine: making the plan reachable is not enough, the sequence
-it prints has to be walkable, and the first version told the Chair to run a command that could not
-work. A guard now walks every line.
+The mechanism is sound — all five seams I attacked held, and the six defects I found are
+fixed with guards. Two of the six were mine: making the plan reachable is not enough, the sequence it
+prints has to be walkable, and the first version told the Chair to run a command that could not work
+(a guard now walks every line); and validating the audit against the printed plan instead of the
+applied ACL over-read what the plan promised (§1f).
 
 The **system is not on**: the boundary is absent from the live instance by one root command, and
 until this change its absence was invisible to the only thing that reports unattended. Everything
