@@ -162,6 +162,22 @@ never become Chair; the adapter authenticates *as* Chair and is never exposed in
 | **3. Session** | `adapters/telegram/bot.py` | long-poll `getUpdates`, `callback_query` → `answerCallback` → run the verb → `editMessageText` with the result. Renders `pending_for_chair()` as rows with `msg_reply:<id>` buttons |
 | **4. Transport** | `adapters/telegram/send.py` | the outbound direction the kernel already shells: `[notify] command` gains `{buttons}` and `{actions_json}` |
 
+**Step 1 is landed** (`dbfb878`), and building the guard first corrected the design. The rule
+above said "derived from `REGISTRY`, filtered to `actor="chair"`". That is wrong, and the guard
+caught it: `status` is `any` and `msg reply` is `employee`, so a strict chair-only list ships a
+channel with **no landing screen and no way to answer an employee** — the two things the channel
+exists for. The real rule is:
+
+```python
+CHAIR_ACTION_ACTORS = ("chair", "any", "employee")   # never kernel, never intake
+```
+
+**116 actions**, with all four designed screens resolving through
+`chair_action_meta()`. This is safe because the actor gate is enforced where the command *runs*,
+not where the button is drawn — the bot pressing `status` and a body pressing `status` are the
+same command under different principals. Mutation-verified: narrowing to chair-only, and dropping
+read-only actions, each fail the guard on a real assertion.
+
 Layer 1 is the only part that touches the kernel, and it is deliberately small: it *describes*
 actions, it does not execute them. That keeps law 2 intact — "approve this plan" is kernel
 vocabulary; "send a message with an inline keyboard" is not.
@@ -259,9 +275,9 @@ This is a design, not a running bot. Concretely not done: no adapter directory e
 
 The order that keeps every step verifiable, and the gate each step owes:
 
-| # | Step | Gate before it counts |
-|---|---|---|
-| 1 | `chair_actions()` in the kernel, derived from `REGISTRY` | a guard that a chair-only command appears in the list, and an `any` command does not |
+| # | Step | Gate before it counts | Status |
+|---|---|---|---|
+| 1 | `chair_actions()` in the kernel, derived from `REGISTRY` | a guard pinning both halves of the derivation | **landed `dbfb878`** |
 | 2 | structured `pending_for_chair` rows: `{id, kind, sender, body, age}` beside the prose | the digest still renders for a plaintext `[notify] command` (backwards compatible) |
 | 3 | `adapters/telegram/` render + session, long-poll only | a fake Bot API (`tests/fake_telegram.py`) with the same shape as `tests/fake_notion.py` |
 | 4 | wire it as the live `[notify] command` | **one test crosses the seam with the real artifact**: a real prepared digest rendered into a real `sendMessage` call |
