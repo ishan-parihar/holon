@@ -31,7 +31,21 @@ class Lint(KernelCase):
         self.k.auth.init_chair_key()
         findings = lint.run(self.k)
         self.assertEqual([f for f in findings if f["severity"] == "error"], [])
-        self.assertEqual([f for f in findings if f["severity"] == "warning"], [])
+        # Scrub findings are the universal repo's law, and the overlay is where it points for
+        # operator context (AGENTS.md). On an overlay-shaped tree the scrub pack deliberately
+        # *downgrades* rather than skips (see pack_scrub), so its findings remain as warnings and
+        # this guard -- which requires the rubric to be wholly clean -- would fail on the tree the
+        # law points at, for the same seam the scrub pack already had. Exclude only `scrub.*`
+        # from the warning count, and only on a tree that is recognisably the overlay; the
+        # universal repo's own warnings still fail here with no exception.
+        scrub = [f for f in findings if f["rule"].startswith("scrub.")]
+        overlay = lint.OVERLAY_MARKERS and any(lint.DIST.joinpath(m).exists() for m in lint.OVERLAY_MARKERS)
+        self.assertEqual([f for f in findings
+                          if f["severity"] == "warning" and not (overlay and f["rule"].startswith("scrub."))], [],
+                         "the distribution carries a rubric warning: "
+                         + str([f for f in findings if f["severity"] == "warning"]))
+        if scrub and not overlay:
+            self.fail(f"an unexpected scrub finding on the universal repo: {scrub}")
 
     def test_every_registered_command_is_in_the_command_reference(self):
         """A command that exists and is documented nowhere is a reader's surprise: the reference

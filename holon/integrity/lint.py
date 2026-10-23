@@ -877,6 +877,13 @@ CHAT_ANCHOR = re.compile(r"(telegram:|chat_id|getChat|channels\s*=)", re.I)
 # generated) and not live state (which doctor owns).
 SCRUB_FILES = ("AGENTS.md", "README.md", "TODO.md")
 SCRUB_PATHS = (("ARCHIVE", "archive"), ("DOCS", "docs"), ("TESTS", "tests"))
+# Which tree this checkout is: the universal repo, or an operator's overlay. AGENTS.md law 10's own
+# seam ("two stacks, never one system") is not what this is; this is the *two copies of one stack*
+# the overlay section describes -- the same code, one branch public and one private. Marker
+# detection rather than a config key, because the overlay is a branch of this checkout and shares
+# its code: the files that exist only in an overlay (its private runbook, and the sync script it
+# runs) are the honest signal. Leaks are still reported on an overlay, just not as errors.
+OVERLAY_MARKERS = ("PERSONAL.md", "scripts/sync-public.sh")
 
 
 def pack_scrub(k, f: Findings) -> None:
@@ -892,13 +899,10 @@ def pack_scrub(k, f: Findings) -> None:
     overlay's own sync gate (which runs the strict lint before it will push) failed on the files
     the overlay exists to hold, and a sync gate that always fails is a gate nobody reads.
 
-    So the pack detects the overlay and **downgrades** rather than skips: the findings still
-    print, because the Chair should be able to see them, but they are warnings rather than errors,
-    so a push is not blocked by the tree the law points at. Detection is by the files that exist
-    only in an overlay -- `PERSONAL.md` and `scripts/sync-public.sh`; the distribution has
-    neither, so there is no operator context to mistake for a leak. It is not a config key,
-    because the overlay and the universal checkout are the same code."""
-    overlay = (DIST / "PERSONAL.md").is_file() or (DIST / "scripts" / "sync-public.sh").is_file()
+    So the pack detects the overlay (`OVERLAY_MARKERS`) and **downgrades** rather than skips: the
+    findings still print, because the Chair should be able to see them, but they are warnings
+    rather than errors, so a push is not blocked by the tree the law points at."""
+    overlay = any(DIST.joinpath(m).exists() for m in OVERLAY_MARKERS)
     severity = "warning" if overlay else "error"
     files: list[Path] = []
     for name in SCRUB_FILES:
