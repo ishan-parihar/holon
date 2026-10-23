@@ -10,6 +10,10 @@ operationalization, and provide a red-team audit."*
 
 Two questions, in order. Is the mechanism sound? Is the system on? The answers differ.
 
+Each requirement below is mapped to the check that covers it and the result observed on a real
+interface — `docs/design/2026-10-23-isolation-audit-requirement-map.md`. A test count establishes
+neither.
+
 ---
 
 ## 1. The mechanism, probed as an adversary
