@@ -1767,7 +1767,13 @@ def cmd_isolation_plan(args, k):
     # The plan is reachable from a cold start: with no agent user named it proposes one (the
     # name the root script creates), and the operator's step is to write it into holon.toml
     # rather than to guess it before the plan can be produced at all.
-    first = f"1. as root, once: sudo sh {args.write}\n" if args.write else plan["root_script"] + "\n"
+    first = (f"1. as root, once: sudo sh {args.write}\n" if args.write else
+             # WITHOUT `--write` the script is the plan's own step 1 and must be labelled as one.
+             # Measured 2026-10-23 on the live instance: the raw script was printed and the
+             # numbered list then began at "1.5.", so an operator counting along had no step 1
+             # — the 46-line shell they were told to read was the one step with no label. The
+             # numbering is the whole document; a headless step is where a reader skims.
+             f"1. as root, once: review this script and run it with sudo\n{plan['root_script']}\n")
     steps = [first]
     if plan.get("proposed"):
         steps.append(f"1.5. write into holon.toml:\n"

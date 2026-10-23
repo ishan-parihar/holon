@@ -156,6 +156,45 @@ Measured on the live instance, the classification these agree with: `pioneer-qf`
 write, the harness directory and `.local/bin` end `rX` as reads. The docstring now states the
 promise with its actual limit and names both guards.
 
+### 1g. Validating the requirement map found two more defects: the printed sequence had no step 1, and the plan's `runs:` line names a directory that is not the deployment's
+
+The auto-validation of this audit re-ran every row of
+`2026-10-23-isolation-audit-requirement-map.md` against its named interface, rather than
+re-trusting the measurements. Five guards were confirmed to exist (5 of 5, by name, in the
+module and class each row now names) and to pass by exact name, not by module. Two claims did not
+survive, and both are catalogued below.
+
+**Defect 1: the printed activation sequence had no step 1.** Measured on the live instance with
+`holon isolation plan` (no `--write`): the root script prints raw, and the numbered list then begins
+at **`1.5.`** — the full list was `['1.5', '2', '3', '4']`. An operator counting along has no step 1
+to start from, and the 46-line shell they must read is the one step with no label. The guard
+`test_the_printed_sequence_numbers_every_step_it_prints` holds two rules: the first numbered step
+is `1.`, and every integer level printed appears (1.5 is fine; 2.5 with no 2 is not). Fixed by
+labelling the script as its own step 1; re-measured, the output is `1., 1.5., 2., 3., 4.`.
+
+**Defect 2: the plan's `runs:` line, and the real reason the deployment looks confused.**
+Re-measured, the live instance is `HOLON_HOME=<the live instance's runtime>` (166 tasks,
+1530 events, and a heartbeat writing it every two minutes). `Home.runs_dir` is
+`runtime_dir / "runs"` and `runtime_dir` is `root / "execution" / "runtime"` (`paths.py:44-53`),
+so this deployment derives `.../execution/runtime/execution/runtime/runs` — a directory that
+exists only because some earlier run created it, and which is not where any run lands. The plan
+prints that path as the one the agent user will be granted.
+
+The cause is a `HOLON_HOME` one directory deeper than the layout it names. Two of the audit's own
+claims were measured against the wrong place before this: the deployment row said "no broker
+unit", and the unit exists (`disabled`, `inactive`, and pointing at a *scratch* home); and 1c's
+"the real tick created the incident" was re-measured against the live instance's own `tasks` table,
+where `tsk_01M5M5Y37RB8Q5ZS7N7A8B7B32` `Incident: doctor reports isolation.off` is open with the
+exposure text in its intent. That incident is now evidence on the live instance, not a scratch one.
+
+**The hazard that is not the kernel's, and must not be read as such.** The machine currently holds
+*two* Holon instances: the real one (`$HOLON_HOME`) and the scratch one the
+tick unit names (a scratch `HOLON_HOME`, 5 events), and a heartbeat is writing
+the real one from an undocumented process while the documented unit writes the scratch one. Seven
+concurrent agent sessions are running. This is the deployment's problem to resolve, and reporting
+it as a kernel defect would be the conflation AGENTS.md law 10 exists to prevent; it is recorded
+here because it changes what "is it deployed?" means for the Chair's root command.
+
 ---
 
 ## 2. What is on the live instance: nothing

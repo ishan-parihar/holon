@@ -1,6 +1,6 @@
 """`holon lint`: rubric and consistency checks over Holon's artifacts (not its live state; see doctor.py).
 
-Six packs. Each finding is {severity: error | warning, rule, where, message}; errors fail CI.
+Each finding is {severity: error | warning, rule, where, message}; errors fail CI.
 
   SCHEMA    every artifact matches its schema: published JSON Schemas = the contract, skill frontmatter,
             bylaws profiles (and each department's copy), drivers, holon.toml, migration checksums,
@@ -20,6 +20,10 @@ Six packs. Each finding is {severity: error | warning, rule, where, message}; er
             bundle's SELECTs name the contract columns, so drift cannot fail open invisibly
   BOUNDARY  the two stacks stay two (AGENTS.md law 10): a doc that calls Holon + the genome
             governance layer and the Chair's production venture runtime one system is an error
+  SCRUB     instance specifics stay out of the universal repo (AGENTS.md, "The universal repo and
+            the personal overlay"): an absolute path under one host's home directory, a chat id or
+            a bot-token shape in a published doc or test is an error, not something a later
+            reader discovers
 """
 
 from __future__ import annotations
@@ -37,7 +41,7 @@ from holon.core import contract, vocab
 from holon.core.db import checksum, migration_files
 
 PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "bylaws", "drift", "extstore",
-         "boundary", "reference", "genome", "register")
+         "boundary", "reference", "genome", "register", "scrub")
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
@@ -846,6 +850,68 @@ def pack_register(k, f: Findings) -> None:
         return
     for rid, msg in register_drift(reg):
         f.add("warning", "register.drift", "TODO.md", msg)
+
+
+# The scrub law (AGENTS.md, "The universal repo and the personal overlay") names hosts, paths, chat
+# ids and keys as instance specifics that live in the operator's overlay, never here. Measured
+# 2026-10-23: ten published files carried this host's home, a scratch path, a Telegram chat id, two
+# bot usernames and two bot ids, and no gate said so -- the scrub was done by hand after the fact.
+#
+# The patterns are the SHAPE of the leak, never this host's values: a rule naming the operator's
+# username would be a second copy of the thing it forbids, and it would fail the next fork's clean
+# tree. So the pack catches what is structural on any host -- an absolute path under a Unix home,
+# a Telegram-style chat id, a bot-token shape -- and leaves the operator's own overlay to hold the
+# specifics. A *relative* path that merely contains the word `home` (an adapter's home tree under
+# `adapters/`) is not a leak, and the anchor at the start of the token is what tells the two apart.
+HOME_PATH = re.compile(r"(?:^|(?<=[\s`'\"(=]))(/home/[A-Za-z0-9_.-]+/)")
+CHAT_ID = re.compile(r"\b\d{9,12}\b")
+TOKEN = re.compile(r"\b\d{6,12}:[A-Za-z0-9_-]{20,}\b")
+# A bare 9-12 digit run is a date, a byte count or a port as often as it is a chat id, so a chat id
+# is only reported where the document says it is one: a `[chair] channels` line, a `telegram:`
+# prefix, a chat_id field. Without that anchor the rule fires on every measurement in the register.
+# A repeated or sequential run (123456789, 1111111) is synthetic fixture data a writer
+# chose on the spot -- it is what a scrub leaves behind, and it is not the Chair's channel.
+SYNTHETIC = re.compile(r"\b1234(?:56789)?\b|\b(\d)\1{5,}\b")
+CHAT_ANCHOR = re.compile(r"(telegram:|chat_id|getChat|channels\s*=)", re.I)
+# Where the scrub law applies: published surface, not the kernel's own vendored copies (which are
+# generated) and not live state (which doctor owns).
+SCRUB_FILES = ("AGENTS.md", "README.md", "TODO.md")
+SCRUB_PATHS = (("ARCHIVE", "archive"), ("DOCS", "docs"), ("TESTS", "tests"))
+
+
+def pack_scrub(k, f: Findings) -> None:
+    """Instance specifics stay out of the universal repo (AGENTS.md, the overlay section).
+
+    The defect is not that a path is private; it is that a published document names one host, so
+    the next reader cannot tell an observation from an assumption, and a fork inherits a tree it
+    cannot run. Each finding names the file and the offending text so the fix is a substitution.
+    """
+    files: list[Path] = []
+    for name in SCRUB_FILES:
+        files.append(DIST / name)
+    for _, sub in SCRUB_PATHS:
+        base = DIST / sub
+        if base.is_dir():
+            files += sorted(base.rglob("*"))
+    for p in files:
+        if not p.is_file() or p.suffix not in (".md", ".py", ".toml", ".cfg"):
+            continue
+        text = p.read_text(encoding="utf-8", errors="replace")
+        rel = _rel(p)
+        for i, line in enumerate(text.splitlines(), 1):
+            m = HOME_PATH.search(line)
+            if m:
+                f.add("error", "scrub.home", rel,
+                      f"names a host's home directory ({m.group(1)}): instance specifics belong "
+                      f"in the operator's overlay, not this repo")
+            if TOKEN.search(line):
+                f.add("error", "scrub.token", rel,
+                      "carries a bot-token shape; a token belongs in the instance's config, never "
+                      "in a published file")
+            elif CHAT_ANCHOR.search(line) and CHAT_ID.search(line) and not SYNTHETIC.search(line):
+                f.add("error", "scrub.chat_id", rel,
+                      "names a chat id (line %d): the Chair's channel is instance state, not a "
+                      "documented value" % i)
 
 
 def run(k, packs: list[str] | None = None) -> list[dict]:

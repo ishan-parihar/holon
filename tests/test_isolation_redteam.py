@@ -37,6 +37,7 @@ import contextlib
 import json
 import os
 import pathlib
+import re
 import secrets
 import sys
 import threading
@@ -417,6 +418,34 @@ class Deployment(KernelCase):
         self.assertTrue(any(f["check"] == "isolation.off" and f["severity"] == "error"
                             for f in doctor.run(self.k)),
                         "isolation.off must be an error for the heartbeat to act on it")
+
+    def test_the_printed_sequence_numbers_every_step_it_prints(self):
+        """The printed plan is the operator's whole journey, so its numbering must not
+        imply a step it never showed.
+
+        Measured 2026-10-23 on the live instance with `holon isolation plan` (no
+        `--write`): the root script is printed raw as step 1's content, then the
+        numbered list begins at **"1.5."** — there is no `1.` anywhere in the output.
+        A reader counting along meets 1.5, 2, 3, 4 and a step 1 that was never
+        labelled, which is the 46-line shell they just scrolled past with no way to
+        know it was the step. The operator's move is a shell they must read anyway;
+        an unlabelled one is where they skim.
+
+        Two rules this holds, both about the document a person will type:
+        the first numbered step is `1.`, and every integer level printed appears."""
+        import subprocess
+        out = subprocess.run([sys.executable, "-m", "holon", "--home", str(self.home),
+                              "isolation", "plan"],
+                             capture_output=True, text=True).stdout
+        numbers = re.findall(r"^(\d+(?:\.\d+)?)\.", out, re.MULTILINE)
+        self.assertTrue(numbers, f"the plan printed no numbered steps at all: {out[:300]!r}")
+        self.assertEqual(numbers[0], "1",
+                         f"the printed sequence starts at {numbers[0]!r}, not 1: an operator "
+                         f"counting along has no step 1 to start from. full list: {numbers}")
+        # no gap: every integer level from 1 to the last appears (1.5 is fine; 2.5 with no 2 is not)
+        integers = sorted({n.split(".")[0] for n in numbers}, key=int)
+        self.assertEqual(integers, [str(i) for i in range(1, int(integers[-1]) + 1)],
+                         f"the sequence skips a level: printed {numbers}")
 
 
 if __name__ == "__main__":

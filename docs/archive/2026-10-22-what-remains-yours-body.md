@@ -1,6 +1,6 @@
 # What remains yours, and why each one matters
 
-Status: measured 2026-10-22T19:55Z against the live instance (`/home/ishanp/holon`), read-only.
+Status: measured 2026-10-22T19:55Z against the live instance (`$HOLON_HOME`), read-only.
 Repo: public `e569251` · 598 tests · lint 0 errors / 0 warnings.
 
 Three actions are yours. None was taken. Each is listed with what it is, what it changes, what it
@@ -17,8 +17,8 @@ no `holon-agent` binary to install — `holon-agent` is a *username* the kernel 
 to. I measured what those lists would be from your live config:
 
 ```
-reads:   /home/ishanp/Documents/github/my-projects/holon   (the checkout)
-writes:  /home/ishanp/Documents/github/my-projects/pioneer-qf  (+ core, data, logs)
+reads:   $HOLON_HOME (the checkout)
+writes:  the B-side venture pool (its core, data and logs roots)
 runs:    <instance>/execution/runtime/runs/
 ```
 
@@ -59,7 +59,7 @@ that if agents are *not* running as the kernel's user in the first place.
 comes first. It is yours to choose; `holon-agent` is the conventional name and the one the doctor's
 warning suggests.
 
-**Step one — name the user** in `/home/ishanp/holon/holon.toml`:
+**Step one — name the user** in `$HOLON_HOME/holon.toml`:
 
 ```toml
 [isolation]
@@ -70,8 +70,8 @@ agent_user = "holon-agent"
 changes nothing:
 
 ```sh
-holon --home /home/ishanp/holon isolation plan       # the user, the grants, the ACL denies — read-only
-holon --home /home/ishanp/holon isolation apply      # creates holon-agent, applies the ACLs, moves the adapter homes
+holon --home $HOLON_HOME isolation plan       # the user, the grants, the ACL denies — read-only
+holon --home $HOLON_HOME isolation apply      # creates holon-agent, applies the ACLs, moves the adapter homes
 ```
 
 Afterwards the doctor's `isolation.off` and `isolation.runner` checks both pass, and agents run as
@@ -165,7 +165,7 @@ one of them will advance the cursor.
 
 ### The command
 
-Add to `[notify]` in `/home/ishanp/holon/holon.toml`:
+Add to `[notify]` in `$HOLON_HOME/holon.toml`:
 
 ```toml
 [notify]

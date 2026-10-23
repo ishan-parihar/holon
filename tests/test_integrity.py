@@ -308,6 +308,61 @@ class Lint(KernelCase):
         finally:
             probe.unlink(missing_ok=True)
 
+    def test_the_scrub_pack_catches_a_host_path_a_chat_id_and_a_token(self):
+        """The scrub law (AGENTS.md, the overlay section) names hosts, paths, chat ids and keys as
+        instance specifics that belong in the operator's overlay. Measured 2026-10-23: ten published
+        files carried one host's home, a scratch path, a Telegram chat id and two bot ids, and no
+        gate said so -- the scrub happened by hand, after a leak was found by reading rather than
+        by checking. This pack makes the class checkable.
+
+        The patterns are the SHAPE of the leak and never this host's values: a rule naming the
+        operator's username would be a second copy of what it forbids, and it would fail the next
+        fork's clean tree. So the cases below use a placeholder home, and the pack must fire on the
+        shape while staying quiet on what a scrubbed document legitimately carries."""
+        docs = Path(holon_cli.__file__).parent.parent / "docs"
+        probe = docs / "scrub-probe.md"
+        # The fixtures are assembled at run time so the shapes under test never sit in this file as
+        # literals: a test that carried them would be a published file the pack correctly fails,
+        # and the clean-tree guard below would then fail for the wrong reason.
+        home = "/home" + "/" + "oper" + "ator"
+        tok = "123456:" + "AbCdEfGhIjKlMnOpQrStUvWxYz" + "1234567890"
+        cid = "541234567"
+        cases = [
+            # (the line, the rule it must fire, or None when it must stay quiet)
+            (f"the live instance is `{home}/holon`, 166 tasks", "scrub.home"),
+            (f"reads: {home}/work (the checkout)", "scrub.home"),
+            (f"channels = [\"telegram:{cid}:1\"]", "scrub.chat_id"),
+            (f"`curl getChat?chat_id={cid}`", "scrub.chat_id"),
+            (f"token = \"{tok}\"", "scrub.token"),
+            # a synthetic fixture id is what a scrub leaves behind: not the Chair's channel
+            ("channels = [\"telegram:123456789:1\"]", None),
+            ("the count was 1234567 rows", None),
+            ("the harness home tree is `adapters/operantx/home/kb.sqlite`", None),
+            ("`~/bin/holon`, a symlink into the checkout", None),
+        ]
+        try:
+            for text, rule in cases:
+                probe.write_text(text + "\n")
+                found = lint.run(self.k, ["scrub"])
+                fired = [f for f in found if f["where"].endswith("scrub-probe.md")]
+                if rule is None:
+                    self.assertEqual([], fired, f"{text!r} should stay quiet: {found}")
+                else:
+                    self.assertIn(rule, [f["rule"] for f in fired],
+                                  f"{text!r} must fire {rule}: {found}")
+        finally:
+            probe.unlink(missing_ok=True)
+
+    def test_the_distribution_passes_its_own_scrub_gate(self):
+        """The pack must agree with the repository: a clean tree passes, and every file the scrub
+        law covers is actually read (a pack that skipped its own scope would report clean for
+        anything it did not look at)."""
+        self.assertEqual([f for f in lint.run(self.k, ["scrub"])
+                          if f["severity"] == "error"], [],
+                         "the distribution carries an instance specific: "
+                         + str(lint.run(self.k, ["scrub"])))
+        self.assertIn("scrub", lint.PACKS, "the scrub pack is registered")
+
 
 class Doctor(KernelCase):
     def test_a_cold_started_instance_is_not_reported_as_a_stale_checkout(self):
