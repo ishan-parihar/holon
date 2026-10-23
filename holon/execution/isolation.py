@@ -387,9 +387,20 @@ def setup_plan(k) -> dict:
     the files there are typically world-readable (0644) and only the home's own 0700 keeps others out."""
     import pwd
     iso = k.isolation
-    if not iso:
-        raise IsolationError("set [isolation] agent_user first")
-    agent, me = iso["agent_user"], pwd.getpwuid(os.getuid())
+    proposed = ""
+    if not iso or not iso.get("agent_user"):
+        # The plan that tells you which user to create must be reachable from the state the
+        # plan is needed in. Measured 2026-10-23: `isolation plan` refused with "set
+        # [isolation] agent_user first", so BYLAWS §11's activation sequence (`plan` → `sudo sh`
+        # → `apply --force` → broker → doctor) was broken at its first step — and the live
+        # instance's boundary stayed absent for a week behind it. The name is proposed here,
+        # the script writes it into holon.toml for you, and everything downstream
+        proposed = f"holon-agent-{k.auth.instance_id}"
+        # `holon-agent-<instance>`: `holon-agent` is the name every record uses, and the id
+        # keeps several instances on one host unambiguous. A suggestion printed for the
+        # operator to write into holon.toml, not a name the kernel keeps to itself.
+    agent = (iso or {}).get("agent_user") or proposed
+    me = pwd.getpwuid(os.getuid())
     top = Path(me.pw_dir).resolve()
     r = reach(k)
     targets = [(p, "rwX") for p in r["writes"]] + [(p, "rX") for p in r["reads"]] + [(r["runs"], "x")]
@@ -414,13 +425,22 @@ def setup_plan(k) -> dict:
             acl.append(["setfacl", "-R", "-d", "-m", f"u:{agent}:{mode}", str(p)])
         else:
             acl.append(["setfacl", "-m", f"u:{agent}:{mode.replace('X', 'x')}", str(p)])
+    runner_addr = (iso or {}).get("runner") or f"@holon-runner-{k.auth.instance_id}"
+    # When no agent user was named yet, root records the one it creates: the kernel's own config is
+    # what every later step reads, and a boundary whose user exists only in a shell transcript is
+    # one reboot from being forgotten.
+    config_line = ("" if not proposed else
+                   "echo 'write this into holon.toml, then: holon isolation apply --force'\n"
+                   f"echo '[isolation]'\n"
+                   f"echo 'agent_user = \"{agent}\"'\n"
+                   f"echo 'runner = \"{runner_addr}\"'\n")
     unit = f"holon-runner-{k.auth.instance_id}"
     root = f"""#!/bin/sh
 # Holon isolation: the part only root can do, once (docs/BYLAWS.md §11). Creates the agent user and the
 # runner service that starts agent processes as that user for this instance's kernel (uid {me.pw_uid}).
 set -eu
 id -u {agent} >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/{agent} --shell /usr/sbin/nologin {agent}
-cat > /etc/systemd/system/{unit}.service <<'UNIT'
+{config_line}cat > /etc/systemd/system/{unit}.service <<'UNIT'
 [Unit]
 Description=Holon runner: agent processes as {agent} for {me.pw_name}'s instance {k.auth.instance_id}
 After=network-online.target
@@ -437,7 +457,7 @@ WorkingDirectory=/var/lib/{agent}
 # unit that never started a runner. Measured on 2026-10-23 under
 # `env -i PATH=/usr/local/bin:/usr/bin:/bin`.
 Environment=PATH=%h/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/bin/sh -c 'H=$(dirname $(dirname $(readlink -f $(command -v holon)))) && PYTHONPATH="$H" exec {sys.executable} -m holon.execution.isolation runner --address {iso["runner"]} --allow-uid {me.pw_uid}'
+ExecStart=/bin/sh -c 'H=$(dirname $(dirname $(readlink -f $(command -v holon)))) && PYTHONPATH="$H" exec {sys.executable} -m holon.execution.isolation runner --address {runner_addr} --allow-uid {me.pw_uid}'
 Restart=always
 RestartSec=10
 NoNewPrivileges=yes
@@ -448,7 +468,8 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now {unit}.service
 """
-    return {"agent_user": agent, "root_script": root, "acl": acl, "runner_unit": unit, **{k_: [str(x) for x in v]
+    return {"agent_user": agent, "proposed": proposed, "runner": runner_addr,
+            "root_script": root, "acl": acl, "runner_unit": unit, **{k_: [str(x) for x in v]
             for k_, v in (("writes", r["writes"]), ("reads", r["reads"]))}, "runs": str(r["runs"])}
 
 

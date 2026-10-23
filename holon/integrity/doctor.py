@@ -25,10 +25,17 @@ EXTERNAL_STORE_VERSIONS = ("1",)
 def _isolation(k, add) -> None:
     """The trust boundary (docs/BYLAWS.md §11), checked from the agent's side: the runner is asked, as the
     agent user, who it is and what it can reach."""
-    if not k.auth.configured:
-        return
     if not k.isolation:
-        add("warning", "isolation.off", "agents run as the kernel's user: one with a shell can read the Chair key and "
+        # Absent, not merely off. Every body this instance dispatches runs as the kernel's own user,
+        # so one of them with a shell can read the Chair key and write work.db — the exact failure
+        # the boundary exists to prevent, and the one the heartbeat must not sleep through. It is an
+        # error, not a warning: the heartbeat turns only errors into incidents
+        # (`service.py`: `if f["severity"] == "error"`), and measured 2026-10-23 a live instance
+        # carried this as a warning, so the exposure reached nobody. The kernel already rates a
+        # promised-but-runnerless boundary an error (`isolation.runner`); an absent one is the
+        # same exposure a step wider, and paying sentence for it is a sentence the organization's
+        # own databases pay.
+        add("error", "isolation.off", "agents run as the kernel's user: one with a shell can read the Chair key and "
             "write work.db (set [isolation] agent_user; `holon isolation plan`)")
         return
     from holon.execution import isolation

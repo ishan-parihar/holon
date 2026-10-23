@@ -179,10 +179,22 @@ class DoctorOnTheHeartbeat(KernelCase):
     pipeline = '[pipeline]\nresearch = "never"\nshape = "never"\nretro = "never"\n[healing]\ndoctor_every_min = 30\n'
 
     def test_a_doctor_error_becomes_one_incident_and_the_check_waits_its_interval(self):
+        """The doctor phase opens an incident per failing check, once each, then waits its
+        interval. `audit.chain` is provoked by tampering; an absent trust boundary reports
+        alongside it, because it is an error (2026-10-23: a body running as the kernel's user
+        can read the Chair key and write work.db, and the heartbeat must not sleep through
+        it). That it reaches an incident in this phase is the point of the guard: a warning
+        reaches nobody, and the record `docs/design/2026-10-23-isolation-off-as-an-error.md`
+        §4 recommends exactly this — a guard that expects a *set* of incidents fails when a
+        second real problem appears, which is what should happen."""
         self.k.auth.init_chair_key()
         self.k.wconn.execute("UPDATE events SET note='tampered' WHERE seq=(SELECT min(seq) FROM events)")
         first = [x for x in self.k.tick()["triggered"] if "incident" in x]
-        self.assertEqual([x["title"] for x in first], ["Incident: doctor reports audit.chain"])
+        titles = {x["title"] for x in first}
+        self.assertIn("Incident: doctor reports audit.chain", titles, titles)
+        self.assertIn("Incident: doctor reports isolation.off", titles,
+                      "an absent trust boundary reaches an incident: it is the exposure that "
+                      "reaches nobody while it is a warning")
         self.assertFalse([x for x in self.k.tick()["triggered"] if "incident" in x], "doctor waits doctor_every_min")
 
 

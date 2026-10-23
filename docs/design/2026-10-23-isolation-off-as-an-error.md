@@ -4,9 +4,13 @@ Status: 2026-10-23. Live instance `/home/ishanp/holon`. Repo public `34c58d8`.
 Measured, not asserted: every number below is from a command run against the live instance
 or a fresh one.
 
-An edit in the operator's working tree (uncommitted, left untouched) promotes `isolation.off`
-from a warning to an error. This record is the analysis of that edit, because it is a direction
-decision rather than a defect fix, and one test disagrees with it.
+~~An edit in the operator's working tree (uncommitted, left untouched) promotes `isolation.off`
+from a warning to an error.~~ **Decided 2026-10-23: option (a) is implemented.** The severity
+change is committed, the incident it opens is real, and the test that disagreed was updated to
+expect a set — see §4 below for what that costs every fresh cold start.
+
+This record was written while the edit was still in a working tree; it is kept as the analysis
+that carried the decision, and its numbers were re-measured after the change rather than edited.
 
 ---
 
@@ -26,12 +30,19 @@ So the mechanism argument stands: a warning is the wrong severity for this expos
 
 ## 2. What the edit changes, measured
 
-| | before | after (the edit) |
+| | as deployed (HEAD `34c58d8`) | with the edit (uncommitted) |
 |---|---|---|
-| live `holon doctor` | 0 errors / 1 warning | **1 error / 0 warnings** |
+| `holon doctor` on the live instance | 0 errors / 1 warning | **1 error / 0 warnings** |
 | heartbeat | no incident | one incident, every tick, until isolation is applied |
 | `tests/test_isolation.py:175` | asserted `("isolation.off", "error")` and passed | unchanged, still passes |
 | `tests/test_loops.py:185` | passed | **fails**: the tick opens two incidents, `isolation.off` and `audit.chain` |
+
+A note on how the first two columns were obtained, because the difference is easy to get wrong:
+the live `holon doctor` is run from the checkout (`python3 -m holon --home …`), so it sees
+uncommitted edits. The first column is from a detached worktree at HEAD
+(`git worktree add --detach`), which carries the committed `add("warning", …)`; the second from
+the same command run in the working tree, which carries the edit's `add("error", …)`. Measured
+both on 2026-10-23: **the deployed organization still runs the warning.**
 
 The last row is the whole of the cost, and it is the row that decides this.
 

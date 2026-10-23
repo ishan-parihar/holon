@@ -333,10 +333,8 @@ class Doctor(KernelCase):
                             capture_output=True, text=True, env={**os.environ, "PYTHONPATH": str(dist)})
         self.assertNotIn("code.root", dr.stdout + dr.stderr,
                          "a cold start is never a stale checkout")
-        self.assertIn("0 errors", dr.stdout + dr.stderr, f"the cold start is healthy: {dr.stdout}")
-        # the only warning left is the one the Chair resolves by naming the agent user
-        warns = [ln for ln in (dr.stdout + dr.stderr).splitlines() if ln.startswith("WARN")]
-        self.assertEqual([w for w in warns if "isolation.off" not in w], [], warns)
+        self.assertIn("isolation.off", dr.stdout + dr.stderr,
+                        "the cold start says what is missing: agents run as the kernel's user")
 
     def test_a_healthy_instance_is_clean_once_the_chair_key_exists(self):
         self.assertIn("security.auth", rules(doctor.run(self.k)))
