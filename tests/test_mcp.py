@@ -147,6 +147,44 @@ class Protocol(KernelCase):
         self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 2, "method": "nope"})["error"]["code"], -32601)
 
 
+class GatedCommands(KernelCase):
+    """The `--force` gate exists because a one-tap surface could spend it by accident. The Chair's
+    control surface is being built on these tools, so the question is whether an employee session
+    can reach a destructive command at all.
+
+    Measured: `tools()` publishes only `agent_commands()`, which `call()` enforces again by name.
+    None of the registry's four gated commands (gc, keys gc, restore, isolation apply) appear, and
+    each is refused as an unknown tool. Derived from the registry, not restated: gating a command
+    that is also in `AGENT_ACTORS` would publish it, so the guard is the intersection."""
+
+    def test_no_gated_command_reaches_an_agent_session(self):
+        from holon import mcp
+        from holon.cli import REGISTRY
+        published = {t["name"] for t in mcp.tools()}
+        gated = [" ".join(c.path) for c in REGISTRY
+                 if "--force" in [a[0] for a, _ in (c.args or [])]]
+        self.assertTrue(gated, "the registry gates at least one command, or this guard is moot")
+        for path in gated:
+            tool = "holon_" + "_".join(p.replace("-", "_") for p in path.split())
+            self.assertNotIn(tool, published,
+                             f"`holon {path}` is gated with --force and published to an employee "
+                             f"session as {tool}: a one-tap surface could spend the force")
+            ok, text = mcp.call(tool, {"force": True})
+            self.assertTrue(ok, f"{tool} must be refused by name, not reachable: {text[:80]}")
+
+    def test_the_gate_is_not_derivable_from_the_employee_actor_class(self):
+        """The guard above only holds while the gated commands stay outside `AGENT_ACTORS`. If one
+        is ever re-assigned to an actor class an employee holds, the tools list would publish it and
+        the previous test would catch it -- this makes the invariant explicit rather than incidental."""
+        from holon import mcp
+        from holon.cli import REGISTRY
+        gated_paths = {" ".join(c.path) for c in REGISTRY
+                       if "--force" in [a[0] for a, _ in (c.args or [])]}
+        leaked = gated_paths & {" ".join(p) for p in mcp.agent_commands()}
+        self.assertEqual(leaked, set(),
+                         f"a gated command is in an agent actor class: {sorted(leaked)}")
+
+
 class OverStdio(KernelCase):
     def session(self, env, *calls):
         msgs = [{"jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {"protocolVersion": mcp.PROTOCOL}},
