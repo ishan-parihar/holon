@@ -1757,19 +1757,21 @@ def cmd_isolation_plan(args, k):
     plan = isolation.setup_plan(k)
     if args.write:
         Path(args.write).write_text(plan["root_script"])
-    # The plan is reachable from a cold start: with no agent user named it proposes one (the name the
-    # root script creates), and the operator's step is to write it into holon.toml rather than to
-    # guess it before the plan can be produced at all.
-    step = "1.5" if plan.get("proposed") else "1"
-    extra = (f"{step}. write into holon.toml:\n"
-             f"   [isolation]\n   agent_user = \"{plan['agent_user']}\"\n"
-             f"   runner = \"{plan['runner']}\"\n") if plan.get("proposed") else ""
-    _out(args, plan, (f"1. as root, once: sudo sh {args.write}\n" if args.write else plan["root_script"] + "\n")
-         + extra
-         + f"{step if extra else 2}. as you: holon isolation apply --force   ({len(plan['acl'])} setfacl commands)\n"
-         + f"start the broker: systemctl --user enable --now holon-broker (install.py writes the unit)\n"
-         + f"holon doctor: the isolation checks probe what {plan['agent_user']} can reach\n\n"
-         + f"writes: {', '.join(plan['writes']) or '-'}\nreads: {', '.join(plan['reads'])}\nruns: {plan['runs']}")
+    # The plan is reachable from a cold start: with no agent user named it proposes one (the
+    # name the root script creates), and the operator's step is to write it into holon.toml
+    # rather than to guess it before the plan can be produced at all.
+    steps = ["1. as root, once: sudo sh {w}\n" if args.write else plan["root_script"] + "\n"]
+    if plan.get("proposed"):
+        steps.append(f"1.5. write into holon.toml:\n"
+                     f"     [isolation]\n     agent_user = \"{plan['agent_user']}\"\n"
+                     f"     runner = \"{plan['runner']}\"\n")
+    steps.append(f"2. as you: holon isolation apply --force   ({len(plan['acl'])} setfacl commands)\n"
+                 "3. start the broker: systemctl --user enable --now holon-broker "
+                 "(install.py writes the unit)\n"
+                 f"4. holon doctor: the isolation checks probe what {plan['agent_user']} can reach\n\n"
+                 f"writes: {', '.join(plan['writes']) or '-'}\n"
+                 f"reads: {', '.join(plan['reads'])}\nruns: {plan['runs']}")
+    _out(args, plan, "".join(steps).replace("{w}", args.write or ""))
 
 
 @command("isolation apply", "chair", "apply the isolation ACLs (agents reach only their trees, run directories "
