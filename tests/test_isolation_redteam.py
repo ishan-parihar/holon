@@ -551,9 +551,14 @@ class Deployment(KernelCase):
         it to or not. The guard is the last sentence of this class: this is exactly
         the probe I used, so the guard is the fix I owe.
 
-        The contract to satisfy: the kernel's own connection offers a read-only mode; a
-        `Kernel` built with it opens both databases `mode=ro`, runs no migration, and
-        creates no directory -- so a probe can look at live state without writing it."""
+        The contract to satisfy, all three measured: a `Kernel` built with `readonly=True`
+        opens both databases `mode=ro`, refuses every write, creates no directory and seeds
+        no row. Two of the three are observable and mutation-verified: forcing
+        `home.ensure()` or `org.bootstrap()` in `readonly` mode fails this guard. The third
+        is not -- `migrate()` on a `mode=ro` connection is refused statement by
+        statement and leaves a zero-length `-wal`, so it is undetectable from outside; that
+        guard is defence in depth, and a mutation of it surviving is correct rather than a
+        gap. Read this as: the guard proves what can be proved and names what cannot."""
         from holon.execution.service import Kernel
         # A home with no instance fails loudly rather than being brought into being: that is
         # the correct strictness for a read-only probe, and it is measured here so nobody
@@ -562,16 +567,28 @@ class Deployment(KernelCase):
         empty.mkdir(parents=True)
         with self.assertRaises(sqlite3.OperationalError):
             Kernel(Home(empty), actor="auditor", readonly=True)
+        # and nothing was created on the way: a read-only probe cannot bring an instance
+        # into being, which is the whole point (my own probes did exactly that)
+        self.assertEqual([p.name for p in empty.rglob("*")], [],
+                         "a read-only Kernel created instance state in a home that had none: "
+                         f"{[str(p) for p in empty.rglob('*')]}")
 
         # and on a real instance it touches nothing: build one, then re-open read-only
         fresh = self.tmp / "ro-probe" / "home"
         fresh.mkdir(parents=True)
         home = Home(fresh)
-        Kernel(home)  # the writer brings the instance into being
+        seed = Kernel(home)  # the writer brings the instance into being
+        seed.close()  # a clean close checkpoints its WAL, leaving nothing behind
         for p in fresh.rglob("*"):
             p.chmod(0o644 if p.is_file() else 0o755)
-        before = {q.relative_to(fresh): q.stat().st_mtime_ns for q in fresh.rglob("*") if q.is_file()}
-        sidecars_before = {q for q in fresh.rglob("*") if q.name.endswith(("-wal", "-shm"))}
+        # The sidefiles (`-shm`/`-wal`) are excluded from the snapshot and asserted
+        # separately: opening a WAL-mode database read-only still creates them, measured
+        # with raw sqlite3 and no Holon involved. `-shm` is always 32768 bytes of shared
+        # memory and says nothing; the `-wal` carries unmerged frames, so a non-empty one
+        # is a write this probe made.
+        data = lambda snap: {n: v for n, v in snap.items() if not n.endswith(("-wal", "-shm"))}
+        before = {str(q.relative_to(fresh)): q.stat().st_mtime_ns
+                  for q in fresh.rglob("*") if q.is_file()}
         k = Kernel(home, actor="auditor", readonly=True)
         try:
             self.assertTrue(k.readonly)
@@ -580,14 +597,15 @@ class Deployment(KernelCase):
         finally:
             k.wconn.close()
             k.mconn.close()
-        after = {q.relative_to(fresh): q.stat().st_mtime_ns for q in fresh.rglob("*") if q.is_file()}
-        self.assertEqual(before, after,
+        after = {str(q.relative_to(fresh)): q.stat().st_mtime_ns
+                 for q in fresh.rglob("*") if q.is_file()}
+        self.assertEqual(data(before), data(after),
                          "a read-only Kernel modified an existing database: "
-                         f"{[n for n in after if before.get(n) != after[n]]}")
-        # sidecars may already exist from the writer pass above; a read-only pass adds none
-        sidecars_now = {q for q in fresh.rglob("*") if q.name.endswith(("-wal", "-shm"))}
-        self.assertEqual(sidecars_before, sidecars_now,
-                         "a read-only Kernel left WAL sidecars: it opened the write side")
+                         f"{[n for n in data(after) if data(before).get(n) != data(after)[n]]}")
+        for w in [n for n in after if n.endswith("-wal")]:
+            self.assertEqual(pathlib.Path(fresh, w).stat().st_size, 0,
+                             f"the read-only pass wrote data into the {w} WAL: a read-only "
+                             "kernel must not leave frames for the next writer to merge")
 
 
 if __name__ == "__main__":
