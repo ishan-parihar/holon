@@ -5,27 +5,29 @@ Measured 2026-10-24, by running the suite and watching what it left behind.
 fixture with `Path(self.tmp.name) / "dept"`. `KernelCase.tmp` is already a `Path`, so `.name` is
 its **final component** rather than the whole path: `Path("holon-test-abc")` is relative, and
 `mkdir(parents=True)` then writes `./holon-test-abc/dept/bin/tool` into whatever the cwd is --
-which, for a suite run from the repository root, is the repository itself. The assertions pass
-(the resolver is genuinely cwd-independent) and the directory is never removed, so every run
-leaves one more at the repo root: four accumulated in under fifteen minutes.
+which, for a suite run from the repository root, is the repository itself. Every assertion passed
+throughout, because the resolver genuinely is cwd-independent, so the only signal was the
+directory itself.
 
-The test's own docstring reads "With `bin/tool` present in the repo root", which is why the
-leak survived: it looks like the intent. It is not -- the intent is a relative command that
-must not resolve, and the file belongs beside every other fixture the suite makes, in the
-temporary directory.
+The test's own docstring read "With `bin/tool` present in the repo root", which is why the leak
+survived: it looks like the intent. It is not -- the intent is a relative command that must not
+resolve, and the file belongs beside every other fixture the suite makes, in the temporary
+directory.
 
 This guard does not rewrite that test. It states the invariant it broke: a test may create
 anything in the temp directory and nothing in the repo, and the check is done by running the
-offending test in a subprocess and measuring the repository root before and after. A relative
-`Path` whose `mkdir` lands in the tree is caught whatever file it is in.
+offending test in a working directory of the guard's own and measuring both that directory and
+the repository root. A relative `Path` whose `mkdir` lands in the tree is caught whatever file it
+is in.
 
 The owning session fixed the line while this guard was being written (their commit changed
-`Path(self.tmp.name) / "dept"` to `self.tmp / "dept"`), so both halves pass today — which is the
+`Path(self.tmp.name) / "dept"` to `self.tmp / "dept"`), so both halves pass today -- which is the
 point of writing them as measured checks rather than as an assertion about a file. The second
 guard reads the shape out of the suite's own AST, so the day someone writes it again, in any
 file, the suite says so before the directory appears.
 """
 
+import ast
 import os
 import shutil
 import subprocess
@@ -35,48 +37,41 @@ import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
-# a private working directory of my own: the defect is a relative path resolving against the cwd,
-# so the cwd is what this guard controls
-REPO_TMP = Path(tempfile.gettempdir()) / f"fixture-guard-{REPO.name}"
 
 
 class NoFixtureInTheRepo(unittest.TestCase):
     def test_the_cwd_flip_test_plants_its_fixture_outside_the_repository(self):
-        """The cwd-flip test's fixture is relative, so it lands in the cwd. Run it and measure
-        the repo root: it must be byte-identical afterwards, or a test has planted its fixture
-        in the tree the whole distribution lives in.
+        """The cwd-flip test's fixture is relative, so it lands in the cwd. Run it in a working
+        directory of this guard's own and measure both that directory and the repository root:
+        neither may gain a directory, or a test has planted its fixture somewhere it will rot.
 
         Counted rather than spotted, because the leak's shape is stable: `holon-test-<run>/`
         with a `dept/bin/tool` inside it, one per run.
 
-        It then removes what appeared, and that is not tidiness -- it is the difference between
-        a guard and a leak. Running the offending test is what plants the directory, so a guard
-        that measured the root and reported would *create* one more every time the suite ran,
-        which is the defect it names. The measurement is the evidence; the removal is the
-        cleanup the offending test does not do itself."""
-        import shutil
+        **Why the cwd is controlled rather than the aftermath cleaned up.** The defect is a
+        relative `Path` resolving against the cwd, so the cwd is the mechanism. Three earlier
+        versions of this guard tried to clean up after the fact and each was measured and
+        rejected: (1) removing everything that appeared during the subprocess deleted a
+        *concurrent* session's fixture too, because another session was running the same suite in
+        this same tree (verified with `ps`) and writes the identical directory; (2) filtering by
+        content (`dept/bin/tool`) separated nothing, since it is the same test writing the same
+        shape; (3) sniffing the subprocess's stdout for the directory name found nothing at all,
+        because the leaked test prints no identifier -- that version was worse than the defect,
+        reporting OK with a leaked directory left behind. Running the test in a directory the
+        guard created makes all three moot: the repository is only read, never written.
 
+        The sandbox is named per run, because a fixed name is shared by two concurrent workers and
+        one then sees the other's fixture in its own before/after (measured with a leftover
+        planted by a simulated second worker)."""
         def planted(where):
             return sorted(p.name for p in Path(where).glob("holon-test-*") if p.is_dir())
 
-        # **Run it somewhere it cannot damage.** The defect is a relative Path resolving against
-        # the cwd, so the cwd is the thing to control: the offending test is executed in a private
-        # throwaway directory instead of the repository. Every earlier version of this guard got
-        # this wrong in a measured way. (a) Measuring the repo root and reporting created one new
-        # leak per suite run -- the defect it names. (b) Removing everything that appeared during
-        # my subprocess deleted a *concurrent* session's fixture too, because another session was
-        # running the same suite in this same tree (verified with ps) and its fixture is written
-        # by the same test, so no content check separates them. (c) Sniffing the subprocess's
-        # stdout for the directory name found nothing: the leaked test prints no identifier at
-        # all, so the filter was empty and the guard stopped detecting.
-        #
-        # A private cwd fixes all three at once: the relative path still resolves (so the defect
-        # is still *observable* -- it plants itself in my directory), the repository is never
-        # touched, and the only file I remove is one in a directory I created for this purpose.
-        sandbox = REPO_TMP
-        sandbox.mkdir(parents=True, exist_ok=True)
+        # a private working directory of this run's own, removed by cleanup
+        sandbox = Path(tempfile.mkdtemp(prefix=f"fixture-guard-{REPO.name}-"))
         self.addCleanup(shutil.rmtree, sandbox, ignore_errors=True)
-        before = planted(sandbox)
+
+        repo_before = planted(REPO)
+        sandbox_before = planted(sandbox)
         proc = subprocess.run(
             [sys.executable, "-m", "unittest",
              "tests.test_bylaws.Bylaws.test_the_reachable_command_question_does_not_depend_on_the_cwd"],
@@ -84,15 +79,18 @@ class NoFixtureInTheRepo(unittest.TestCase):
             env={**os.environ, "PYTHONPATH": str(REPO)},
         )
         self.assertEqual(0, proc.returncode, proc.stderr[-1500:])
-        after = planted(sandbox)
-        # The repository root is the thing that matters, and it is measured on its own
-        self.assertEqual(before, planted(REPO),
+
+        # The repository root is the thing that matters: measured on its own, and it may not gain
+        # a directory whatever the suite does.
+        self.assertEqual(repo_before, planted(REPO),
                          "the repository root gained a directory: whatever the suite planted there "
                          "is not cleaned up")
-        self.assertEqual(before, after,
+        # And the defect is still observable where the relative path now resolves: a fixture in
+        # the working directory means the path is still relative.
+        self.assertEqual(sandbox_before, planted(sandbox),
                          "a test planted its fixture in the working directory it was run in: "
-                         f"{sorted(set(after) - set(before))} appeared. A Path built from "
-                         "`.name` is relative, so it lands in the cwd -- build it from "
+                         f"{sorted(set(planted(sandbox)) - set(sandbox_before))} appeared. A Path "
+                         "built from `.name` is relative, so it lands in the cwd -- build it from "
                          "the temporary directory instead, and clean up in tearDown")
 
     def test_no_path_in_the_suite_is_built_from_a_directory_name(self):
@@ -101,9 +99,8 @@ class NoFixtureInTheRepo(unittest.TestCase):
         resolves against the cwd rather than the temp dir. Nothing in the suite may do it.
 
         The scan reads code, not prose: this file discusses the shape to name it, so it is
-        excluded from its own check, and docstring lines are skipped by the parse rather than by
-        a pattern that would match the sentence describing the pattern."""
-        import ast
+        excluded from its own check, and the parse is an AST walk rather than a pattern that would
+        match the sentence describing the pattern."""
         hits = []
         for path in sorted((REPO / "tests").glob("*.py")):
             if path.name == Path(__file__).name:
