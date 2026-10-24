@@ -249,6 +249,16 @@ it is the smallest thing on this page:
 rm -rf <live-home>/execution/runtime/execution   # only if it is the empty dir measured here
 ```
 
+**This one is not cosmetic, and it is why the audit's own stray matters.** The plan derives its
+proposed agent user from `k.auth.instance_id` (`isolation.py:411`), read from the settings table of
+the instance `HOLON_HOME` resolves to. Measured now, the doubled tree's empty db carries
+`instance_id = 01m5napt…` while the live instance carries `01m4sf0…` — so with the stray in place
+`holon isolation plan` proposes `holon-agent-01m5napt…`, an agent user for an instance that holds
+none of the work. Had the Chair run the root command in this state, root would have created a user
+and a runner unit naming a phantom instance, and the ACLs would have fenced the wrong tree: the
+boundary would look activated and protect nothing. So the removal is a prerequisite for the
+activation sequence below, not a tidy-up after it.
+
 What follows is measured on the instance that carries the work, because that is the one a boundary
 would have to protect.
 
