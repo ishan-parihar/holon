@@ -594,6 +594,16 @@ def pack_bylaws(k, f: Findings) -> None:
     from holon.bylaws import units as units_mod
     for p in units_mod.validate(k):
         f.add("error", "bylaws.manifest", "bylaws/units", p)
+    # Which declared route nothing on this machine can run. A warning, not an error: the tool may
+    # be installed only where the agent runs, while lint runs where the operator is. But a route
+    # that cannot resolve is offered to every pooling department as if it worked, and until
+    # 2026-10-24 nothing said so.
+    for p in units_mod.command_problems(k.home):
+        f.add("warning", "bylaws.command", f"{p['slug']}:{p['service']}",
+              f"its declared {p['key']} '{p['token']}' resolves to nothing here — an agent in every "
+              "department that pools this unit would be offered a route it cannot run (Fix 3 of "
+              "docs/design/2026-10-24-capability-layer-hardening-plan.md grants the binary's "
+              "directory; install it, or declare the resolved path)")
     # A manifest outside the manifest directory is invisible to the kernel: the next sync would
     # empty the units tables with no error. Catch it statically, before the sync runs.
     for orphan in units_mod.orphan_manifests(k.home):

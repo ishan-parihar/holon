@@ -4,9 +4,11 @@ published as read API v3, pooled into briefs and reach, consumed through typed r
 import io
 import json
 import os
+import sys
 import time
 import types
 from contextlib import redirect_stdout
+from pathlib import Path
 
 from holon.execution.service import Kernel
 from holon.core.db import now
@@ -25,6 +27,7 @@ consumed = []
 [[services]]
 id = "kosmos"
 command = "kosmos --query"
+health = "kosmos --version"
 accepts = "a research query"
 returns = "sources and notes"
 """
@@ -104,7 +107,10 @@ class Bylaws(KernelCase):
         self.assertEqual(self.k.wconn.execute(
             "SELECT command FROM api_services WHERE unit='vault' AND service='kosmos'").fetchone()[0],
             "kosmos --query")
-        self.assertEqual(lint.run(self.k, ["api", "bylaws"]), [])
+        self.assertEqual([f for f in lint.run(self.k, ["api", "bylaws"])
+                         if f["rule"] != "bylaws.command"], [],
+                       "the fixture declares a tool (kosmos) this machine has not installed, "
+                       "which Fix 2 correctly reports; every other finding must stay empty")
 
     def test_api_memory_reads_the_live_memory(self):
         self.k.memory.add_item("org", "decision", "v3 is the bylaws API", "this test")
@@ -252,7 +258,10 @@ class Bylaws(KernelCase):
                         rows["sourcehound"]["note"].startswith("prefer"))
         self.assertEqual(rows["sourcehound"]["health"], "cloakctl doctor --json")
         self.assertEqual(self.k.wconn.execute("SELECT dept FROM api_pool").fetchone()[0], "*")
-        self.assertEqual(lint.run(self.k, ["api", "bylaws"]), [])
+        self.assertEqual([f for f in lint.run(self.k, ["api", "bylaws"])
+                         if f["rule"] != "bylaws.command"], [],
+                       "the fixture declares a tool (kosmos) this machine has not installed, "
+                       "which Fix 2 correctly reports; every other finding must stay empty")
         # a plan (observe) sees the read route named to prefer, never the write one (R-03)
         w = self.add("choose a tool", dept="ops", task_class="demo")
         pc = self.k.claim("plan", self.maker, task_id=w["id"])
@@ -335,3 +344,57 @@ class Bylaws(KernelCase):
         self.assertEqual(self.k.wconn.execute("SELECT count(*) FROM units").fetchone()[0], 1)
         self.assertEqual(self.k.wconn.execute("SELECT count(*) FROM unit_services").fetchone()[0], 1)
 
+
+    def test_a_dead_unit_of_any_category_is_reported_not_only_a_dead_surface(self):
+        """C3 reports a failing health probe — and it used to report it only for a
+        `category = "surface"` unit, so every pooled foundation was invisible to the only
+        mechanism that names a dead capability. Measured 2026-10-24 with a control clone that
+        differed only in that field: the surface clone warned, the `service` original said
+        nothing, same exit-127 command. A capability an agent is offered but cannot run is
+        worse than one it never sees: the brief still lists it.
+        """
+        # the vault is `category = "service"`; its health probe fails
+        self._sync()
+        self.k.auth._put("smoke", json.dumps({"ts": now(), "results": [
+            {"dept": None, "name": "vault:kosmos", "ok": False, "exit_code": 127,
+             "critical": False, "seconds": 1, "reason": "probe", "cmd": "kosmos --version",
+             "tail": "kosmos: not found"}]}))
+        found = [f for f in doctor.run(self.k) if f["check"] in ("unit.down", "surface.down")]
+        self.assertTrue(any("vault:kosmos" in f["message"] and "exit 127" in f["message"]
+                            and "ops" in f["message"] for f in found),
+                        f"a service-category unit with a failing health probe reported nothing: {found}")
+        # the historical key is preserved for a surface, so operator tooling keeps working
+        (self.home.bylaws_units_dir / "browser.toml").write_text(BROWSER)
+        self._sync()
+        self.k.auth._put("smoke", json.dumps({"ts": now(), "results": [
+            {"dept": None, "name": "browser:browseros-neo", "ok": False, "exit_code": 1,
+             "critical": False, "seconds": 1, "reason": "probe", "cmd": "browseros-neo --version",
+             "tail": ""}]}))
+        dead = [f for f in doctor.run(self.k) if f["check"] == "surface.down"]
+        self.assertTrue(any("browser:browseros-neo" in f["message"] for f in dead), dead)
+
+    def test_a_declared_command_that_resolves_to_nothing_is_reported(self):
+        """Fix 2 of the capability-layer plan. `validate` required a service to HAVE a command and
+        never checked the command resolves, so a manifest could declare a dead capability and pass
+        sync, promote and lint clean — while every pooling department was offered a route it could
+        not run. A warning, not an error: the tool may only be installed where the agent runs,
+        and lint runs where the operator is.
+        """
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
+            (VAULT % self.tmp).replace('command = "kosmos --query"',
+                                       'command = "definitely-not-an-installed-tool --query"'))
+        self._sync()
+        found = [f for f in lint.run(self.k, ["bylaws"]) if f["rule"] == "bylaws.command"]
+        self.assertTrue(any("vault:kosmos" in f["where"]
+                            and "definitely-not-an-installed-tool" in f["message"] for f in found), found)
+        self.assertTrue(all(f["severity"] == "warning" for f in found), found)
+        # an absolute path to a real executable resolves — for the command AND its health probe,
+        # which is the same kind of promise. A dead health probe is a dead capability.
+        here = Path(sys.executable)
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
+            (VAULT % self.tmp).replace('command = "kosmos --query"', f'command = "{here} -c pass"'
+                                       ).replace('health = "kosmos --version"',
+                                                 f'health = "{here} --version"'))
+        self._sync()
+        self.assertEqual([f for f in lint.run(self.k, ["bylaws"]) if f["rule"] == "bylaws.command"], [],
+                         "a command AND a health probe whose first token is an existing path resolve")

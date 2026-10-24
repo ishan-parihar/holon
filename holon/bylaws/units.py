@@ -33,7 +33,9 @@ writer; `holon lint` (bind.service, bind.pool) checks references; `holon bylaws 
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -175,6 +177,37 @@ def validate(k) -> list[str]:
 def _synced_at(k, slug: str) -> str | None:
     r = k.wconn.execute("SELECT synced_at FROM units WHERE slug=?", (slug,)).fetchone()
     return r[0] if r else None
+
+
+def command_problems(home) -> list[dict]:
+    """Which services declare a command nothing on this machine can run.
+
+    `validate` checks that a service *has* a command; it never checked that the command
+    resolves. A manifest could therefore declare a dead capability and pass `bylaws sync`,
+    `bylaws promote` and `holon lint` clean — and then every agent in every pooling department
+    was offered a route it could not execute, with no finding anywhere. Measured 2026-10-24:
+    a `service`-category unit whose `identity get` failed synced, linted and promoted clean.
+
+    Resolvable means: a first token with a path separator exists on disk, or a bare first token
+    is on PATH (`shutil.which`, the same test `execution/briefs.py:48-53` applies to `holon`
+    before handing an agent an environment). A unit whose tool is installed elsewhere is not
+    broken — it is a **warning** on the machine that does not have it, never an error: lint runs
+    where the operator is, the binary may only live on the machine the agent runs on.
+    """
+    out: list[dict] = []
+    for slug, u in load(home)[0].items():
+        for s in u["services"]:
+            for key in ("command", "health"):
+                raw = (s.get(key) or "").strip()
+                if not raw:
+                    continue
+                token = raw.split()[0]
+                found = (Path(token).expanduser().exists() if os.sep in token
+                         else shutil.which(token) is not None)
+                if not found:
+                    out.append({"slug": slug, "service": s.get("id", "?"), "key": key,
+                                "token": token, "category": u.get("category", "")})
+    return out
 
 
 def pooled_by(conn, dept_slug: str) -> list[dict]:

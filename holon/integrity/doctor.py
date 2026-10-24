@@ -161,19 +161,26 @@ def run(k) -> list[dict]:
                 add("warning", "bylaws.registry",
                     "bylaws/registry.md is older than the last sync: `holon bylaws emit` regenerates it")
 
-    # C3: a surface whose health probe fails is down for everyone who pools it — name the
+    # C3: a unit whose health probe fails is down for everyone who pools it — name the
     # departments, so a planner routes around the dead tier before spending anything. The
-    # convention: a surface's health runs as a smoke check named "<unit>:<service>"
+    # convention: a unit's health runs as a smoke check named "<unit>:<service>"
     # ([smoke.dept.platform-ops] runs each surface's health on the fleet's interval).
+    #
+    # Every category, not only surfaces: the check is about a declared health probe failing,
+    # which is category-independent. It was gated on `category == "surface"` until 2026-10-24,
+    # which left every `service`-category unit — a whole pooled foundation — invisible to the only
+    # mechanism that reports a dead capability. Measured then with a control clone that differed
+    # only in that field: the surface clone warned, the `service` original said nothing, same
+    # exit-127 command. A surface keeps its historical `surface.down` key (operator tooling
+    # matches it); every other category reports `unit.down`.
     failed = {r["name"]: r for r in k.smoke_results() if not r["ok"]}
     for slug, u in units_mod.load(k.home)[0].items():
-        if u["category"] != "surface":
-            continue
         for s in u["services"]:
             r = failed.get(f"{slug}:{s['id']}")
             if r:
                 who = "every department" if "*" in u["pool_of"] else ", ".join(u["pool_of"] or ["nobody"])
-                add("warning", "surface.down",
+                check = "surface.down" if u["category"] == "surface" else "unit.down"
+                add("warning", check,
                     f"{slug}:{s['id']}: its health probe failed (exit {r['exit_code']}) — pooled by: {who}"
                     " — briefs mark the route (down); route around it")
 
