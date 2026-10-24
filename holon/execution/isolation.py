@@ -359,6 +359,25 @@ def reach(k) -> dict:
     for s in k.scopes():
         writes |= {Path(r) for r in s["roots"]}
         reads |= {Path(r) for r in s.get("read_roots") or []}   # U2: pooled roots are reads, never the pen
+    # A pooled unit's service is offered to every department that pools it, and the terminal fence
+    # already names its entry-point token (`execution/service.py:1946`, BYLAWS §14) — so the agent
+    # is told it may run `identity get` while nothing on its PATH resolves it and no grant covers
+    # the binary. Measured 2026-10-24: the isolated runner's PATH is
+    # `%h/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin`, so an out-of-tree tool's bare name is
+    # `FileNotFoundError`. The grant is the read half of the fence the architecture already intends,
+    # and it is read-only for the same reason a harness binary is (`:367-374` above): this is
+    # executable code the agent runs, not a place to be selective.
+    from holon.bylaws import units as units_mod
+    for _slug, u in units_mod.load(k.home)[0].items():
+        for s in u["services"]:
+            token = (s.get("command") or "").split()[0] if s.get("command") else ""
+            if not token:
+                continue
+            found = (str(Path(token).expanduser()) if os.sep in token else shutil.which(token))
+            if found:
+                bin_path = Path(found).resolve()
+                reads.add(bin_path.parent)
+                reads.add(bin_path)
     for d in drivers.available(k.home).values():
         writes |= {Path(v) for v in d.env.values() if v.startswith("/") and Path(v).is_dir()}
         exe = d.command.split()[0] if d.command.split() else ""

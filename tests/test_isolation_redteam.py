@@ -290,6 +290,42 @@ class Reach(KernelCase):
                       "the ACL plan does not grant the harness's directory to the agent user: "
                       "the payload beside the launcher stays unreadable")
 
+    def test_a_pooled_units_service_binary_lands_in_the_read_reach(self):
+        """Fix 3 of the capability-layer plan. The fence half already existed: a pooled unit's
+        service entry-point token joins the department's `commands` (`execution/service.py:1946`,
+        BYLAWS §14), so the agent is told it may run the route. The reach half did not:
+        `reach()` granted binary directories only for `drivers.available()` (harness runtimes),
+        never for a unit's services. Measured 2026-10-24 on the live instance — the isolated
+        runner's PATH is `%h/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin`, so an out-of-tree
+        tool's bare name is `FileNotFoundError: 'identity'`. A route offered in a brief with no
+        grant behind it is a capability that cannot run."""
+        from holon.execution import isolation
+        (self.tmp / "unit" / "bin").mkdir(parents=True)
+        tool = self.tmp / "unit" / "bin" / "factool"
+        tool.write_text("#!/bin/sh\necho '{}'\n")
+        tool.chmod(0o755)
+        self.home.config_file.write_text(self.pipeline + "\n" + self.config +
+                                        "\n[isolation]\nagent_user = \"%s\"\n" % os.getlogin())
+        d = self.home.bylaws_units_dir
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "fact.toml").write_text(
+            'charter = "the capacity substrate"\ncategory = "service"\n'
+            f'roots = ["{self.tmp}/unit"]\npool_of = ["*"]\nconsumed = []\n\n'
+            '[[services]]\nid = "facts"\n'
+            f'command = "{tool} --query"\nhealth = "{tool} --version"\n')
+        self.k = Kernel(self.home)
+        reads = {str(p) for p in isolation.reach(self.k)["reads"]}
+        plan = isolation.setup_plan(self.k)
+        self.k.close()
+        self.assertIn(str(self.tmp / "unit" / "bin"), reads,
+                      "a pooled unit's service binary directory is not in the reach: the route is "
+                      "offered in every brief and cannot run")
+        self.assertIn(str(tool), reads, "the unit's own entry point is not granted")
+        granted = {tuple(c)[-1] for c in plan["acl"] if c[0] == "setfacl"}
+        self.assertIn(str(self.tmp / "unit" / "bin"), granted,
+                      "the ACL plan does not grant the unit's binary directory: the capability "
+                      "stays dark under isolation")
+
     def test_a_cold_start_can_reach_the_activation_plan(self):
         """`holon isolation plan` is step 1 of the documented activation
         (docs/BYLAWS.md §11: `plan` → `sudo sh` → `apply --force` → broker → doctor).
