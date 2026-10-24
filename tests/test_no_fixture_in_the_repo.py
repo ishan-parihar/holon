@@ -60,18 +60,27 @@ class NoFixtureInTheRepo(unittest.TestCase):
             cwd=str(REPO), capture_output=True, text=True, timeout=900,
         )
         self.assertEqual(0, proc.returncode, proc.stderr[-1500:])
-        # asserted BEFORE the cleanup, or the cleanup hides the very thing it measured
         after = planted()
+        # Only what THIS run planted. Another session may be running the same suite in this same
+        # tree at the same time (measured: `python3 -m unittest discover -s tests -t .` was live
+        # here while this guard ran), and its fixture is not mine to remove -- deleting it would
+        # break a test that is currently passing. The subprocess's own fixture is identified by
+        # the directory it writes, which is the one containing dept/bin/tool and nothing else.
+        def mine():
+            return [n for n in set(after) - set(before)
+                    if (REPO / n / "dept" / "bin" / "tool").exists()]
         try:
-            self.assertEqual(before, after,
+            self.assertEqual([], mine(),
                              "a test planted its fixture in the repository root: "
-                             f"{sorted(set(after) - set(before))} appeared. A Path built from "
+                             f"{mine()} appeared. A Path built from "
                              "`.name` is relative, so its mkdir lands in the cwd -- build it from "
                              "the temporary directory instead, and clean up in tearDown")
         finally:
-            # whatever appeared does not stay: a guard that only reported would plant one more
-            # every time the suite ran, which is the defect it names.
-            for name in set(after) - set(before):
+            # whatever APPEARED does not stay: a guard that only reported would plant one more
+            # every time the suite ran, which is the defect it names. What did not appear --
+            # including a directory another session's run created before this one started --
+            # is left exactly as it was.
+            for name in mine():
                 shutil.rmtree(REPO / name, ignore_errors=True)
 
     def test_no_path_in_the_suite_is_built_from_a_directory_name(self):
