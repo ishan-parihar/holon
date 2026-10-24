@@ -37,6 +37,14 @@ employees, departments and the company keep evolving how the work itself is done
 
 Requirements: Linux with Python ≥ 3.11 and SQLite ≥ 3.35. Nothing else.
 
+One line (bootstraps the checkout, then hands off to `install.py`):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ishan-parihar/holon/main/install.sh | bash
+```
+
+or from a checkout:
+
 ```sh
 git clone https://github.com/ishan-parihar/holon && cd holon
 python3 install.py        # instance at ~/holon (SQLite + Chair key, 0600), `holon` on PATH
