@@ -444,7 +444,18 @@ class OneFence(unittest.TestCase):
         Only the fence's message is compared -- a command refused for its actor class is not
         evidence about the fence, and comparing it would make this guard fail for a reason the
         fence has nothing to do with. Rows needing positionals to parse are recorded, not guessed:
-        argparse exits the process on a usage error, and that exit is not the gate's verdict."""
+        argparse exits the process on a usage error, and that exit is not the gate's verdict.
+
+        What this guard covers, measured rather than assumed (2026-10-24): 45 of the registry's
+        124 commands parse from a bare argv, so 79 are skipped -- and 32 of those are
+        agent-reachable (`submit`, `memory add`, `msg send`, `recall` among them), which this
+        guard therefore does not verify. That is a narrow guard, not a hole: the F8 guard
+        (`test_a_command_the_registry_declares_any_reaches_the_fence`) covers the other 32 by
+        asserting every agent-reachable command publishes its tool (56 of 56 today), and the
+        allowlist guard holds the restore list. Together they cover the agent-reach surface; this
+        one is the piece that calls the broker instead of inspecting the derivation. The skipped
+        rows are still checked against their own required arguments below, so a row skipped by
+        parsing cannot be skipped by mistake."""
         import holon.cli as cli
         derived = {" ".join(p) for p in mcp.agent_commands()}
         blocked = set(mcp.AGENT_BLOCKLIST)
