@@ -45,8 +45,11 @@ def _distribution_root() -> Path:
     return Path(__file__).resolve().parents[1]   # a harness that ships the package alone
 
 
-# what an agent may run through the broker (holon/execution/isolation.py): MCP's agent commands, plus these
-BROKER_EXTRA = ("submit", "whoami", "help", "task list", "plan queue")
+# An agent's reach through the broker is `mcp.agent_commands()`, nothing more. This used to
+# be a hand-maintained tuple (`BROKER_EXTRA`) that re-added `submit`, `whoami` and `help` over the
+# derived fence, so the broker admitted three commands the MCP fence refused -- one registry, two
+# answers, and the transport decided which. The derivation is now the single answer; see
+# `mcp.AGENT_ALWAYS` for why `whoami`/`submit` are restored there rather than here.
 _FILES: dict[str, str] | None = None   # set while the broker serves a request: the files the client sent
 EXPORTED_HOLON = "${HOLON:-holon}"
 GRADE = {g: f"G{g} {n}" for g, n in vocab.GRADE_NAMES.items()}
@@ -1976,7 +1979,7 @@ def main(argv: list[str] | None = None, broker: dict | None = None) -> int:
         # how `task list` reached the broker through BROKER_EXTRA while being absent from
         # AGENT_COMMANDS — one rule, two lists, and a body that could not claim what it could see.
         from holon.mcp import agent_commands
-        if tuple(cmd.path) not in agent_commands() and " ".join(cmd.path) not in BROKER_EXTRA:
+        if tuple(cmd.path) not in agent_commands():
             print(f"holon: `{' '.join(cmd.path)}` is not available to agents", file=sys.stderr)
             return FORBIDDEN
         _FILES = broker.get("files") or {}

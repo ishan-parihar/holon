@@ -42,14 +42,26 @@ AGENT_ACTORS = ("any", "employee")
 #                     is a file write outside the workdir: the actor class is `any`, but the write
 #                     reaches where a body must not reach (test_agents_reach_only_agent_commands)
 AGENT_BLOCKLIST = ("mcp", "help", "lint", "whoami", "submit", "skill check", "contract schemas")
-MCP_ONLY = ("whoami", "submit")
+# `whoami|submit` are blocked from the REGISTRY's generic path and published separately, so their
+# agent reach is one decision made in one place. These two are the ones a body must be able to
+# reach -- `whoami` for its identity, `submit` to hand its result in -- and both are typed tools,
+# not the generic flag-forwarding path. The previous arrangement had `BROKER_EXTRA` in `cli.py`
+# hand the same three back through the other gate, and `MCP_ONLY` describing the intent while no
+# code read it, so one registry answered two questions depending on the transport.
+AGENT_ALWAYS = ("whoami", "submit")
 
 
-def agent_commands() -> list[tuple[str, ...]]:
-    """Every registry command an employee may call, derived from its actor class."""
+def agent_commands() -> list[tuple[str]]:
+    """Every registry command an employee may call, derived from its actor class.
+
+    One derivation, consumed by both gates (the MCP fence and the broker's), so an agent's reach
+    does not depend on which transport it arrived on. `AGENT_ALWAYS` names commands the fence
+    restores over `AGENT_BLOCKLIST`: reach is decided here and nowhere else."""
     from holon.cli import REGISTRY
+    always = set(AGENT_ALWAYS)
     return sorted(c.path for c in REGISTRY
-                  if c.actor in AGENT_ACTORS and " ".join(c.path) not in AGENT_BLOCKLIST)
+                  if c.actor in AGENT_ACTORS
+                  and (" ".join(c.path) in always or " ".join(c.path) not in AGENT_BLOCKLIST))
 
 
 def _tool_name(path: tuple[str, ...]) -> str:

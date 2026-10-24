@@ -26,7 +26,6 @@ STAGE_STATUSES = ("ready", "claimed", "done", "failed", "cancelled")
 TERMINAL = ("done", "failed", "cancelled")
 SOURCES = ("chair", "agent", "audit", "schedule", "kernel", "intake")
 RISKS = ("low", "normal", "high", "irreversible")
-GRADES = (0, 1, 2, 3, 4)
 GRADE_NAMES = {0: "routine", 1: "minor", 2: "significant", 3: "major", 4: "critical"}
 PRIORITIES = (0, 1, 2, 3, 4)
 # how a piece of work is run, cheapest first: the kernel runs an approved command (script); one agent

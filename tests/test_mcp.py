@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+import unittest
 from pathlib import Path
 
 from holon import mcp
@@ -36,20 +37,34 @@ class Protocol(KernelCase):
         states. `task list` was missing, so a mounted employee could not discover the work it was
         meant to claim. The list is now derived, and this proves the derivation round-trips: every
         exposed tool's actor class is one an employee may act under, and no chair or kernel command
-        is reachable through `call` even though it is in the registry."""
-        from holon.mcp import agent_commands, MCP_ONLY
-        for c in REGISTRY:
-            if c.path in agent_commands():
-                self.assertIn(c.actor, ("any", "employee"),
-                              f"holon {' '.join(c.path)} (actor {c.actor}) is in the agent fence")
+        is reachable through `call` even though it is in the registry.
+
+        The blocklist is not absolute: `AGENT_ALWAYS` restores the two tools a body cannot work
+        without (`whoami` for its identity, `submit` to hand its result in), which are typed tools
+        published separately rather than the generic flag-forwarding path. Every other blocklist
+        entry stays out -- that difference is the whole rule, and it lives in one place."""
+        from holon.mcp import agent_commands, AGENT_ALWAYS, AGENT_ACTORS
         exposed = set(agent_commands())
+        for c in REGISTRY:
+            if c.path in exposed:
+                self.assertIn(c.actor, AGENT_ACTORS,
+                              f"holon {' '.join(c.path)} (actor {c.actor}) is in the agent fence")
         for c in REGISTRY:
             if c.actor not in ("chair", "kernel") or " ".join(c.path) in mcp.AGENT_BLOCKLIST:
                 continue
             self.assertNotIn(c.path, exposed,
                              f"holon {' '.join(c.path)} (actor {c.actor}) must not be exposed")
-        for name in mcp.AGENT_BLOCKLIST:
-            self.assertNotIn(tuple(name.split()), exposed, f"{name} is on the blocklist")
+        always = set(AGENT_ALWAYS)
+        # measured, not inspected: `whoami` and `submit` are the two a body cannot work without,
+        # so their exposure is a behaviour, not a constant. Every other blocklisted command stays
+        # out. This catches an emptied AGENT_ALWAYS as readily as an overfull one, because it
+        # asserts the reachable set, not the list that produced it.
+        self.assertIn(("whoami",), exposed, "a body cannot reach its own identity")
+        self.assertIn(("submit",), exposed, "a body cannot hand its result in")
+        restored = {" ".join(p) for p in exposed} & set(mcp.AGENT_BLOCKLIST)
+        self.assertEqual(restored, {"whoami", "submit"},
+                         f"exactly these blocklisted commands are agent-reachable: {sorted(restored)}. "
+                         "whoami and submit must be, and nothing else on the blocklist may be")
 
 
     def test_chair_actions_are_derived_from_the_actor_class_not_hand_listed(self):
@@ -366,3 +381,50 @@ class ArgumentNames(OverStdio):
         self.assertEqual(self.pipeline_of(t)[-1], ("plan", "claimed"),
                          "a token covers only its own run: the other run's id is not a submission")
 
+
+
+class OneFence(unittest.TestCase):
+    """Two gates over one registry must give one answer. They did not.
+
+    Measured 2026-10-24: `mcp.agent_commands()` derived 54 commands from actor classes, and the
+    broker gate admitted 57 -- the difference being exactly `help`, `submit` and `whoami`, the
+    three `AGENT_BLOCKLIST` names the fence refuses on purpose. `BROKER_EXTRA` in `cli.py` is a
+    hand-maintained escape hatch that hands them back through the other door, so a body mounted
+    as MCP is refused `holon_submit` while a body routed through the broker is allowed the same
+    verb. The 2026-10-21 ledger row fixed the MCP fence's hand-maintained list and left the
+    broker's in place, which is the same defect one file over.
+
+    The contract: one derivation, consumed by both gates. An agent's reach is `agent_commands()`,
+    whichever transport it arrived on -- a fence with two answers is a fence nobody can reason
+    about, and it is exactly the class that made `task list` unreachable for a month.
+    """
+
+    def test_the_broker_gate_admits_exactly_the_derived_fence(self):
+        """The broker's own gate holds no second list. Calling the CLI the way the broker calls
+        it (`main(..., broker={})`) is the measurement, not inspecting a constant: a second
+        hand-maintained tuple would make a blocked command succeed through this gate alone."""
+        import holon.cli as cli
+        # `help` is on the blocklist and in no restore list: through the broker it must be refused
+        rc = cli.main(["help"], broker={"token": None, "key": None, "files": {}, "stdin": ""})
+        self.assertEqual(cli.FORBIDDEN, rc,
+                         "the broker admitted `help`, a blocklisted command: the gate carries a "
+                         "list of its own again")
+        rc = cli.main(["task", "list"], broker={"token": None, "key": None, "files": {}, "stdin": ""})
+        self.assertNotEqual(cli.FORBIDDEN, rc,
+                            "the broker refused `task list`: the work an agent must claim is "
+                            "unreachable through the transport agents actually use")
+
+    def test_both_gates_agree_for_every_registry_command(self):
+        """The whole registry, both paths: nothing may cross one gate and be refused at the other."""
+        import holon.cli as cli
+        broker_reach = {" ".join(p) for p in mcp.agent_commands()}
+        self.assertNotIn(getattr(cli, "BROKER_EXTRA", ()), ("stale",),
+                         "the broker carries a list the derivation does not know about")
+        blocked = set(mcp.AGENT_BLOCKLIST)
+        for c in REGISTRY:
+            name = " ".join(c.path)
+            via_mcp = name in {" ".join(p) for p in mcp.agent_commands()}
+            via_broker = name in broker_reach
+            self.assertEqual(via_mcp, via_broker,
+                             f"`{name}` crosses the two gates differently (mcp={via_mcp}, "
+                             f"broker={via_broker}); blocked={name in blocked}, actor={c.actor}")

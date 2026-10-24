@@ -156,14 +156,24 @@ class GenomePin(unittest.TestCase):
     """
 
     def test_the_vendored_cli_is_the_same_build_as_scripts_genome(self):
+        """The distribution's own entry point reads the one copy of the CLI.
+
+        This test started life asserting two byte-identical files, which every re-pin re-
+        duplicated: a rule engine whose only job is to keep a copy of another rule engine
+        in sync is entropy with a test around it. The copy is gone now -- `scripts/genome`
+        is a symlink to `holon/vendor/genome.py` -- so what this asserts is that the link
+        still resolves and still reads the same bytes. A re-pin is one write."""
         repo = Path(__file__).resolve().parents[1]
         vendored = repo / "holon" / "vendor" / "genome.py"
         shipped = repo / "scripts" / "genome"
         self.assertTrue(vendored.exists(), "the vendored CLI is missing")
         self.assertTrue(shipped.exists(), "scripts/genome is missing")
+        self.assertEqual(vendored.resolve(), shipped.resolve(),
+                         "scripts/genome no longer resolves to the vendored CLI: the one copy of "
+                         "the genome is at holon/vendor/genome.py, and this must point at it")
         self.assertEqual(vendored.read_bytes(), shipped.read_bytes(),
-                         "holon/vendor/genome.py and scripts/genome are different builds: "
-                         "copy the newer one over the other and re-pin GENOME_SHA256")
+                         "scripts/genome does not read the vendored CLI's bytes: the symlink is "
+                         "broken or a second copy was dropped back into place")
 
     def test_the_pinned_checksum_matches_the_vendored_cli(self):
         digest = hashlib.sha256(kb.GENOME.read_bytes()).hexdigest()
@@ -294,3 +304,28 @@ class OrgScope(KernelCase):
         with redirect_stdout(out):
             cli.main(["--home", str(self.home.root), "--json", "recall", "greeting"])
         self.assertNotIn("Knowledge bases", out.getvalue())
+
+
+class GenomeSingleSource(unittest.TestCase):
+    """One CLI, one copy. The genome is a 5893-line rule engine and it lives twice: the kernel's
+    knowledge-base layer runs `holon/vendor/genome.py`, the distribution's own lint runs
+    `scripts/genome`, and both are 350,867 bytes.
+
+    The existing guard detects the drift but cannot prevent it, so it has been the wrong shape
+    from the start: it asserts the two copies are equal, which every re-pin re-duplicates. A rule
+    engine whose only job is to keep a copy of another rule engine in sync is entropy with a test.
+    The 2026-10-20 ledger row it was written for is real, and the fix is not equality -- it is one
+    path.
+
+    The contract: the second copy does not exist as a second copy. One file holds the CLI and
+    every consumer resolves it through `kb.GENOME`, so a re-pin is one write the kernel also sees.
+    """
+
+    def test_the_genome_cli_exists_exactly_once(self):
+        repo = Path(__file__).resolve().parents[1]
+        copies = [p for p in (repo / "holon" / "vendor" / "genome.py", (repo / "scripts" / "genome"))
+                  if p.exists() and not p.is_symlink()]
+        self.assertEqual(1, len(copies),
+                         f"the genome CLI is duplicated: {[str(c) for c in copies]}. Keep the "
+                         "vendored copy (kb.GENOME's path) and make the other a symlink or a "
+                         "resolver, so a re-pin is one write")

@@ -525,3 +525,39 @@ class DatabaseVersion(KernelCase):
             Kernel(self.home, "chair")
         self.assertIn("9999_future.sql", str(cm.exception))
         self.assertIn("newer Holon", str(cm.exception))
+
+
+class NoDeadVocabulary(unittest.TestCase):
+    """An enumeration with no reader is entropy wearing a vocabulary's clothes.
+
+    Measured 2026-10-24 across the whole distribution: every name `holon/**/*.py` defines at
+    module level in CAPS is matched against every use in the kernel and in the tests. One had no
+    reader -- a five-element grade tuple duplicating `vocab.PRIORITIES` a few lines away, read by
+    nothing. The audit that removed it found a live example of the same class first: a constant in
+    `holon/mcp.py` described intent in a comment while no code read it, which is how two gates
+    over one registry came to answer differently (see `test_mcp.OneFence`).
+
+    The contract: a name in `holon/core/vocab.py` is a vocabulary because something reads it.
+    A copy with no reader is two places to change one enumeration, and nothing says when one
+    moved and the other did not.
+    """
+
+    def test_every_vocabulary_member_has_a_reader(self):
+        import pathlib
+        import re
+        from holon.core import vocab
+
+        src = ""
+        for tree in ("holon", "tests"):
+            src += "".join(p.read_text() for p in pathlib.Path(tree).rglob("*.py"))
+        vocab_src = pathlib.Path(vocab.__file__).read_text()
+        for name, value in vars(vocab).items():
+            if name.startswith("_") or not name.isupper():
+                continue
+            # every mention in the tree, minus the one that defines it, minus the one in this
+            # guard's own docstring: a vocabulary with exactly its definition is unread
+            mentions = len(re.findall(rf"\b{re.escape(name)}\b", src))
+            definition = len(re.findall(rf"^{re.escape(name)}\s*=", vocab_src, re.M))
+            self.assertGreater(mentions - definition, 0,
+                               f"vocab.{name} has no reader: an enumeration nothing consumes is "
+                               "two places to change one vocabulary. Delete it, or wire it up")
