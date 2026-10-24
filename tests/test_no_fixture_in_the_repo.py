@@ -26,12 +26,18 @@ guard reads the shape out of the suite's own AST, so the day someone writes it a
 file, the suite says so before the directory appears.
 """
 
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
+# a private working directory of my own: the defect is a relative path resolving against the cwd,
+# so the cwd is what this guard controls
+REPO_TMP = Path(tempfile.gettempdir()) / f"fixture-guard-{REPO.name}"
 
 
 class NoFixtureInTheRepo(unittest.TestCase):
@@ -50,41 +56,44 @@ class NoFixtureInTheRepo(unittest.TestCase):
         cleanup the offending test does not do itself."""
         import shutil
 
-        def planted():
-            return sorted(p.name for p in REPO.glob("holon-test-*") if p.is_dir())
+        def planted(where):
+            return sorted(p.name for p in Path(where).glob("holon-test-*") if p.is_dir())
 
-        before = planted()
+        # **Run it somewhere it cannot damage.** The defect is a relative Path resolving against
+        # the cwd, so the cwd is the thing to control: the offending test is executed in a private
+        # throwaway directory instead of the repository. Every earlier version of this guard got
+        # this wrong in a measured way. (a) Measuring the repo root and reporting created one new
+        # leak per suite run -- the defect it names. (b) Removing everything that appeared during
+        # my subprocess deleted a *concurrent* session's fixture too, because another session was
+        # running the same suite in this same tree (verified with ps) and its fixture is written
+        # by the same test, so no content check separates them. (c) Sniffing the subprocess's
+        # stdout for the directory name found nothing: the leaked test prints no identifier at
+        # all, so the filter was empty and the guard stopped detecting.
+        #
+        # A private cwd fixes all three at once: the relative path still resolves (so the defect
+        # is still *observable* -- it plants itself in my directory), the repository is never
+        # touched, and the only file I remove is one in a directory I created for this purpose.
+        sandbox = REPO_TMP
+        sandbox.mkdir(parents=True, exist_ok=True)
+        self.addCleanup(shutil.rmtree, sandbox, ignore_errors=True)
+        before = planted(sandbox)
         proc = subprocess.run(
             [sys.executable, "-m", "unittest",
              "tests.test_bylaws.Bylaws.test_the_reachable_command_question_does_not_depend_on_the_cwd"],
-            cwd=str(REPO), capture_output=True, text=True, timeout=900,
+            cwd=str(sandbox), capture_output=True, text=True, timeout=900,
+            env={**os.environ, "PYTHONPATH": str(REPO)},
         )
         self.assertEqual(0, proc.returncode, proc.stderr[-1500:])
-        after = planted()
-        # **Which directory is mine.** The obvious filter -- everything that appeared during my
-        # subprocess -- is exactly the window a concurrent session's fixture can also appear in,
-        # and its contents are identical (`dept/bin/tool`, written by the same test), so a content
-        # check separates nothing. Measured: a second fixture planted mid-subprocess is deleted
-        # by the set-difference version of this cleanup, which breaks a suite that is passing.
-        # The subprocess therefore names its own directory, and mine is the one it names.
-        named = set()
-        for token in proc.stdout.split() + proc.stderr.split():
-            if token.startswith("holon-test-"):
-                named.add(token.strip("'\"`,"))
-        # it is only mine if it appeared now AND the subprocess named it
-        mine_ = sorted((set(after) - set(before)) & named)
-        try:
-            self.assertEqual([], mine_,
-                             "a test planted its fixture in the repository root: "
-                             f"{mine_} appeared. A Path built from "
-                             "`.name` is relative, so its mkdir lands in the cwd -- build it from "
-                             "the temporary directory instead, and clean up in tearDown")
-        finally:
-            # whatever THIS run planted does not stay: a guard that only reported would plant one
-            # more every time the suite ran, which is the defect it names. What a concurrent run
-            # planted is not mine to remove, and the named-only filter is what keeps it safe.
-            for name in mine_:
-                shutil.rmtree(REPO / name, ignore_errors=True)
+        after = planted(sandbox)
+        # The repository root is the thing that matters, and it is measured on its own
+        self.assertEqual(before, planted(REPO),
+                         "the repository root gained a directory: whatever the suite planted there "
+                         "is not cleaned up")
+        self.assertEqual(before, after,
+                         "a test planted its fixture in the working directory it was run in: "
+                         f"{sorted(set(after) - set(before))} appeared. A Path built from "
+                         "`.name` is relative, so it lands in the cwd -- build it from "
+                         "the temporary directory instead, and clean up in tearDown")
 
     def test_no_path_in_the_suite_is_built_from_a_directory_name(self):
         """The defect is one shape: `Path(some_tmp.name)`. `KernelCase.tmp` is already absolute,
