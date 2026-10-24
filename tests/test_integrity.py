@@ -15,6 +15,7 @@ from unittest import mock
 from holon import cli
 from holon import cli as holon_cli
 from holon.core.db import now
+from holon.execution import service
 from holon.execution.service import Kernel
 from holon.integrity import doctor, lint
 from tests.helpers import KernelCase
@@ -86,6 +87,42 @@ class Lint(KernelCase):
         self.assertIn("strict_fails", src,
                       "cmd_lint counts warnings itself: it must defer to the shared rule, or the "
                       "two drift and the overlay's gate stays red")
+
+    def test_every_key_the_kernel_reads_is_declared_in_the_config_schema(self):
+        """The schema is the only thing standing between a config file and a silent typo, so every key
+        the kernel reads must be declared in it -- in both directions.
+
+        Measured 2026-10-24T22:59Z on the live instance: `holon lint` reported
+        `WARN schema.config holon.toml: unknown key [notify] dropped_marker`, on an instance that had
+        the mechanism working. `DEFAULT_CONFIG["notify"]` declared only `command`, while
+        `Kernel.notify` reads `dropped_marker` (service.py) and BYLAWS documents it. So the lint rule
+        was doing its job on a *correct* config, and an operator reading a warning would have deleted
+        the one line making their digest honest. The guard below asserts the join both ways: a
+        declared key no reader uses is drift (a law that binds nothing), and a read key nobody
+        declared is the same drift the other way round."""
+        from holon.execution.service import DEFAULT_CONFIG, CONFIG_KEYS
+        # 1. declared keys must have a reader somewhere in the kernel. The scan is the whole
+        #    `holon/` package, not a subset: scanning only `holon/*.py` and `holon/execution/*.py`
+        #    misses `holon/capabilities/decisions.py`, which reads six of them (`key_file`,
+        #    `fallback_model`, `noul_model` and three more), and reports those as unread drift --
+        #    measured 2026-10-24T23:04Z while proving this guard fails pre-fix.
+        src = "".join(p.read_text() for p in sorted(Path(service.__file__).parent.parent.rglob("*.py")))
+        declared = {k for keys in CONFIG_KEYS.values() for k in keys}
+        unread = sorted(k for k in declared
+                        if k not in src and f'"{k}"' not in src and f"'{k}'" not in src)
+        self.assertEqual(unread, [], f"declared in the config schema and read by no code: {unread}")
+        # 2. every key the kernel's own defaults carry must be declared, which is what fails lint
+        #    when a live instance follows BYLAWS
+        for section, keys in DEFAULT_CONFIG.items():
+            if section in ("grading", "autonomy", "pipeline"):
+                continue  # sub-tables with their own sections, validated by other rules
+            missing = sorted(set(keys) - (CONFIG_KEYS.get(section) or set()))
+            self.assertEqual(missing, [], f"[{section}] defaults not in the schema: {missing}")
+        # 3. and the live mechanism's key specifically, so a future edit cannot drop it again
+        self.assertIn("dropped_marker", CONFIG_KEYS["notify"],
+                      "the dropped_marker guard reads (self.config['notify'] or {}).get"
+                      "('dropped_marker') and BYLAWS documents it: an undeclared key makes every "
+                      "correct instance warn")
 
     def test_every_registered_command_is_in_the_command_reference(self):
         """A command that exists and is documented nowhere is a reader's surprise: the reference

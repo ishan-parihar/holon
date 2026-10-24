@@ -142,6 +142,99 @@ class ArgumentRefusalsAreReported(KernelCase):
                       f"the argument refusal is appended to the same row, got {reason!r}")
 
 
+class ModelDependentRefusalsArePredicted(KernelCase):
+    """The refusals A3 filed as unpredictable, measured instead of assumed.
+
+    A3's outline row split `add_routine`'s eight raises into "five pure" and "three that
+    depend on the decision model", and concluded the second three could not be reported
+    when the model was off. **Measured 2026-10-24T22:40, that conclusion was wrong, and
+    it is the row's own gate that disproves it:** `_would_refuse` already calls
+    `classify` for the ordinary path, and `classify` with the model off returns
+    `{"lane": None, "source": "off"}` rather than raising - so a no-model kernel still
+    yields a lane value to compare against. Both reachable model-dependent refusals are
+    predicted, and each guard below measures it against the apply.
+
+    What is actually true is narrower and stronger: **two of the three are unreachable
+    from an import at all.** `add_routine` raises "the classifier says X is enough" only
+    behind `elif not why` in the `strict=True` branch, and measured across every call
+    site, four of five pass `strict=False` (`ventures.py:545`, `cli.py:946`,
+    `service.py:1497`, `portability.py:163`); only the interactive `holon routine add`
+    (`cli.py:782`) takes the default, and it has no dry run to be unfaithful to. So an
+    import cannot raise it, which means a dry run that cannot predict it is not a gap.
+
+    These guards exist so the filing error cannot be re-asserted: a claim that the dry
+    run is silent is testable in three lines, and silence would be a real defect.
+    """
+
+    def _pool(self, name: str, cron: str) -> Path:
+        pool = self.tmp / "pool" / name
+        (pool / "cron-jobs").mkdir(parents=True, exist_ok=True)
+        (pool / "cron-jobs" / f"{name}.md").write_text(
+            f"---\nname: {name}\nstatus: active\nschedule: '{cron}'\n---\n\n## Purpose\nDo the thing.\n"
+        )
+        return pool
+
+    def _reason(self, out: dict, title: str) -> str:
+        return next((s["reason"] for s in out.get("skipped", []) if s["title"] == title), "")
+
+    def test_a_no_model_kernel_still_predicts_the_cadence_refusal(self):
+        """The no-decision-model refusal. This kernel has `decider.on` False, and the
+        dry run still names it, matching the apply - because `classify` reports
+        `source: off` with `lane: None` rather than raising."""
+        self.assertFalse(self.k.decider.on, "this guard is about the model being off")
+        pool = self._pool("frequent", "*/5 * * * *")
+        dry = cli.venture_import(pool, "t", dry_run=True, k=self.k)
+        app = cli.venture_import(pool, "t", dry_run=False, k=self.k)
+        self.assertIn("frequent", [s["title"] for s in dry["skipped"]],
+                      "the survey names the cadence refusal with the model off")
+        self.assertEqual(app["routines"], 0)
+        self.assertEqual(sorted(s["title"] for s in app["skipped"]),
+                         sorted(s["title"] for s in dry["skipped"]),
+                         "the survey's skipped set equals the apply's")
+
+    def test_a_classified_script_job_is_predicted(self):
+        """The 'looks deterministic' refusal. Stubbed classifier so no live model is
+        needed, and the survey and the apply agree."""
+        self.k.classify = lambda title, intent, command=None: {
+            "lane": "script", "confidence": 0.92, "external_p": None, "source": "stub",
+            "model_lane": "script", "probabilities": None, "error": None}
+        pool = self._pool("scriptish", "0 9 * * 1")
+        dry = cli.venture_import(pool, "t", dry_run=True, k=self.k)
+        app = cli.venture_import(pool, "t", dry_run=False, k=self.k)
+        self.assertIn("looks deterministic", self._reason(dry, "scriptish"))
+        self.assertEqual(app["routines"], 0)
+
+    def test_a_mixed_pool_predicts_the_apply_exactly(self):
+        """A3's gate as the row states it: the dry run's skipped count equals the
+        apply's made-shortfall. One protocol per refusal class - unparseable cron
+        (arguments), a */5 job with no model, and a valid one."""
+        pool = self.tmp / "pool" / "mixed"
+        (pool / "cron-jobs").mkdir(parents=True)
+        for name, cron in (("bad", "nonsense"), ("fast", "*/5 * * * *"), ("ok", "0 9 * * 1")):
+            (pool / "cron-jobs" / f"{name}.md").write_text(
+                f"---\nname: {name}\nstatus: active\nschedule: '{cron}'\n---\n\n## Purpose\nDo the thing.\n")
+        dry = cli.venture_import(pool, "t", dry_run=True, k=self.k)
+        app = cli.venture_import(pool, "t", dry_run=False, k=self.k)
+        self.assertEqual(dry["protocols"], 3)
+        self.assertEqual(sorted(s["title"] for s in dry["skipped"]), ["bad", "fast"])
+        self.assertEqual(app["routines"], 1)
+        self.assertEqual(sorted(s["title"] for s in app["skipped"]), ["bad", "fast"])
+        self.assertEqual(len(dry["skipped"]), dry["protocols"] - app["routines"],
+                         "the shortfall the gate names")
+
+    def test_the_strict_only_refusal_is_unreachable_from_an_import(self):
+        """Why nothing needs building here: the third raise needs `strict=True`, and
+        measured call by call, both importers pass `strict=False`. This guard keeps the
+        withdrawn claim from coming back as a new gap."""
+        import inspect
+        from holon.execution import portability as P
+        from holon.execution import ventures as V
+        self.assertIn("strict=False", inspect.getsource(V.venture_import),
+                      "the venture import passes strict=False")
+        self.assertIn("strict=False", inspect.getsource(P),
+                      "the portability import passes strict=False")
+
+
 class TheBoundaryIsWhatIsLeft(KernelCase):
     """The three refusals that stay behind, named so the survey's silence has a shape."""
 
