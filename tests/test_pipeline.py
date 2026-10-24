@@ -139,6 +139,34 @@ class Rework(KernelCase):
         last = self.k.work.stages(t["id"])[-1]
         self.assertEqual((last["stage"], last["status"], last["blocked_reason"]), ("plan", "ready", "stale_plan"))
 
+    def test_a_plan_whose_declared_reads_changed_is_replanned(self):
+        """Fix 4 of the capability-layer plan. Staleness re-hashed a plan's declared `writes`
+        only, so a plan that READS mutable state was never invalidated when that state moved —
+        no `reads_fingerprint` concept existed anywhere in the tree (`grep -rn reads_fingerprint`
+        returned nothing). That is the degradation mode for a capability whose purpose is to
+        change: an agent plans "apply for this role using the candidate's profile", the profile
+        moves, and the agent applies on stale facts with nothing to say otherwise."""
+        source = self.workdir / "source-of-truth.txt"
+        source.write_text("the candidate is a staff engineer")
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[], reads=["source-of-truth.txt"])
+        # the declared read moves between approval and claim
+        source.write_text("the candidate is now a principal engineer")
+        self.assertIsNone(self.k.claim("execute", self.dev1),
+                          "a plan whose declared reads changed claimed as if nothing moved")
+        last = self.k.work.stages(t["id"])[-1]
+        self.assertEqual((last["stage"], last["status"], last["blocked_reason"]), ("plan", "ready", "stale_plan"))
+
+    def test_a_plan_that_declares_no_reads_still_fails_open(self):
+        """The other half of the rule, pinned so Fix 4 cannot over-reach: an undeclared dimension
+        fails open, exactly as `writes` did before reads existed. A plan that declares no reads
+        is not stale by definition -- otherwise every write-only task would replan forever."""
+        t = self.add(dept="eng", task_class="demo")
+        self.plan_and_approve(t, assignee=self.dev1, writes=[], reads=[])
+        c = self.k.claim("execute", self.dev1)
+        self.assertIsNotNone(c, "a plan declaring no reads was treated as stale")
+        self.k.submit(c.run["id"], self.exec_env())
+
     def test_executor_failure_retries(self):
         t = self.add(dept="eng", task_class="demo")
         self.plan_and_approve(t, assignee=self.dev1, writes=[])

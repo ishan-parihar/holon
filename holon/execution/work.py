@@ -483,9 +483,17 @@ class Work:
         if not plan or not plan["output"]:
             return False
         body = plan["output"]["body"]
-        if not body.get("writes_fingerprint"):
+        # Reads and writes are both re-hashed: a plan that reads mutable state goes stale when
+        # that state moves, exactly as one that writes it does. Either fingerprint being absent
+        # means that dimension is undeclared, and an undeclared dimension fails open (the
+        # pre-existing contract: `writes` worked this way before reads existed at all).
+        if not body.get("writes_fingerprint") and not body.get("reads_fingerprint"):
             return False
-        return fingerprint(execute["workdir"], body.get("writes") or []) != body["writes_fingerprint"]
+        if body.get("writes_fingerprint") and \
+                fingerprint(execute["workdir"], body.get("writes") or []) != body["writes_fingerprint"]:
+            return True
+        return bool(body.get("reads_fingerprint")) and \
+            fingerprint(execute["workdir"], body.get("reads") or []) != body["reads_fingerprint"]
 
     def _open_run(self, node: dict, who: Claimant, driver: str | None, token_hash: str | None) -> dict:
         rid, ts = new_id("run"), now()
@@ -599,6 +607,13 @@ class Work:
             body = {**env, "author": run["employee_id"]}
             if env["kind"] == "plan":
                 body["writes_fingerprint"] = fingerprint(work["workdir"], env.get("writes") or [])
+                # A plan declares the state it READS as well as the state it writes. Reads had no
+                # fingerprint at all until 2026-10-24 (no `reads_fingerprint` concept existed
+                # anywhere), so a plan whose declared inputs changed between approval and execution
+                # claimed and ran on stale data — the exact degradation for a capability whose whole
+                # point is that it changes. `_stale` below re-hashes and compares. Fail-open only
+                # when a plan declares no reads, which stays true for genuinely read-free work.
+                body["reads_fingerprint"] = fingerprint(work["workdir"], env.get("reads") or [])
             if env.get("acceptance") and not work["acceptance"]:
                 self.conn.execute("UPDATE tasks SET acceptance=? WHERE id=?", (env["acceptance"], work["id"]))
             self._output(node["id"], run_id, "plan", body, env.get("findings") or env.get("rationale"))
