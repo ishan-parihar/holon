@@ -157,6 +157,24 @@ def validate(k) -> list[str]:
                 if not s.get("effect") or not s.get("note"):
                     problems.append(f"{u['file']}: a surface service needs effect (read|write) and note "
                                     "(when to prefer this route) — lint's surface rule (C1)")
+        # Fix 5: `effect` declared a read while the command is the whole mutation surface. `effect`
+        # was read in exactly one behavioral place (capabilities/context.py hides a write route
+        # from an observe posture) and never constrained the command, so `effect = "read"` on
+        # `identity` was a promise the kernel transmitted to agents while the binary carried
+        # `set`/`propose`/`validate`. The rule: a read-effect service narrows its command to a
+        # verb. A service that needs the whole binary declares `write`, and then an observe
+        # posture never sees it at all (context.py:312).
+        for s in u["services"]:
+            cmd = (s.get("command") or "").strip()
+            if s.get("effect") != "read" or not cmd:
+                continue
+            toks = cmd.split()
+            if len(toks) > 1:
+                continue          # already narrowed: the second token is a verb
+            problems.append(f"{u['file']}: service '{s.get('id')}' declares effect=read but its "
+                            f"command is the bare '{toks[0]}' — a read route must name the verb it "
+                            "invokes (identity → `identity get`), or declare effect=write and let "
+                            "context.py:312 keep it out of observe postures")
         for d in u["pool_of"]:
             if d != "*" and d not in known_depts:
                 problems.append(f"{u['file']}: pools '{d}', which is not a department (bind.pool)")

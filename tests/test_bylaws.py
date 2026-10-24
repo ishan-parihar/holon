@@ -27,6 +27,7 @@ consumed = []
 [[services]]
 id = "kosmos"
 command = "kosmos --query"
+effect = "read"
 health = "kosmos --version"
 accepts = "a research query"
 returns = "sources and notes"
@@ -398,3 +399,33 @@ class Bylaws(KernelCase):
         self._sync()
         self.assertEqual([f for f in lint.run(self.k, ["bylaws"]) if f["rule"] == "bylaws.command"], [],
                          "a command AND a health probe whose first token is an existing path resolve")
+
+    def test_a_read_route_may_not_name_the_whole_mutation_surface(self):
+        """Fix 5 of the capability-layer plan. `effect` declared a read while the command was
+        the whole binary, and `effect` was read in exactly one behavioral place in the tree
+        (`capabilities/context.py:312`, which hides a write route from an observe posture) —
+        it never constrained the command. So a route offered as a read could carry the
+        mutation verbs, and identity's write safety rested on the store's own CLI rather
+        than on the capability layer. A read route must name the verb it invokes."""
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
+            (VAULT % self.tmp).replace('command = "kosmos --query"', 'command = "kosmos"'))
+        self._sync()
+        found = [f for f in lint.run(self.k, ["bylaws"]) if f["severity"] == "error"]
+        self.assertTrue(any("effect=read" in f["message"] and "bare 'kosmos'" in f["message"]
+                            for f in found), found)
+        # narrowed to a verb, the same service passes
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
+            (VAULT % self.tmp).replace('command = "kosmos --query"', 'command = "kosmos query"'))
+        self._sync()
+        self.assertEqual([f for f in lint.run(self.k, ["bylaws"])
+                          if "effect=read" in f["message"]], [],
+                         "a read route narrowed to a verb was still refused")
+        # a service that genuinely needs the whole binary declares write, and is then invisible
+        # to an observe posture (context.py:312) rather than offered as a read
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
+            (VAULT % self.tmp).replace('command = "kosmos --query"\neffect = "read"',
+                                       'command = "kosmos"\neffect = "write"'))
+        self._sync()
+        self.assertEqual([f for f in lint.run(self.k, ["bylaws"])
+                          if "effect=read" in f["message"]], [],
+                         "a write-effect service was refused by the read rule")
