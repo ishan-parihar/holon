@@ -402,17 +402,29 @@ class OneFence(unittest.TestCase):
     def test_the_broker_gate_admits_exactly_the_derived_fence(self):
         """The broker's own gate holds no second list. Calling the CLI the way the broker calls
         it (`main(..., broker={})`) is the measurement, not inspecting a constant: a second
-        hand-maintained tuple would make a blocked command succeed through this gate alone."""
+        hand-maintained tuple would make a blocked command succeed through this gate alone.
+
+        The allowed side uses `plan queue`, which parses with no positional arguments. That
+        matters for what this guard can see: a `FORBIDDEN` return is the gate's verdict, but
+        an argparse usage error raises `SystemExit`, which propagates and *errors* this test
+        rather than passing it -- so an argv that could fail argparse would make the guard
+        fail for a reason other than the gate. An argv that always parses keeps the assertion
+        about the gate alone."""
         import holon.cli as cli
         # `help` is on the blocklist and in no restore list: through the broker it must be refused
         rc = cli.main(["help"], broker={"token": None, "key": None, "files": {}, "stdin": ""})
         self.assertEqual(cli.FORBIDDEN, rc,
                          "the broker admitted `help`, a blocklisted command: the gate carries a "
                          "list of its own again")
-        rc = cli.main(["task", "list"], broker={"token": None, "key": None, "files": {}, "stdin": ""})
+        # and a command an agent needs must pass the gate: `plan queue` takes no positional, so
+        # nothing downstream can fail it, and a non-FORBIDDEN exit is the gate letting it through
+        rc = cli.main(["plan", "queue"], broker={"token": None, "key": None, "files": {}, "stdin": ""})
         self.assertNotEqual(cli.FORBIDDEN, rc,
-                            "the broker refused `task list`: the work an agent must claim is "
+                            "the broker refused `plan queue`: the work an agent must claim is "
                             "unreachable through the transport agents actually use")
+        self.assertIsInstance(rc, int, "`plan queue` never reached the gate: this guard cannot "
+                                      "tell past-the-gate from refused-at-it with this argv, and a "
+                                      "SystemExit escaping would error the test rather than lie")
 
     def test_both_gates_agree_for_every_registry_command(self):
         """The whole registry, both paths: nothing may cross one gate and be refused at the other."""
