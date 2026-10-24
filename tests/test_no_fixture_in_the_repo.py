@@ -18,6 +18,12 @@ This guard does not rewrite that test. It states the invariant it broke: a test 
 anything in the temp directory and nothing in the repo, and the check is done by running the
 offending test in a subprocess and measuring the repository root before and after. A relative
 `Path` whose `mkdir` lands in the tree is caught whatever file it is in.
+
+The owning session fixed the line while this guard was being written (their commit changed
+`Path(self.tmp.name) / "dept"` to `self.tmp / "dept"`), so both halves pass today — which is the
+point of writing them as measured checks rather than as an assertion about a file. The second
+guard reads the shape out of the suite's own AST, so the day someone writes it again, in any
+file, the suite says so before the directory appears.
 """
 
 import subprocess
