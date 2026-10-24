@@ -39,6 +39,7 @@ import os
 import pathlib
 import re
 import secrets
+import subprocess
 import sys
 import threading
 import types
@@ -131,6 +132,63 @@ class RedTeam(KernelCase):
                          "a name the runner inherited reached the spawned process")
 
     # ── the boundary itself ────────────────────────────────────────────────
+
+    def test_the_runner_refuses_a_real_uid_the_comparator_cannot_see(self):
+        """The uid decision is the one line the isolation system is: a process the
+        kernel's user does not own may not start processes here. And it is the one
+        line no test in this suite has ever proved.
+
+        Measured 2026-10-24 against a **real** runner on a real abstract socket, with a
+        peer that is uid 99 inside its own user namespace. `SO_PEERCRED` — the mechanism
+        `peer_uid` reads, and the only one that answers from outside the process — reports
+        a peer's uid translated into the *receiving* socket's namespace, so that namespaced
+        peer appears to the runner as this user's own uid, is admitted, and its command runs.
+
+        So this guard asserts the negative, and says so: it stands up the real runner on a
+        real abstract socket, connects to it from a peer that is uid 99 inside its own
+        user namespace, and holds the runner to the truth -- that the command it ran
+        reported THIS user's uid, so the peer was translated into the runner's namespace
+        and admitted. When the Chair activates the boundary, `holon isolation apply`
+        writes the agent user and this becomes a real two-user assertion instead of a
+        measurement of the host. Until then it is the honest description of what is
+        unproved, rather than a passing test read as proof."""
+        import subprocess
+        import time
+        address = "@holon-rt-uid-" + secrets.token_hex(4)
+        runner = subprocess.Popen([sys.executable, "-m", "holon.execution.isolation", "runner",
+                                   "--address", address, "--allow-uid", str(os.getuid())],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        try:
+            # the runner's socket must be listening before the peer dials it
+            deadline = time.time() + 20
+            while time.time() < deadline:
+                try:
+                    s = isolation.connect(address, timeout=1)
+                    s.close()
+                    break
+                except isolation.IsolationError:
+                    time.sleep(0.1)
+            else:
+                self.fail(f"the runner never listened on {address}")
+            probe = subprocess.run([sys.executable, str(REPO / "tests/probe_uid.py"), address],
+                                  capture_output=True, text=True, timeout=120, check=False)
+            self.assertEqual(0, probe.returncode, f"the probe could not run: {probe.stderr[:400]}")
+            self.assertIn("'exit_code': 0", probe.stdout,
+                          "the runner REFUSED a peer that is a different uid inside its own "
+                          f"namespace: {probe.stdout[:300]!r}. This host can therefore produce a "
+                          "uid the runner sees as different, so this guard owes the real two-user "
+                          "assertion instead of a statement about the host.")
+            self.assertIn(str(os.getuid()), probe.stdout,
+                          "the runner ran the probe's command but it reported a uid that is not "
+                          "this process's: the peer was NOT translated into the runner's "
+                          "namespace, so the measurement is not comparable.")
+        finally:
+            runner.terminate()
+            try:
+                runner.wait(10)
+            except subprocess.TimeoutExpired:
+                runner.kill()
+
     def test_the_broker_refuses_a_uid_it_does_not_allow(self):
         """The broker's first gate is the peer uid: a caller outside `allowed_uids`
         is refused before any command runs."""
@@ -373,9 +431,16 @@ class Deployment(KernelCase):
     operational seam the mechanism tests cannot see. Measured 2026-10-23 on the live
     instance (mode=ro):
 
-        holon doctor  →  WARN isolation.off · 0 errors, 1 warnings
-        no [isolation] section in holon.toml; no `holon-agent` user; no runner unit;
-        no broker unit (the tick and the mirror only).
+        holon doctor  →  ERROR isolation.off (an absent boundary is an error, not a
+        warning -- the heartbeat opens incidents only for errors). Measured
+        2026-10-23 on the live instance, mode=ro: no `[isolation]` section in
+        holon.toml, no `holon-agent` user, no runner unit; a broker unit exists but
+        is disabled and points at a scratch home
+        (`~/.config/systemd/user/holon-broker.service`).
+
+        The record this measurement answers (`docs/design/2026-10-22-live-activation.md`
+        §4) said "no broker unit" -- false, and a reader sent to create one would find
+        it already there. A broker unit exists; the broker is not running.
 
     The record `docs/design/2026-10-22-live-activation.md` §4 measured the same three
     days earlier and named the one blocker: root must create the agent user, and it is

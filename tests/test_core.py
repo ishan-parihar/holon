@@ -478,6 +478,30 @@ class ChairChannels(KernelCase):
         rc = cli.main(["--home", str(self.home.root), "chair-channels"])
         self.assertEqual(rc, 0)  # the text arm prints; the exit is the contract
 
+    def test_an_inbound_channel_identity_can_be_authorized_as_the_chair(self):
+        """H8's promise, read as a red-team requirement.
+
+        This class's own docstring states the mechanism: "a runtime that fronts a channel (a
+        gateway) may run Chair commands only for one of these [identities]". Measured 2026-10-24,
+        `chair_channels()` is read by nothing but the display command, and
+        `security.Auth.principal()` resolves a principal from a run token, an employee key, or
+        the Chair key — so a message that arrives *from* `telegram:123456` cannot become a chair
+        principal at all. A button surface whose presses have no principal is a button surface
+        that cannot act, which is the gap this guard names rather than papers over.
+
+        The contract to satisfy: a channel identity in `[chair] channels` resolves to the chair
+        actor, and one outside it resolves to anonymous (never to a chair by default). Named
+        here as a red test on purpose: it is the predecessor of every adapter step in
+        `docs/design/2026-10-24-chair-interaction-surface-red-team-audit.md`."""
+        from holon.execution.security import Auth
+        auth = Auth(self.k.wconn, self.home)
+        # the mechanism a channel front-end needs: given the identity a message came from, who is this?
+        if getattr(auth, "channel_principal", None) is None:
+            self.fail("no channel_principal() on Auth: an inbound Chair identity cannot be "
+                      "authorized, so no button press can act (H8's promise is unimplemented)")
+        self.assertEqual(auth.channel_principal("telegram:123456").actor, "chair")
+        self.assertNotEqual(auth.channel_principal("telegram:999999").actor, "chair")
+
 
 class DatabaseVersion(KernelCase):
     """H-09 (integration audit): a database migrated by a newer Holon must refuse to run under

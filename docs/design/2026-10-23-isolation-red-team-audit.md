@@ -297,6 +297,19 @@ read is not read for it. A guard now holds that.
 ## 4. What the mechanism cannot close
 
 - the agent user must exist (root, once) — §2
+- **the uid decision has never been proved against a uid that exists.** This is the seam the whole
+  system is, and no test in the suite closes it. Every test measures `handle_runner` with a uid
+  that is only a number: `test_isolation.py` passes `{os.getuid() + 1}`, which no process ever has,
+  so the comparator fires either way and the test cannot tell a working boundary from a broken one.
+  Measured 2026-10-24, an unprivileged user namespace does not close it either — `SO_PEERCRED`
+  reports a peer's uid **translated into the receiving socket's namespace**, so a process that is
+  uid 99 inside its own namespace still appears as this user's uid to the runner and is admitted.
+  Only a real second user, which root creates, makes the uid a namespaced child cannot fake. The
+  guard `test_the_runner_refuses_a_real_uid_the_comparator_cannot_see` records exactly this, and it
+  is deliberately **not** a regression guard: mutated so the check never fires, it still passes,
+  because it asserts a host fact rather than a kernel property. No ledger row was minted for it
+  (`ref.guard` would have rejected one, correctly). Once the Chair runs step 2 of §5 the agent user
+  exists, and this becomes a real two-user assertion — a guard worth writing then, not now.
 - the runner unit is a **system** unit, so it does not inherit the user manager's environment; the
   broker is a **user** unit and does. The runner sanitizes nothing, and the §1a fix removes the
   last reason that could matter, but a deployment that puts a credential in the system manager's
