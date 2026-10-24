@@ -127,6 +127,7 @@ change this policy. `holon charter autonomy` shows the effective policy per depa
 |---|---|---|---|
 | `[context]` | `budget_chars` | 24000 | size of a stage's context bundle |
 | `[context]` | `recall_floor_chars` | 3600 | chars of the bundle budget reserved for cross-scope recall (KB-1): sections render in priority order and the recall family is not crowded out by large stage material |
+| `[context]` | `unread_cap` | 3 | how many unread messages an employee's brief carries (M1, 2026-10-24): the section renders right after `Your role`, acks on render, and the rest is a count plus the `msg inbox` pointer; 0 turns the join off (and then it acks nothing) |
 | `[planner]` | `enforce_read_only` | true | fail observe-stage runs that change the working directory |
 | `[planner]` | `trust_harness_read_only` | false | skip that check for drivers declaring `read_only_enforced` |
 | `[planner]` | `guard_ignore` | [] | paths (globs relative to the workdir, `dir/**` for a tree) that other processes write, which the read-only check skips; commits by another process never count |

@@ -148,20 +148,21 @@ def _names_its_verb_set(args: str) -> bool:
     The false positive Fix 5 shipped: a bare head was refused outright, and a bare head is the
     CORRECT form for a command-group CLI. Measured 2026-10-24, `sourcehound` and `identity`
     both list a subcommand group, so the command alone cannot distinguish a dispatcher from a
-    mutation surface. `args` already can: a group entry point documents its choices right
-    there, as an alternation after the head (`sourcehound <search|read|news|papers|social> …`).
+    mutation surface. `args` already can: a group entry point writes its choices right there,
+    as a BRACKETED alternation — `<search|read|news|papers|social>`.
 
-    The test is therefore: an `|`-alternation somewhere in `args`, in any of the shapes a call
-    shape is written in — `<a|b>`, `[a|b]`, or a bare `a | b` run. The head itself does not have to
-    be repeated inside `args`: a string that is nothing but a verb set (`<get|set|propose>`) names
-    the route's verbs just as well as `sourcehound <search|read|…>` does, and requiring the head
-    would refuse a documentation style that is not the defect.
+    The bracket is the whole test, and narrowing to it was this rule's own red-team. An
+    unbracketed `|` is ambiguous in the wrong direction: `pipe output to jq: use --json then |
+    jq`, `--sep "|" for the field separator`, and `<query> (a|b as a regex)` all contain a pipe
+    and none of them names a verb set, so a looser pattern silently exempted the very defect the
+    rule exists to catch. A bracketed alternation is how a call shape documents a choice and how
+    nothing else is written, and `[--json]` (an optional flag bracket) has no `|` so it still
+    fails for the right reason.
 
-    What this deliberately does NOT do: infer verbs from the POSITION of the alternation, or
-    decide that a bracket of optional flags (`tool [--json]`) is a verb set. `[--json]` has no
-    `|`, so it fails here for the right reason.
+    What this deliberately does NOT do: verify the verbs are real, or that any of them is a read.
+    This layer checks what the manifest declares, not what the binary does.
     """
-    return bool(re.search(r"<?\[?\s*\S+\s*\|\s*\S+\s*\]?", args))
+    return bool(re.search(r"<[^<>]*\|[^<>]*>|\[[^\[\]]*\|[^\[\]]*\]", args))
 
 
 def validate(k) -> list[str]:

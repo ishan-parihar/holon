@@ -224,6 +224,60 @@ class Skills(KernelCase):
         self.assertIn("holon --home X", (out[0] / "SKILL.md").read_text())
         self.assertTrue((out[0] / "briefs" / "execute.md").exists())
 
+    def test_a_run_carries_only_the_skills_its_roles_hold(self):
+        """M2 of the 2026-10-24 upgrade plan: the run's skills export was the whole library —
+        measured 50,325 chars where an executor's own membership rule (the one `skill list --as`
+        already computes and tests) names 13,303. Every skill the employee's roles do not hold
+        is a token cost the brief never asked for, auto-loaded by any harness that trusts the
+        directory. The export now applies the same rule `skill list --as` ships — no new policy,
+        an existing one at one more site — and nothing is lost: `skill show` resolves from the
+        library, not the export, so a denied skill stays readable by name."""
+        w = self.add(dept="eng")
+        self.plan_and_approve(w)
+        c = self.k.claim("execute", self.dev1, task_id=w["id"])
+        self.assertIsNotNone(c)
+        exported = sorted(p.name for p in (c.brief_dir / "skills").iterdir())
+        # dev1 holds roles=[executor]: the three protocol skills plus the executor's own
+        self.assertIn("holon-executor", exported)
+        self.assertIn("holon-employee", exported)
+        self.assertIn("holon-collaboration", exported)
+        self.assertIn("holon-memory", exported)
+        # and not the five roles dev1 does not hold
+        for absent in ("holon-planner", "holon-researcher", "holon-steward", "holon-verifier",
+                       "holon-system-design"):
+            self.assertNotIn(absent, exported, f"an executor's run does not carry {absent}")
+
+    def test_a_head_still_carries_the_heads_skills(self):
+        """The filter removes what the roles do not hold, never what they do: a head
+        (head+planner+verifier) still sees the head skill, the planner skill and the verifier
+        skill. `holon-operator` is NOT in the head's set: the `mine` rule is by the skill's
+        name (holon-<role>), and no role is called `operator` — the operator skill's own
+        `roles:` tag ([head, steward]) governs `check`, not the export. The plan's text
+        claimed a head keeps it; this test corrects that claim, measured."""
+        self.add(dept="eng")
+        c = self.k.claim("plan", self.hod)
+        exported = sorted(p.name for p in (c.brief_dir / "skills").iterdir())
+        for kept in ("holon-head", "holon-planner", "holon-verifier", "holon-employee",
+                     "holon-collaboration", "holon-memory"):
+            self.assertIn(kept, exported, f"the head's run keeps {kept}")
+        self.assertNotIn("holon-researcher", exported, "eng has no researcher role")
+        self.assertNotIn("holon-operator", exported,
+                         "no role is named operator: the export follows the mine rule, not the roles tag")
+
+    def test_the_stage_role_skill_is_never_filtered_out(self):
+        """Whatever the roles, the brief's own role skill must survive the filter: a verifier's
+        verify brief renders holon-verifier, and a filter that ate the brief's own skill would be
+        a body told to load a file it was not given."""
+        w = self.add(dept="eng")
+        self.plan_and_approve(w)
+        c = self.k.claim("execute", self.dev1, task_id=w["id"])
+        self.k.submit(c.run["id"], self.exec_env())
+        c = self.k.claim("verify", self.dev2, task_id=w["id"])
+        self.assertIsNotNone(c)
+        exported = sorted(p.name for p in (c.brief_dir / "skills").iterdir())
+        self.assertIn("holon-verifier", exported, "the verify stage's role skill is exported")
+        self.assertEqual(json.loads((c.brief_dir / "brief.json").read_text())["skill"], "holon-verifier")
+
     def test_cli_skill_commands(self):
         def run(*argv):
             buf = io.StringIO()

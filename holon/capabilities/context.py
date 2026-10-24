@@ -190,7 +190,9 @@ def identity_card(employee: dict, manager: dict | None, authority: list[dict], r
             + (f" (inherited from {', '.join(predecessors)})" if predecessors else "") + ".\n\n"
             f"## Job description\n\n{employee['job_description']}\n\n"
             "You are a persistent employee: your memory, record and colleagues outlive this session. "
-            "Load the `holon-employee` skill and follow its protocol.\n")
+            "Load the `holon-employee` skill and follow its protocol.\n\n"
+            "You have an inbox: unread messages addressed to you (or your department, or the "
+            "organization) render in your brief, and `$holon msg inbox` reads them in full.\n")
 
 
 FAST_LANE = ("There is no separate plan or approval: this work is routine (its grade floor is G0), so you plan "
@@ -213,11 +215,16 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
                     budget: int = DEFAULT_BUDGET_CHARS, run_id: str | None = None,
                     employee: dict | None = None, predecessors: list[str] | None = None,
                     extra: list[tuple[str, str]] | None = None,
-                    recall_floor: int = 0) -> tuple[str, dict]:
+                    recall_floor: int = 0, unread_cap: int = 0) -> tuple[str, dict]:
     """`extra`: sections the kernel adds for this stage (a playbook, an objective's dashboard), placed right
     after the work itself. `recall_floor`: chars of the budget reserved for the cross-scope recall family
     (KB-1) — non-recall sections stop once that much remains; clamped to a third of the budget so a
-    misconfigured floor cannot gut the work material."""
+    misconfigured floor cannot gut the work material. `unread_cap`: how many unread messages the
+    employee's brief carries (M1 of the 2026-10-24 upgrade plan); 0 turns the join off — and a
+    disabled join acks nothing, because consuming messages nobody rendered would be a silent loss.
+    The section acks on render: the guarantee is "it reached the brief", the same guarantee
+    `needs_input`'s answer already carries, and it makes the section self-emptying — the next
+    dispatch owes only what arrived since."""
     node = work.get(node_id)
     stage = node["stage"] or "work"
     task = work.work_of(node)
@@ -244,6 +251,25 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
               f"memory scope `emp:{employee['id']}`."
               + (f" You inherited the role and memory of {', '.join(predecessors)}." if predecessors else "")
               + f"\n\n### Job description\n\n{employee['job_description']}")
+
+        # 0b. messages waiting for you (M1: the 2026-10-24 audit found the inbox had no
+        # dispatch-time reader — a DM never reached any brief at any stage). The join runs
+        # through the same fan-in `Kernel.inbox` reads (`Work.unread`), cap-bounded, and
+        # **acks on render**: the guarantee is "it reached the brief", so the section is
+        # self-emptying and no backlog can crowd the budget. A message scoped to *this*
+        # work is skipped: the conversation section below already carries it, and a
+        # double render is exactly the redundancy this move exists to remove.
+        if unread_cap > 0:
+            refs = [f"emp:{employee['id']}", f"dept:{employee['dept']}", "org"]
+            waiting = [m for m in work.unread(refs) if m["task_id"] != task_id]
+            if waiting:
+                lines = [f"- [{m['kind']}] {m['sender']}: {(m['body'] or '').strip()[:160]}"
+                         for m in waiting[:unread_cap]]
+                rest = len(waiting) - unread_cap
+                if rest > 0:
+                    lines.append(f"+{rest} older (`$holon msg inbox`)")
+                b.add(f"Messages waiting for you ({len(waiting)} unread)", "\n".join(lines))
+                work.ack([m["id"] for m in waiting])
 
     # 1. the work itself
     meta = [f"- work: {task_id} ({task['status']})", f"- this stage: {stage} `{node_id}`",

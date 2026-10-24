@@ -313,7 +313,11 @@ class Reach(KernelCase):
             f'roots = ["{self.tmp}/unit"]\npool_of = ["*"]\nconsumed = []\n\n'
             '[[services]]\nid = "facts"\n'
             f'command = "{tool} --query"\nhealth = "{tool} --version"\n')
+        # reach reads the tables, not the manifests, so the manifest must be synced first --
+        # the same reason `holon bylaws sync` is step one of every capability flow.
+        from holon.bylaws import units
         self.k = Kernel(self.home)
+        units.sync(self.k)
         reads = {str(p) for p in isolation.reach(self.k)["reads"]}
         plan = isolation.setup_plan(self.k)
         self.k.close()
@@ -325,6 +329,40 @@ class Reach(KernelCase):
         self.assertIn(str(self.tmp / "unit" / "bin"), granted,
                       "the ACL plan does not grant the unit's binary directory: the capability "
                       "stays dark under isolation")
+
+    def test_a_unit_pooled_by_nobody_grants_its_binary_to_nobody(self):
+        """The red-team that caught my own Fix 3. The grant must follow what a department pools,
+        not every manifest in the directory: `bylaws/units.load()` returns all of them, so an
+        unfiltered loop would hand every agent the binary of a unit pooled by nobody — the exact
+        widening BYLAWS §14 exists to prevent, introduced by a fix written to close a hole.
+
+        And the predicate matters in the other direction too: `units.pooled_by` matches
+        `e.other = <slug>` only, so a `pool_of = ["*"]` unit (org-wide, the identity case) is
+        invisible to it. Using pooled_by would have granted nothing to the most widely pooled
+        units. The join must be `capabilities_for`'s: `e.other IN (<depts>) OR e.other = '*'`."""
+        from holon.execution import isolation
+        tool = self.tmp / "unpooled" / "bin" / "nobodytool"
+        tool.parent.mkdir(parents=True, exist_ok=True)
+        tool.write_text("#!/bin/sh\necho '{}'\n")
+        tool.chmod(0o755)
+        self.home.config_file.write_text(self.pipeline + "\n" + self.config +
+                                        f"\n[isolation]\nagent_user = \"{os.getlogin()}\"\n")
+        d = self.home.bylaws_units_dir
+        d.mkdir(parents=True, exist_ok=True)
+        # a department that exists but is not named in pool_of: the unit is pooled by nobody
+        (d / "unpooled.toml").write_text(
+            f'charter = "pooled by no department"\ncategory = "service"\n'
+            f'roots = ["{self.tmp}/unpooled"]\npool_of = ["nonexistent-dept"]\nconsumed = []\n\n'
+            f'[[services]]\nid = "nt"\ncommand = "{tool} run"\n')
+        from holon.bylaws import units
+        self.k = Kernel(self.home)
+        units.sync(self.k)
+        reads = {str(p) for p in isolation.reach(self.k)["reads"]}
+        self.k.close()
+        self.assertNotIn(str(tool.parent), reads,
+                         "a unit pooled by no department widened the agent user's reach: the "
+                         "grant is org-wide, not pooled")
+        self.assertNotIn(str(tool), reads, "its own binary was granted too")
 
     def test_a_cold_start_can_reach_the_activation_plan(self):
         """`holon isolation plan` is step 1 of the documented activation
@@ -458,6 +496,71 @@ class Reach(KernelCase):
                           f"{f.name} is not readable after the plan is applied: {acl}")
             self.assertNotIn(f"user:{agent}:---", acl,
                              f"{f.name} carries a deny the recursive grant should have replaced")
+
+    def test_a_write_target_sharing_a_units_binary_directory_does_not_deny_it(self):
+        """Attack 6 of the red-team against my own Fix 3, and it does NOT land -- recorded so the
+        next reader does not re-run it. `setup_plan` grants in a fixed order: chain directories
+        first, with `u:---` on their un-kept siblings (so the agent cannot walk sideways out of the
+        sandbox), then the plan's own targets. Fix 3 adds a service binary's DIRECTORY as a read
+        target, so the attack's question is whether that grant survives when a plan also writes
+        beside it.
+
+        Two things are true, and the second is why there is no defect. The binary directory IS
+        swept by the chain pass's `setfacl -d -m u:<agent>:---` (a DEFAULT ACL, which governs only
+        files created later, not the existing binary). And the target pass then applies
+        `setfacl -R -d -m u:<agent>:rX` to the same directory, which is LAST and therefore wins.
+        Measured on the emitted plan, the order is: chain grant (20), chain default deny (21),
+        sibling deny (22), the chain's own `x` on bin (23), the chain's default deny on bin (24),
+        then the target pass -- `x` on bin, `-R rX` on bin, `-R -d rX` on bin (36, 37), and `rx` on
+        the binary itself (38).
+
+        Asserted against the plan as data, never applied: a test that runs `setfacl` reaches the
+        operator's real home directory through `pwd.getpwuid`, and the first version of this test
+        did exactly that."""
+        from holon.execution import isolation
+        shared = self.tmp / "shared"
+        (shared / "bin").mkdir(parents=True)
+        tool = shared / "bin" / "factool"
+        tool.write_text("#!/bin/sh\necho hi\n")
+        tool.chmod(0o755)
+        (shared / "secret.txt").write_text("do not read\n")
+        self.home.config_file.write_text(self.pipeline + "\n" + self.config +
+                                        f"\n[isolation]\nagent_user = \"{os.getlogin()}\"\n"
+                                        f'runner = "@attack6-runner"\nbroker = "@attack6-broker"\n')
+        d = self.home.bylaws_units_dir
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "fact.toml").write_text(
+            'charter = "c"\ncategory = "service"\n'
+            f'roots = ["{shared}"]\npool_of = ["*"]\nconsumed = []\n\n'
+            '[[services]]\nid = "facts"\n'
+            f'command = "{tool} --query"\nhealth = ""\n')
+        from holon.bylaws import units
+        self.k = Kernel(self.home)
+        units.sync(self.k)
+        plan = isolation.setup_plan(self.k)
+        self.k.close()
+        agent = os.getlogin()
+        acl = [" ".join(c) for c in plan["acl"]]
+        bin_dir, binary = str(shared / "bin"), str(tool)
+        # the target pass grants the directory and the file, and it comes after every deny on them
+        grant_rec = next(i for i, c in enumerate(acl)
+                         if f"setfacl -R -d -m u:{agent}:rX {bin_dir}" in c)
+        deny_default = [i for i, c in enumerate(acl)
+                        if f"setfacl -d -m u:{agent}:--- {bin_dir}" in c]
+        self.assertTrue(deny_default, "the chain pass never denies new files in the bin dir, so "
+                                      "nothing is being overridden: this test proves nothing")
+        self.assertGreater(grant_rec, max(deny_default),
+                           "the recursive default grant for the unit's binary directory is applied"
+                           " BEFORE the chain pass's default deny: last-applied-wins then leaves"
+                           " new files in the capability's own directory unreadable")
+        self.assertIn(f"setfacl -m u:{agent}:rx {binary}", acl,
+                      "the unit's own entry point is not granted read+execute in the applied plan")
+        # reading the tool must not widen the sandbox: a sibling no one declared stays denied
+        self.assertTrue(any(f"setfacl -m u:{agent}:--- " in c and str(shared / "secret.txt") in c
+                            for c in acl),
+                        f"a sibling the plan was never told about is readable: {acl}")
+
+
 
 
 class Deployment(KernelCase):

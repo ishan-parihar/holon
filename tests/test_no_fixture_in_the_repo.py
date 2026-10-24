@@ -35,7 +35,15 @@ class NoFixtureInTheRepo(unittest.TestCase):
         in the tree the whole distribution lives in.
 
         Counted rather than spotted, because the leak's shape is stable: `holon-test-<run>/`
-        with a `dept/bin/tool` inside it, one per run."""
+        with a `dept/bin/tool` inside it, one per run.
+
+        It then removes what appeared, and that is not tidiness -- it is the difference between
+        a guard and a leak. Running the offending test is what plants the directory, so a guard
+        that measured the root and reported would *create* one more every time the suite ran,
+        which is the defect it names. The measurement is the evidence; the removal is the
+        cleanup the offending test does not do itself."""
+        import shutil
+
         def planted():
             return sorted(p.name for p in REPO.glob("holon-test-*") if p.is_dir())
 
@@ -46,12 +54,19 @@ class NoFixtureInTheRepo(unittest.TestCase):
             cwd=str(REPO), capture_output=True, text=True, timeout=900,
         )
         self.assertEqual(0, proc.returncode, proc.stderr[-1500:])
+        # asserted BEFORE the cleanup, or the cleanup hides the very thing it measured
         after = planted()
-        self.assertEqual(before, after,
-                         "a test planted its fixture in the repository root: "
-                         f"{sorted(set(after) - set(before))} appeared. A Path built from "
-                         "`.name` is relative, so its mkdir lands in the cwd -- build it from "
-                         "the temporary directory instead, and clean up in tearDown")
+        try:
+            self.assertEqual(before, after,
+                             "a test planted its fixture in the repository root: "
+                             f"{sorted(set(after) - set(before))} appeared. A Path built from "
+                             "`.name` is relative, so its mkdir lands in the cwd -- build it from "
+                             "the temporary directory instead, and clean up in tearDown")
+        finally:
+            # whatever appeared does not stay: a guard that only reported would plant one more
+            # every time the suite ran, which is the defect it names.
+            for name in set(after) - set(before):
+                shutil.rmtree(REPO / name, ignore_errors=True)
 
     def test_no_path_in_the_suite_is_built_from_a_directory_name(self):
         """The defect is one shape: `Path(some_tmp.name)`. `KernelCase.tmp` is already absolute,

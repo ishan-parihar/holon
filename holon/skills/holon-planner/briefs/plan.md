@@ -15,7 +15,13 @@ approver whose authority covers that grade, so make it reviewable in under two m
    change while planning fails this run.
 2. Name concrete files, commands and systems; no "investigate further" step an approver cannot judge.
 3. `writes`: every path the plan will modify (they are fingerprinted). `external_effects`:
-   everything it does outside this machine.
+   everything it does outside this machine. `reads`: every path whose *content* the plan depends
+   on — a profile, a spec, a state file it will quote from. Reads are fingerprinted too
+   (`execution/work.py` sets `reads_fingerprint` at submit and `_stale` recomputes it), so if one
+   of them changes between approval and execution the plan is sent back for replanning instead of
+   running on facts that moved. This is what makes a capability that is *meant* to change safe to
+   plan against: a plan that reads the candidate's profile is invalidated when the profile moves.
+   A plan that declares no reads is not stale by definition — fail-open, as `writes` always was.
 4. Grade it with the planner skill's `references/grading.md`. The context's "Grade floor" section
    already says what the kernel computes and who approves. Holon's own **source code** is not an
    input, so do not read it to plan — its *contracts* are (`$envelope_path`, `policy.json`), and
@@ -46,7 +52,8 @@ worked.
 
 ```json
 {"kind": "plan", "findings": "current state, relevant files and systems, with sources",
- "steps": ["1. ...", "2. ..."], "writes": ["paths/you/will/modify"], "external_effects": [],
+ "steps": ["1. ...", "2. ..."], "writes": ["paths/you/will/modify"],
+ "reads": ["paths/whose/content/you/depend/on"], "external_effects": [],
  "grade": "G1", "assignee": "emp_… who should execute (optional)", "risks": "...", "rollback": "...",
  "estimate": "small: <30 min", "acceptance": "only if the work had none",
  "learnings": [], "proposals": []}

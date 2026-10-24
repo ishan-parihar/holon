@@ -1183,3 +1183,18 @@ class Work:
             with write_txn(self.conn):
                 self.conn.execute(f"UPDATE messages SET acked_at=? WHERE id IN ({','.join('?' * len(message_ids))})",
                                   (now(), *message_ids))
+
+    def unread(self, refs: list[str], limit: int = 50) -> list[dict]:
+        """Messages addressed to any of `refs` that nobody has read yet, oldest first.
+
+        The one fan-in both inbox surfaces share (`msg inbox` and the brief's unread section),
+        so the pull surface and the push surface cannot drift: `Kernel.inbox` resolves an
+        employee's refs (self, department, org) and calls this; `compile_context` calls it with
+        the same refs at dispatch time. Oldest first because a section that shows the newest
+        first hides the message that has waited longest — the one most likely to matter."""
+        if not refs:
+            return []
+        marks = ",".join("?" * len(refs))
+        return [dict(r) for r in self.conn.execute(
+            f"SELECT * FROM messages WHERE to_ref IN ({marks}) AND acked_at IS NULL "
+            f"ORDER BY ts, rowid LIMIT ?", (*refs, limit)).fetchall()]

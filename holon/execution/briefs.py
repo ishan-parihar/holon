@@ -111,7 +111,20 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
     # disk sees one copy of every skill — a department fork is the only version it is offered.
     # Deliberately not registered with the harness exports: a run's snapshot is written once,
     # before the body runs, and is never refreshed underneath it.
-    lib.export(d / "skills", variables, dept=dept)
+    # M2 (2026-10-24): "one copy of every skill" means one copy of every skill *this employee
+    # may hold*. The whole-library export measured 50,325 chars where an executor's own
+    # membership rule names 13,303 — every role the employee does not hold is a token cost the
+    # brief never asked for. The rule is the same one `skill list --as` ships and tests
+    # (protocol skills + one holon-<role> per role held + the employee's extra skills), so this
+    # applies an existing policy at one more site; the stage's own role skill is added whether
+    # or not the record names it, and `skill show` still resolves any skill by name from the
+    # library — nothing is lost, only un-auto-loaded.
+    names: list[str] | None = None
+    if employee:
+        names = sorted({"holon-employee", "holon-collaboration", "holon-memory"}
+                      | {f"holon-{r}" for r in employee["roles"]}
+                      | set(employee.get("skills") or []) | {skill})
+    lib.export(d / "skills", variables, names=names, dept=dept)
     # The envelope's schema, written beside the brief rather than pointed at in the distribution.
     # A body that has to know the exact shape it must write was previously told "do not read
     # Holon's source" while the distribution — which holds schemas/ — was in its read reach, so the

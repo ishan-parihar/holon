@@ -818,3 +818,117 @@ class TheChannelIsReachableFromTheCli(LaneCase):
         rc, _, err = self._cli("msg", "reply", ask["id"], "x", "--as", "chair", "--literal")
         self.assertEqual(rc, FORBIDDEN, "the Chair naming itself as an employee is refused")
         self.assertIn("not an employee", err)
+
+
+class UnreadMessagesReachTheBrief(LaneCase):
+    """The 2026-10-24 context-injection audit: a DM addressed to an employee never appeared in
+    that employee's brief — not at any stage, ever. `Kernel.inbox` had no dispatch-time reader,
+    so the collaboration surface was pull-only: a body that never ran `msg inbox` never learned
+    the staging key rotated. For a once-and-exit routine body, pull-only means never.
+
+    The fix is one join at the seam the audit named (`compile_context`'s message query): the
+    unread section renders right after "Your role", is capped, and **acks on render** — the
+    same guarantee `needs_input`'s answer already carries — so the section is self-emptying
+    and no backlog can accumulate into an unbounded brief."""
+
+    def _claimed_execute(self, title="Build the report"):
+        """A work planned and approved, claimed at execute by dev1 (the audit's recipient)."""
+        w = self.add(title, dept="eng")
+        self.plan_and_approve(w)
+        c = self.k.claim("execute", self.dev1, task_id=w["id"])
+        self.assertIsNotNone(c, "dev1 claims the execute stage")
+        return c, w
+
+    def test_an_unread_dm_reaches_the_recipients_next_brief(self):
+        """The audit's probe, made permanent: a DM sits in the inbox before the claim; the
+        compiled context must carry it; and the render must ack it, so the next brief is not
+        born owing the same message again."""
+        self.k.work.post_message("chair", f"emp:{self.dev1}",
+                                 "URGENT: the staging API key rotated")
+        self.assertFalse(self.k.work.messages(to_refs=[f"emp:{self.dev1}"], limit=1)[0]["acked_at"],
+                         "the DM starts unacked")
+        c, w = self._claimed_execute()
+        ctx = (c.brief_dir / "context.md").read_text()
+        self.assertIn("URGENT: the staging API key rotated", ctx,
+                      "the DM the Chair sent before the claim reaches the brief")
+        self.assertIn("Messages waiting for you", ctx, "under its own section title")
+        row = self.k.work.messages(to_refs=[f"emp:{self.dev1}"], limit=1)[0]
+        self.assertTrue(row["acked_at"], "rendering it acks it: the next brief owes only what arrives since")
+
+    def test_the_section_leads_the_work_not_trails_it(self):
+        """The section renders immediately after "Your role" so it is read before the work:
+        a message that names a blocker is useless after the body has planned around it."""
+        self.k.work.post_message("chair", f"emp:{self.dev1}", "use the new key")
+        c, w = self._claimed_execute()
+        ctx = (c.brief_dir / "context.md").read_text()
+        self.assertLess(ctx.index("Messages waiting for you"), ctx.index("## Task"),
+                        "the unread section precedes the task")
+
+    def test_a_department_channel_post_reaches_the_departments_briefs(self):
+        """The audit's second confirmed gap: `msg send dept:<slug>` reached no employee of that
+        department at all — the channel's only kernel consumer was the steward's proposal
+        reader. A channel post is now an inbox item for every member; this is the mid-work
+        case: the post arrives after the planner's dispatch, and the *executor's* next brief
+        carries it. (The planner consumes it first when it arrives before planning — also
+        correct: it reached a member's brief either way.)"""
+        w = self.add("Build the report", dept="eng")
+        self.plan_and_approve(w)
+        self.k.work.post_message("chair", "dept:eng", "the build server moved to host-2",
+                                 kind="channel")
+        c = self.k.claim("execute", self.dev1, task_id=w["id"])
+        self.assertIsNotNone(c)
+        ctx = (c.brief_dir / "context.md").read_text()
+        self.assertIn("the build server moved to host-2", ctx,
+                      "a channel post reaches the department's next brief")
+
+    def test_an_empty_inbox_adds_no_section_and_no_tokens(self):
+        """The plan's budget guard: the common case costs nothing — `Bundle.add` drops an
+        empty body, so a quiet inbox renders no section at all."""
+        c, w = self._claimed_execute()
+        ctx = (c.brief_dir / "context.md").read_text()
+        self.assertNotIn("Messages waiting for you", ctx, "no inbox, no section")
+
+    def test_the_cap_bounds_the_section_and_names_the_rest(self):
+        """At most `[context] unread_cap` lines render; the rest is a count and the `msg inbox`
+        pointer, so a backlog cannot crowd the budget. The cap defaults to 3."""
+        for i in range(5):
+            self.k.work.post_message("chair", f"emp:{self.dev1}", f"note {i}")
+        c, w = self._claimed_execute()
+        ctx = (c.brief_dir / "context.md").read_text()
+        shown = [l for l in ctx.splitlines() if "note " in l and "older" not in l]
+        self.assertLessEqual(len(shown), 3, f"the cap bounds the section: {shown}")
+        self.assertIn("older", ctx, "and the rest is a count plus the pull pointer")
+        self.assertIn("msg inbox", ctx, "the pull surface stays, named")
+
+    def test_zero_cap_turns_the_join_off_entirely(self):
+        """`unread_cap = 0` is the off switch: no section, and — the part that matters — no
+        ack either, because a disabled join must not silently consume messages."""
+        self.configure('[context]\nunread_cap = 0\n')
+        self.k.work.post_message("chair", f"emp:{self.dev1}", "a whisper in the dark")
+        c, w = self._claimed_execute()
+        ctx = (c.brief_dir / "context.md").read_text()
+        self.assertNotIn("a whisper in the dark", ctx, "the join is off")
+        self.assertFalse(self.k.work.messages(to_refs=[f"emp:{self.dev1}"], limit=1)[0]["acked_at"],
+                         "and it acked nothing")
+
+    def test_a_task_scoped_message_is_not_duplicated_into_the_section(self):
+        """Non-redundancy: a task-scoped message already renders in "Conversation on this
+        work"; the unread join must not double-render it."""
+        w = self.add("Build the report", dept="eng")
+        self.k.work.post_message("chair", f"emp:{self.dev1}", "see the appendix",
+                                 kind="dm", task_id=w["id"])
+        self.plan_and_approve(w)
+        c = self.k.claim("execute", self.dev1, task_id=w["id"])
+        self.assertIsNotNone(c)
+        ctx = (c.brief_dir / "context.md").read_text()
+        self.assertEqual(ctx.count("see the appendix"), 1,
+                         "a task-scoped message renders exactly once, in the conversation section")
+        self.assertNotIn("Messages waiting for you", ctx,
+                         "and does not double as an unread line")
+
+    def test_the_identity_card_names_the_inbox(self):
+        """The audit's third gap: the identity card — the one document every body reads first —
+        never mentioned that an inbox exists. The pointer is one line."""
+        card = self.k.identity(self.dev1)
+        self.assertIn("msg inbox", card, "the identity card names the pull surface")
+        self.assertIn("unread", card.lower(), "and says unread messages reach the brief")

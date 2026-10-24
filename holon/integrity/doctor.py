@@ -162,9 +162,13 @@ def run(k) -> list[dict]:
                     "bylaws/registry.md is older than the last sync: `holon bylaws emit` regenerates it")
 
     # C3: a unit whose health probe fails is down for everyone who pools it — name the
-    # departments, so a planner routes around the dead tier before spending anything. The
-    # convention: a unit's health runs as a smoke check named "<unit>:<service>"
-    # ([smoke.dept.platform-ops] runs each surface's health on the fleet's interval).
+    # departments, so a planner routes around the dead tier before spending anything.
+    #
+    # The convention is that a unit's health runs as a smoke check named "<unit>:<service>".
+    # That name is WRITTEN by `execution/service.smoke_checks` from the manifest's own `health`
+    # field (added 2026-10-24 by the plan's red-team, attack 5); before it, this check and
+    # `capabilities/context`'s `(down)` marker both read that name and nothing emitted it, so
+    # a unit declaring `health = "…"` reported nothing and no duty ever ran the probe.
     #
     # Every category, not only surfaces: the check is about a declared health probe failing,
     # which is category-independent. It was gated on `category == "surface"` until 2026-10-24,

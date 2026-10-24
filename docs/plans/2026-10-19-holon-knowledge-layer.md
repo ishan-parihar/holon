@@ -40,8 +40,10 @@ The KB is *not* a second memory store. It holds records that have a lifecycle an
 | **K3** | drafts and the catalog: an employee drafts a blueprint from a base, the Chair promotes it into the catalog | `holon kb blueprint draft` / `check` / `promote` | a draft that fails `genome blueprint check` is not promotable; promotion is the Chair's |
 | **K4** | context: the KB's `wake` text joins the bundle | `kb.wake_for_dept` | a run in the bound department's brief carries the KB's wake text, capped |
 
-**The verbs.** Read: `find`, `view`, `ask`, `wake`, `show`, `lint`. Write: `new`, `move`, `set`,
-`link`. A verb outside these lists is refused — the kernel knows which genome verbs are safe to
+**The verbs.** Read: `find`, `view`, `ask`, `wake`, `show`, `lint`, `feed` (the `agents` module's
+append-only mentions channel — a read of a file its own `post` verb appends to; the write half stays
+refused until the Chair rules on provenance). Write: `new`, `move`, `set`, `link`. A verb outside
+these lists is refused — the kernel knows which genome verbs are safe to
 expose to a seat, and it does not pass the rest through.
 
 ## 2. The rules that are not negotiable

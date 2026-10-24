@@ -465,7 +465,7 @@ class Bylaws(KernelCase):
         the pre-fix lint form answered runnable from the repo root and not runnable from /tmp for
         the SAME manifest. Now one resolver answers both, and it answers FALSE, because a relative
         path is not something a unit on another machine can be assumed to mean."""
-        root = Path(self.tmp.name) / "dept"
+        root = self.tmp / "dept"
         (root / "bin").mkdir(parents=True)
         (root / "bin" / "tool").write_text("#!/bin/sh\n")
         here = os.getcwd()
@@ -544,3 +544,39 @@ class Bylaws(KernelCase):
                             for f in lint.run(self.k, ["bylaws"])),
                         "a bracket of optional flags was read as a verb set: `[--json]` has no "
                         "alternation and must not exempt the route")
+
+    def test_a_pipe_in_prose_is_not_a_verb_set(self):
+        """This rule's own red-team, and it narrows the exemption I had just written.
+
+        My first pattern accepted an `|`-alternation anywhere in `args`, in any of three shapes.
+        Measured against near-misses, that was a silent hole in the exact rule meant to prevent
+        one: `pipe output to jq: use --json then | jq`, `--sep "|" for the field separator`, and
+        `<query> (a|b as a regex)` all contain a pipe and none names a verb set, so a manifest
+        could exempt a mutation surface by mentioning a pipe in prose.
+
+        The exemption is now a BRACKETED alternation only — how a call shape writes a choice and
+        how nothing else is written. An unbracketed `a | b` is refused, which costs a
+        documentation style nobody uses and closes the hole. This test fails on the looser form."""
+        holes = [
+            "kosmos --help describes piping output to jq: use --json then | jq",
+            "kosmos <query> (a|b is a regex, not a verb set)",
+            "kosmos query | list",
+        ]
+        for args in holes:
+            (self.home.bylaws_units_dir / "vault.toml").write_text(
+                (VAULT % self.tmp).replace(
+                    'command = "kosmos query"',
+                    "command = \"kosmos\"\nargs = '" + args + "'"))
+            self._sync()
+            self.assertTrue(any("declares effect=read" in f["message"]
+                                for f in lint.run(self.k, ["bylaws"])),
+                            f"a pipe in prose exempted a bare command: {args!r}")
+        # and the bracketed forms are the ones that do exempt
+        for args in ('kosmos <query|notes|list> [--json]', 'kosmos [query|notes|list]'):
+            (self.home.bylaws_units_dir / "vault.toml").write_text(
+                (VAULT % self.tmp).replace(
+                    'command = "kosmos query"', f'command = "kosmos"\nargs = "{args}"'))
+            self._sync()
+            self.assertEqual([f for f in lint.run(self.k, ["bylaws"])
+                              if "declares effect=read" in f["message"]], [],
+                             f"a bracketed verb set was refused: {args!r}")

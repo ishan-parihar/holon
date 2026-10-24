@@ -389,17 +389,40 @@ def reach(k) -> dict:
     # `FileNotFoundError`. The grant is the read half of the fence the architecture already intends,
     # and it is read-only for the same reason a harness binary is (`:367-374` above): this is
     # executable code the agent runs, not a place to be selective.
+    #
+    # The predicate is `capabilities_for`'s, not `pooled_by`'s: a unit pooled `pool_of = ["*"]`
+    # (org-wide, the identity case) has an edge with `other = '*'`, which `pooled_by`'s
+    # `e.other = <slug>` never matches — so using it here would have granted *nothing* to the
+    # most widely pooled units and everything to a unit pooled by nobody. `e.other = ? OR
+    # e.other = '*'` is the same join `capabilities_for` and `service.scope` use, restricted to
+    # the departments this deployment has, so an unpooled manifest widens nobody's reach.
+    slugs = {s.get("name") for s in k.scopes()} | {None}
     from holon.bylaws import units as units_mod
-    for _slug, u in units_mod.load(k.home)[0].items():
-        for s in u["services"]:
-            token = (s.get("command") or "").split()[0] if s.get("command") else ""
-            if not token:
-                continue
-            found = (str(Path(token).expanduser()) if os.sep in token else shutil.which(token))
-            if found:
-                bin_path = Path(found).resolve()
-                reads.add(bin_path.parent)
-                reads.add(bin_path)
+    # `pool_of = ["*"]` (org-wide) or a named department this deployment has. The IN clause is
+    # built only from the named slugs, so an empty department set still leaves the '*' arm.
+    named = sorted(s for s in slugs if s)
+    if named:
+        rows = k.wconn.execute(
+            "SELECT DISTINCT u.slug FROM unit_edges e JOIN units u ON u.slug = e.slug"
+            " WHERE e.kind='pool' AND (e.other IN (" + ",".join("?" * len(named)) +
+            ") OR e.other='*')", tuple(named)).fetchall()
+    else:
+        rows = k.wconn.execute(
+            "SELECT DISTINCT u.slug FROM unit_edges e JOIN units u ON u.slug = e.slug"
+            " WHERE e.kind='pool' AND e.other='*'").fetchall()
+    for row in rows:
+        for s in k.wconn.execute("SELECT command, health FROM unit_services WHERE slug=?",
+                                 (row[0],)).fetchall():
+            for key in ("command", "health"):
+                raw = (s[key] or "").strip()
+                if not raw:
+                    continue
+                token = raw.split()[0]
+                found = units_mod.resolve_token(token)
+                if found:
+                    bin_path = Path(found).resolve()
+                    reads.add(bin_path.parent)
+                    reads.add(bin_path)
     for d in drivers.available(k.home).values():
         writes |= {Path(v) for v in d.env.values() if v.startswith("/") and Path(v).is_dir()}
         exe = d.command.split()[0] if d.command.split() else ""
