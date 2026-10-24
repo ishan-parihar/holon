@@ -292,6 +292,27 @@ def run(address: str, cmd: str, cwd: str, env: dict, timeout_s: float, alive=Non
     return (0 if resp.get("stopped") else resp["exit_code"]), resp["stdout"], err
 
 
+def _chunk(paths: list[str], budget: int = 100000) -> list[list[str]]:
+    """Split a path list into argv-safe groups. `execve` allows one argument at most
+    `MAX_ARG_STRLEN` (131072 bytes on this host) and a whole argv at most `SC_ARG_MAX`
+    (2097152), so an unbounded spread raises an uncaught `OSError [Errno 7]`. Measured
+    2026-10-24: `setup_plan` emitted one 2.2 MB argv (35,170 arguments) and
+    `holon isolation apply` died on the step it had just instructed the Chair to run."""
+    out, cur, size = [], [], 0
+    for p in paths:
+        # a single path already too long cannot be granted: say so rather than crash
+        if len(p) > budget:
+            raise IsolationError(f"a path is {len(p)} bytes, over the {budget}-byte argv budget")
+        if cur and size + len(p) > budget:
+            out.append(cur)
+            cur, size = [], 0
+        cur.append(p)
+        size += len(p)
+    if cur:
+        out.append(cur)
+    return out
+
+
 def share_run_dir(path, agent_user: str) -> None:
     """A run directory the agent user may read and add its result to, but where it cannot replace what the
     kernel wrote: sticky, owned by the kernel, the agent granted rwx by ACL, kernel files readable only —
@@ -311,7 +332,8 @@ def share_run_dir(path, agent_user: str) -> None:
         else:
             files.append(full)
     if files:
-        cmds.append(["setfacl", "-m", f"u:{agent_user}:r", *files])
+        for group in _chunk(files):
+            cmds.append(["setfacl", "-m", f"u:{agent_user}:r", *group])
     for cmd in cmds:
         p = subprocess.run(cmd, capture_output=True, text=True)
         if p.returncode:
@@ -446,8 +468,8 @@ def setup_plan(k) -> dict:
         acl.append(["setfacl", "-m", f"u:{agent}:x", str(d)])  # -d applies to a whole command: two commands
         acl.append(["setfacl", "-d", "-m", f"u:{agent}:---", str(d)])
         others = [str(c) for c in sorted(d.iterdir()) if c not in keep and not c.is_symlink()]
-        if others:
-            acl.append(["setfacl", "-m", f"u:{agent}:---", *others])
+        for group in _chunk(others):
+            acl.append(["setfacl", "-m", f"u:{agent}:---", *group])
     for p, mode in targets:
         if mode == "x":
             acl.append(["setfacl", "-m", f"u:{agent}:x", str(p)])

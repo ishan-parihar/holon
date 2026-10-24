@@ -408,6 +408,77 @@ class Setup(KernelCase):
         self.assertTrue((Path(H) / "holon" / "__init__.py").exists(),
                         f"resolved {H!r}, which carries no `holon` package")
 
+    def test_no_acl_command_exceeds_the_execve_argument_limit(self):
+        """A plan the kernel prints as "run these 30 setfacl commands" must be runnable.
+
+        Measured 2026-10-24 on a cold instance under the Tier A sequence: the plan's first
+        command spread every sibling under the home directory into ONE argv -- 35,144 arguments,
+        2,186,867 bytes, against a 2,097,152-byte `MAX_ARG_STRLEN` on this host. `apply()` runs
+        `subprocess.run(cmd)` with no timeout and no shell, so the oversized entry raises an
+        uncaught `OSError: [Errno 7] Argument list too long` and `holon isolation apply` dies on
+        the very step the plan instructed the Chair to take. `share_run_dir` spreads `*files`
+        the same way, which is the live path (it runs on every dispatch).
+
+        The number is the host's own limit, read rather than assumed, so this guard is about the
+        class of defect rather than one host's threshold."""
+        # the host's real limit: one argument may not exceed it, and the whole argv may not
+        # either. Read from the kernel rather than pinned to a guess.
+        per_arg = os.sysconf("SC_ARG_MAX")
+        self.home.config_file.write_text(self.pipeline + '\n[isolation]\nagent_user = "agent"\n')
+        self.k.close()
+        self.k = Kernel(self.home)
+        plan = isolation.setup_plan(self.k)
+        self.assertTrue(plan["acl"], "the plan carries commands")
+        for cmd in plan["acl"]:
+            size = sum(len(a) for a in cmd) + len(cmd)
+            self.assertLess(size, per_arg,
+                            f"argv of {size} bytes exceeds SC_ARG_MAX ({per_arg}): {cmd[:3]} with "
+                            f"{len(cmd)} arguments")
+            self.assertLess(len(max(cmd, key=len)), 131072,
+                            f"one argument is {len(max(cmd, key=len))} bytes (MAX_ARG_STRLEN is 131072)")
+
+    def test_share_run_dir_grants_every_file_it_listed(self):
+        """The same defect, on the path that actually runs: `share_run_dir` puts every entry in
+        the run directory into one `setfacl` argv, so a run directory carrying enough files
+        raises an uncaught `OSError` and the dispatch dies after the stage was already
+        claimed. Measured on the live instance: the busiest run directory holds 11 entries,
+        so this is latent today and live the day a body writes a lot."""
+        d = self.tmp / "run_wide"
+        d.mkdir()
+        # long paths, so the chunking boundary is exercised by length rather than by count
+        long_name = "n" * 200
+        for i in range(600):
+            (d / f"{long_name}_{i}.md").write_text("x")
+        (d / "result.json").write_text("{}")
+        isolation.share_run_dir(d, os.getlogin())   # must not raise
+
+    def test_share_run_dir_grants_both_reads_and_denies_the_result(self):
+        """The chunking must not change what the ACL says: every file that is not the result
+        is granted read, and the result is left to the kernel. A batch boundary is a place
+        where a file can quietly fall out of a group, so this asserts the grants cover all
+        of them and nothing else."""
+        d = self.tmp / "run_wide2"
+        d.mkdir()
+        for i in range(700):
+            (d / f"file_{i:05d}.md").write_text("x")
+        (d / "result.json").write_text("{}")
+        calls = []
+        real = subprocess.run
+
+        def spy(cmd, **kw):
+            calls.append(cmd)
+            return real(cmd, **kw)
+        subprocess.run = spy
+        try:
+            isolation.share_run_dir(d, os.getlogin())
+        finally:
+            subprocess.run = real
+        granted = {p for c in calls for p in c if p.startswith(str(d))}
+        expected = {str(d / f"file_{i:05d}.md") for i in range(700)}
+        self.assertEqual(expected - granted, set(), "every file that is not the result is granted")
+        self.assertNotIn(str(d / "result.json"), granted,
+                         "the result stays the agent's own file, not a granted read")
+
     def test_skill_names_cannot_climb_out_of_the_library(self):
         from holon.capabilities.skills import SkillError
         with self.assertRaises(SkillError):
