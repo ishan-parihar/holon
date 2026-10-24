@@ -160,7 +160,12 @@ def _names_its_verb_set(args: str) -> bool:
     fails for the right reason.
 
     What this deliberately does NOT do: verify the verbs are real, or that any of them is a read.
-    This layer checks what the manifest declares, not what the binary does.
+    This layer checks what the manifest declares, not what the binary does. Measured 2026-10-24T20:13Z,
+    that disclaimer was the live case rather than a caveat: `browser.toml` declared
+    `<search|read|news|papers|social>` while `sourcehound --help` lists 34 real groups starting
+    `mcp, call, pools, sources, news, reddit, research, web…`. None of the four declared verbs
+    existed, so the exemption was passing on shape alone. The manifest was corrected, not the rule.
+    A future edit inventing a plausible bracket set still passes here.
     """
     return bool(re.search(r"<[^<>]*\|[^<>]*>|\[[^\[\]]*\|[^\[\]]*\]", args))
 

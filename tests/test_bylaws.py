@@ -42,7 +42,7 @@ owner = "platform-ops"
 [[services]]
 id = "sourcehound"
 command = "sourcehound $GROUP"
-args = "sourcehound <search|read|news|papers|social> <query|url> [--json]"
+args = "sourcehound <web|news|reddit|research|twitter|youtube|finance|patents> [<verb>] [--json]"
 output = "json"
 effect = "read"
 note = "prefer for any body: the native web_* tools are always loaded; CLI harnesses run the sourcehound CLI"
@@ -269,7 +269,7 @@ class Bylaws(KernelCase):
         ctx = (pc.brief_dir / "context.md").read_text()
         self.assertIn("Capabilities", ctx)
         self.assertIn("browser:sourcehound", ctx)
-        self.assertIn("args: sourcehound <search|read|news|papers|social>", ctx,
+        self.assertIn("args: sourcehound <web|news|reddit|research|twitter|youtube|finance|patents>", ctx,
                       "a surface's contract renders from its v4 fields, not accepts/returns")
         self.assertNotIn("browser:browseros-neo", ctx, "an observe stage runs no write route")
         self.assertIn("prefer:", ctx)
@@ -514,9 +514,18 @@ class Bylaws(KernelCase):
         shape, and a group entry point writes its verb set right there as an alternation. So the
         rule now asks the manifest what it already declares, and a bare name whose `args` is
         absent or names no verb set still fails -- which is what keeps this from becoming a hole.
+
+        The `sourcehound` fixture in VAULT carries the verb set measured 2026-10-24T20:13Z from
+        `sourcehound --help` (34 real groups). The live `browser.toml` had declared
+        `<search|read|news|papers|social>`, and none of those four is a real group, so the
+        exemption was passing on shape alone. The `kosmos` verbs below are synthetic -- no kosmos
+        binary on this machine -- so this test pins the rule's SHAPE, and the live instance is
+        what proves it on a real CLI. (The sync `f9fb731` reverted this fixture's correction once;
+        it is re-applied here, which is why the fixture is named rather than assumed.)
         """
         # the shape that regressed the live instance: a bare group entry point with its verb set
-        # documented in args, exactly as browser.toml writes it
+        # documented in args. The kosmos verbs are synthetic (no kosmos binary here); the
+        # sourcehound args in the VAULT fixture carry the real 34-group set.
         (self.home.bylaws_units_dir / "vault.toml").write_text(
             (VAULT % self.tmp).replace(
                 'command = "kosmos query"',
