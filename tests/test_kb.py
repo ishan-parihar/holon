@@ -329,3 +329,92 @@ class GenomeSingleSource(unittest.TestCase):
                          f"the genome CLI is duplicated: {[str(c) for c in copies]}. Keep the "
                          "vendored copy (kb.GENOME's path) and make the other a symlink or a "
                          "resolver, so a re-pin is one write")
+        # Deleting the operator-facing path leaves exactly one copy, so the count above passes
+        # and the thing went unnoticed: `scripts/genome` is the entry point the docs and F3/F4's
+        # requirement rows command against (`python3 scripts/genome lint`), and a symlink that is
+        # gone is a documented interface that answers "No such file". Measured 2026-10-24: with
+        # the link removed this guard reported OK while `python3 scripts/genome --help` could not
+        # open the file and the vendored path still worked -- silent breakage of one of two doors.
+        # Both halves are now asserted: one real copy, and the documented alias resolving to it.
+        entry = repo / "scripts" / "genome"
+        self.assertTrue(entry.exists(),
+                        "scripts/genome is gone: the entry point the docs name is broken "
+                        "(restore the symlink to holon/vendor/genome.py)")
+        self.assertEqual((repo / "holon" / "vendor" / "genome.py").resolve(),
+                         entry.resolve(),
+                         "scripts/genome no longer resolves to the vendored copy: a re-pin of "
+                         "one is not a re-pin of the other")
+
+
+class DuplicateQuestionRule(unittest.TestCase):
+    """W006 compares two plans' H1 headings by token overlap, and the date tokens it tokenized were
+    noise: measured on this distribution, `# 2026-10-24: the outline-plan for the remaining
+    implementation gaps` against `# 2026-10-17: the KB work — remaining implementation gaps
+    (register)` scores exactly 0.50, which is the threshold, and four of those six tokens are
+    `2026`, `implementation`, `remaining` and `gaps` -- a year and the two words every gap record
+    shares. The two plans answer questions about the knowledge-base layer and about the whole
+    distribution's remaining work, so the warning pointed the operator at a duplication that does
+    not exist, on the one document pair a reader would most likely open.
+
+    A false positive from this pack teaches every operator to disregard that pack, and this is the
+    third of its class in the ledger (H10's five false `class.unstaffed` errors, `scope.stray`'s
+    nested-workdir false positive). The rule must not count a date.
+
+    The contract: heading tokens carry their year off the head, so what is compared is the
+    question, and what the rule does when two plans genuinely ask one question is unchanged.
+    """
+
+    VOCAB = ("2026-10-24: the outline-plan for the remaining implementation gaps",
+             "2026-10-17: the KB work — remaining implementation gaps (register)",
+             "2026-10-24: the remaining implementation gaps")
+
+    def _tokens(self, head):
+        """Tokenize the way W006 does, as its own source is written today.
+
+        A guard that re-implements the rule in its own words passes whether or not the rule
+        changes -- the shape the entropy audit's rewritten guards were correcting, when a guard
+        asserted a constant's value and survived every mutation of the behaviour. So this reads
+        the rule: the regex it compiles, and whether it strips dates first, both taken from the
+        W006 block itself rather than from a comment about it. If the rule moves, this guard
+        cannot silently start passing.
+        """
+        import re
+        src = (Path(__file__).resolve().parents[1] / "holon" / "vendor" / "genome.py").read_text()
+        lo = src.index("duplicate-question plans")
+        hi = src.index("out += lint_outward(cfg)", lo)
+        block = src[lo:hi]
+        m = re.search(r"set\(re\.findall\(r\"(.+?)\".*?\)\)\)", block, re.DOTALL)
+        self.assertIsNotNone(m, "the W006 tokenizing expression is no longer where this guard "
+                                "reads it: the rule moved, so this guard must be re-pointed")
+        head_l = head.lower()
+        if "re.sub" in block:                      # dates stripped before tokenizing
+            head_l = re.sub(r"\b\d[\d-]*\d?\b", " ", head_l)
+        return set(re.findall(m.group(1), head_l))
+
+    def test_a_date_is_not_one_of_the_words_a_question_is_built_from(self):
+        for head in self.VOCAB:
+            tokens = self._tokens(head)
+            self.assertNotIn("2026", tokens,
+                             f"{head!r}: the year tokenized as one of the question's words; two "
+                             "plans sharing only a year read as duplicates")
+            for tok in tokens:
+                self.assertFalse(tok.isdigit(),
+                                 f"{tok!r} from {head!r} carries no part of a question")
+
+    def test_two_plans_about_different_subjects_are_not_a_duplicate(self):
+        # what W006 compares today, with the digits gone
+        a = self._tokens(self.VOCAB[0]) - {t for t in self._tokens(self.VOCAB[0]) if t.isdigit()}
+        b = self._tokens(self.VOCAB[1]) - {t for t in self._tokens(self.VOCAB[1]) if t.isdigit()}
+        score = len(a & b) / len(a | b)
+        self.assertLess(score, 0.5,
+                        f"two plans about different subjects score {score:.2f}, at or over the "
+                        "0.5 threshold: the rule reports a duplication that does not exist")
+
+    def test_two_plans_that_do_ask_one_question_still_are(self):
+        a = self._tokens(self.VOCAB[2])
+        b = self._tokens(self.VOCAB[0]) - {t for t in self._tokens(self.VOCAB[0]) if t.isdigit()}
+        # the self-comparison must still trip it: an unchanged rule, on a real duplication
+        score = len(a & b) / len(b)
+        self.assertGreaterEqual(score, 0.5,
+                                "the rule no longer fires on two plans that really do ask the "
+                                "same question")
