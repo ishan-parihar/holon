@@ -1,5 +1,7 @@
 """`holon mcp`: the organization as MCP tools, authenticated by the environment the harness passes on."""
 
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -427,16 +429,60 @@ class OneFence(unittest.TestCase):
                                       "SystemExit escaping would error the test rather than lie")
 
     def test_both_gates_agree_for_every_registry_command(self):
-        """The whole registry, both paths: nothing may cross one gate and be refused at the other."""
+        """The whole registry, both paths: nothing may cross one gate and be refused at the other.
+
+        The measurement is the broker's real decision, not a second call to the derivation. The
+        first version of this guard built its "broker" side from `mcp.agent_commands()` as well,
+        so it compared the derivation with itself: it could not fail whatever the broker's own
+        gate did, and it passed while a mutation re-admitted a blocklisted command through that
+        gate. Every command's broker verdict now comes from calling `cli.main` the way the broker
+        calls it, so the two answers come from two different places and can disagree.
+
+        What "the gate let it through" means here, measured rather than assumed: a refusal carries
+        one of two messages. `is not available to agents` is the fence's own; `is for the <role>
+        actor class` is the actor-class check below it, which refuses regardless of the fence.
+        Only the fence's message is compared -- a command refused for its actor class is not
+        evidence about the fence, and comparing it would make this guard fail for a reason the
+        fence has nothing to do with. Rows needing positionals to parse are recorded, not guessed:
+        argparse exits the process on a usage error, and that exit is not the gate's verdict."""
         import holon.cli as cli
-        broker_reach = {" ".join(p) for p in mcp.agent_commands()}
-        self.assertNotIn(getattr(cli, "BROKER_EXTRA", ()), ("stale",),
-                         "the broker carries a list the derivation does not know about")
+        derived = {" ".join(p) for p in mcp.agent_commands()}
         blocked = set(mcp.AGENT_BLOCKLIST)
+        unreached, wrong = [], []
         for c in REGISTRY:
             name = " ".join(c.path)
-            via_mcp = name in {" ".join(p) for p in mcp.agent_commands()}
-            via_broker = name in broker_reach
-            self.assertEqual(via_mcp, via_broker,
-                             f"`{name}` crosses the two gates differently (mcp={via_mcp}, "
-                             f"broker={via_broker}); blocked={name in blocked}, actor={c.actor}")
+            err = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+                    rc = cli.main(list(c.path), broker={"token": None, "key": None,
+                                                        "files": {}, "stdin": ""})
+            except SystemExit:
+                unreached.append(name)  # argparse refused the bare argv: the gate was never reached
+                continue
+            # the fence's own refusal, distinguished from the actor-class refusal below it
+            by_fence = rc == cli.FORBIDDEN and "is not available to agents" in err.getvalue()
+            via_broker = not by_fence
+            via_mcp = name in derived
+            if via_mcp != via_broker:
+                wrong.append(f"{name} (mcp={via_mcp}, broker={via_broker}, actor={c.actor}, "
+                             f"blocked={name in blocked})")
+        self.assertEqual([], wrong,
+                         "a command crosses the two gates differently: " + "; ".join(wrong))
+        # The rows the bare argv could not reach are named, not silently counted as agreement: a
+        # command that stops parsing here was never asked whether the fence admitted it, so it
+        # would be dishonest to report it as agreeing. Every such row must be a command whose
+        # parser required something -- otherwise the argv reached nothing when it should have.
+        for n in unreached:
+            cmd = next(c for c in REGISTRY if " ".join(c.path) == n)
+            # the bare argv stopped parsing because argparse needed something: a required
+            # positional or an `--option` marked `required`. Either way the command never
+            # reached the fence, so it must be one of those, or the argv reached nothing when
+            # it should have got to the gate and asked it.
+            needed = [a for a in cmd.args
+                      if a[1].get("required")
+                      or (a[0] and not str(a[0][0]).startswith("-")
+                          and a[1].get("default") is None
+                          and a[1].get("nargs") not in ("?", "*"))]
+            self.assertTrue(needed,
+                             f"`{n}` never reached the gate with a bare argv yet declares no "
+                             f"required argument: the fence was not tested for it")
