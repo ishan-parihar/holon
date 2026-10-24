@@ -25,7 +25,70 @@ from holon.core.db import now
 # The pool's own working directories: the department's reach is these, and nothing above
 # them. A venture's data, kb, templates, logs and screenshots are its work; its scripts
 # and protocols are its code.
+#
+# This is the FALLBACK, not the reach. A pool that declares `directories:` in its own
+# `_org.yaml` names its real shape there — `pioneer-qf` declares `sub-systems/`, `scratch/`,
+# `bin/` and `core/`, and none of the first three is in this tuple — so the declared list is
+# read first (G1 / A2, measured 2026-10-24). `references` is the reverse case: it sits in this
+# tuple while no pool's declared list names it, which is why the fallback survives rather than
+# being deleted.
 POOL_DIRS = ("data", "kb", "templates", "logs", "screenshots", "references", "core")
+
+
+def _declared_dirs(node: object, out: list[str], prefix: str = "") -> None:
+    """Every directory a pool's `directories:` tree declares, recursing into `sub_dirs`.
+
+    The key is a nested mapping: a directory may carry a `sub_dirs` mapping of its own
+    (`pioneer-qf`'s `core/` holds `decisions/`, `regressions/` and `worklog/`), and a
+    reach that names the parent but not the children under-declares what the pool really
+    has. Rules attached to each entry (`allow_any`, `require_agents`, `frontmatter_required`)
+    are the lint's business, not the reach's, so they are stepped over.
+
+    Each name is emitted as a path RELATIVE TO THE POOL, not a bare name: a `sub_dirs`
+    child of `core/` is `core/decisions`, which is the only form `pool / d` can check.
+    Emitting flat names made `pool/core/decisions` unreachable, which is how the first
+    version of this function read its own test's failure.
+    """
+    if not isinstance(node, dict):
+        return
+    for name, spec in node.items():
+        # a key naming a file (an inline mapping of its rules) is not a directory; the
+        # trailing slash is what `_org.yaml` uses to say "this one is"
+        rel = prefix + str(name).rstrip("/")
+        if str(name).endswith("/"):
+            out.append(rel)
+        if isinstance(spec, dict):
+            _declared_dirs(spec.get("sub_dirs"), out, rel + "/")
+
+
+def pool_roots(v: dict) -> list[str]:
+    """The department's reach, from the pool's own `directories:` where it declares any.
+
+    `POOL_DIRS` was the only source, and it is a fixed tuple: measured 2026-10-24 against
+    `pioneer-qf`, it listed `data`, `logs` and `core` while the pool actually holds
+    `sub-systems/`, `scratch/`, `bin/` and `core/` — so three real working directories named
+    their own `_org.yaml` were missing from the reach's list. The pool root is prepended by
+    the caller, so the reach still COVERED them (that is why this was a precision gap rather
+    than a reach gap), but a list that names three missing directories and three absent ones
+    is not a description anyone should trust.
+
+    The declared list is used when the pool has one, `POOL_DIRS` otherwise, and both are
+    filtered to directories that exist: a declaration is a claim about a layout, not a
+    promise the directory is there today.
+    """
+    pool = Path(v["pool"])
+    org = v.get("org") if isinstance(v.get("org"), dict) else {}
+    declared: list[str] = []
+    _declared_dirs(org.get("directories"), declared)
+    names = declared or list(POOL_DIRS)
+    roots, seen = [], set()
+    for d in names:
+        if d in seen:
+            continue
+        seen.add(d)
+        if (pool / d).is_dir():
+            roots.append(str(pool / d))
+    return roots
 
 
 def _yaml(path: Path) -> dict:
@@ -417,9 +480,10 @@ def venture_import(k, pool: Path, dept: str, dry_run: bool = True) -> dict:
     k.org.create_dept(dept, dept.replace("-", " ").title(), v["charter"],
                        profile=bylaws.load_profile("light", k.home))
 
-    # the reach: the pool's own working directories
-    roots = [str(v["pool"] / d) for d in POOL_DIRS if (v["pool"] / d).is_dir()]
-    roots = [str(v["pool"])] + roots
+    # the reach: the pool's own declared working directories, POOL_DIRS only where it
+    # declares none (A2). The pool root comes first, so a directory named inside it is reached
+    # whether or not the list below names it — the list is a description, the root is the reach.
+    roots = [str(v["pool"])] + pool_roots(v)
 
     # the checks, and the reach, into the instance's config
     text = k.home.config_file.read_text() if k.home.config_file.exists() else ""
