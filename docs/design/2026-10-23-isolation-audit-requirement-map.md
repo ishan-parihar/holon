@@ -46,13 +46,8 @@ incident is in *its* `tasks` table, not a scratch one):
 - **No system runner unit** — confirmed.
 - **"No broker unit" — FALSE, and corrected.** The user broker unit exists, but it is `disabled`,
   `inactive`, and points at a **scratch** home. Installed for the wrong instance, running for none.
-- **The instance is split in two.** The installed tick unit names one home (scratch, 5 events) while
-  an undocumented heartbeat writes the real one every 2 minutes. Seven concurrent agent sessions
-  are running on this machine. This is the deployment's to resolve and is recorded in the audit's
-  §1g, not claimed as a kernel defect.
-- **The plan's `runs:` line is derived one directory below the live instance**, because `runs_dir`
-  is `$HOLON_HOME/execution/runtime/runs` and this deployment's home is already
-  `…/execution/runtime`. The grant would name a directory no run lands in.
+- **The instance is split in two — corrected 2026-10-23 (23:51), because the first reason given was wrong.** The instance that carries the work is `01m4sf0…` (3 departments, 7 employees, 166 tasks, 1530 events) and the operator's `HOLON_HOME` already names it **correctly**. What is wrong is the *installed tick unit*: it names a second, scratch instance (`01m5mn6z…`, 1 department, 4 tasks), and the tick timer writes that one every two minutes while the real organization waits. My earlier bullet said the plan's `runs:` line was derived one directory below the live instance, implying `HOLON_HOME` sat one hop too deep. Re-measured, that doubling was an artifact of **my own probe** — the doubled runtime dir was created by the `Kernel(...)` I ran against that home — so the `runs:` line was reading a fresh empty instance my measurement had just made. `HOLON_HOME` needs no change. What reads as a deployment gap in the *heartbeat's* wiring is genuine, and it is the deployment's to resolve (audit §2), not a kernel defect.
+- **A stray directory this audit left on the operator's instance**, named in the audit record so the Chair can remove it: constructing a `Kernel` writes state even when the probe only reads, so the doubled runtime tree holds one empty `work.db`. It is the `scope.stray` class and it is mine.
 
 And a defect in the plan itself, found the same way: **the printed activation sequence had no step
 1.** The root script printed raw and the numbered list began at `1.5`, so the full list was

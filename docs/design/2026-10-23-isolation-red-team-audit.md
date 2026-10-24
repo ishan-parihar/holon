@@ -156,7 +156,7 @@ Measured on the live instance, the classification these agree with: `pioneer-qf`
 write, the harness directory and `.local/bin` end `rX` as reads. The docstring now states the
 promise with its actual limit and names both guards.
 
-### 1g. Validating the requirement map found two more defects: the printed sequence had no step 1, and the plan's `runs:` line names a directory that is not the deployment's
+### 1g. Validating the requirement map found three defects, and the third was mine in the direction that matters most
 
 The auto-validation of this audit re-ran every row of
 `2026-10-23-isolation-audit-requirement-map.md` against its named interface, rather than
@@ -172,28 +172,30 @@ to start from, and the 46-line shell they must read is the one step with no labe
 is `1.`, and every integer level printed appears (1.5 is fine; 2.5 with no 2 is not). Fixed by
 labelling the script as its own step 1; re-measured, the output is `1., 1.5., 2., 3., 4.`.
 
-**Defect 2: the plan's `runs:` line, and the real reason the deployment looks confused.**
-Re-measured, the live instance is `HOLON_HOME=<the live instance's runtime>` (166 tasks,
-1530 events, and a heartbeat writing it every two minutes). `Home.runs_dir` is
-`runtime_dir / "runs"` and `runtime_dir` is `root / "execution" / "runtime"` (`paths.py:44-53`),
-so this deployment derives `.../execution/runtime/execution/runtime/runs` — a directory that
-exists only because some earlier run created it, and which is not where any run lands. The plan
-prints that path as the one the agent user will be granted.
+**Defect 2: the map named five guards with no module or class.** Running them as
+`RedTeam.<name>` — the module's first class, the natural guess — produced four `AttributeError`s,
+because three live in `Reach` and one in `Deployment`. A module pass hides that entirely, because a
+module pass is indifferent to which class holds the method. A later attempt to write the names out
+went wrong in the *other* direction and is recorded in the map's first row: I typed two **phantom**
+guard names and dropped two real ones, caught within the minute by checking each name against the
+module. A name in a record that a reader cannot run is a defect in both directions.
 
-The cause is a `HOLON_HOME` one directory deeper than the layout it names. Two of the audit's own
-claims were measured against the wrong place before this: the deployment row said "no broker
-unit", and the unit exists (`disabled`, `inactive`, and pointing at a *scratch* home); and 1c's
-"the real tick created the incident" was re-measured against the live instance's own `tasks` table,
-where `tsk_01M5M5Y37RB8Q5ZS7N7A8B7B32` `Incident: doctor reports isolation.off` is open with the
-exposure text in its intent. That incident is now evidence on the live instance, not a scratch one.
+**Defect 3, and it was mine in the direction that matters most.** The same round re-measured the
+deployment's rows and concluded the operator's `HOLON_HOME` sat one directory too deep, because the
+plan's `runs:` line printed a doubled path and a probe reported `writes: -`. Both readings had one
+cause, and it was not the deployment: the doubled runtime directory and the empty instance behind
+`writes: -` were created by **my own `Kernel(...)` construction**, which writes state even when the
+probe only reads. Measured: the doubled tree was created at 02:53 on 2026-10-24, by me. The real
+instance (`01m4sf0…`, three departments, seven employees, 166 tasks, 1530 events) sits one level up
+at the path `HOLON_HOME` already names, so `HOLON_HOME` needs no change — and a fix written from the
+wrong reading would have told the Chair to edit a correct config. §2 records the full measurement.
 
-**The hazard that is not the kernel's, and must not be read as such.** The machine currently holds
-*two* Holon instances: the real one (`$HOLON_HOME`) and the scratch one the
-tick unit names (a scratch `HOLON_HOME`, 5 events), and a heartbeat is writing
-the real one from an undocumented process while the documented unit writes the scratch one. Seven
-concurrent agent sessions are running. This is the deployment's problem to resolve, and reporting
-it as a kernel defect would be the conflation AGENTS.md law 10 exists to prevent; it is recorded
-here because it changes what "is it deployed?" means for the Chair's root command.
+**The hazard that is not the kernel's, and must not be read as such.** The installed tick unit names
+a different, scratch instance and the timer writes that one every two minutes while the real
+organization waits. Seven concurrent agent sessions are running on this host. This is the
+deployment's problem to resolve, and reporting it as a kernel defect would be the conflation AGENTS.md
+law 10 exists to prevent; it is recorded here because it changes what "is it deployed?" means for
+the Chair's root command — a boundary activated on the wrong instance protects nothing.
 
 ### 1h. Two guards whose docstrings described the defect they were written beside
 
@@ -226,13 +228,26 @@ validation round ran the names rather than the module.
 | the runner unit | **not installed** (`/etc/systemd/system`: none) |
 | the broker unit | **installed against the wrong instance, and not running.** Corrected: the first version of this table said "not installed", and a re-measurement on 2026-10-23 at 21:15 found `~/.config/systemd/user/holon-broker.service` — `disabled`, `inactive`, and written against a **scratch** `HOLON_HOME`, not the instance that carries the work |
 
-**And the deployment is split in two**, which is what makes "the live instance" ambiguous in a
-way this section cannot be: the instance that carries the work (`HOLON_HOME` holding 166 tasks and
-1530 events, with a heartbeat writing it every two minutes) and the scratch one the installed tick
-unit names (5 events). The tick timer writes the second every 2 minutes; something else writes the
-first on the same cadence. Seven concurrent agent sessions are running on this host. This is the
-deployment's to resolve and is recorded rather than fixed, because a kernel change here would be
-the conflation AGENTS.md law 10 exists to prevent.
+**The deployment is split in two**, and the first version of this section got the reason wrong, which is worth recording because I nearly shipped the wrong fix. Measured:
+
+- the instance that carries the work is `01m4sf0…` — three departments, seven employees, 166 tasks, 1530 events — at the path `HOLON_HOME` already names, so **the operator's `HOLON_HOME` is correct and needs no change**;
+- the installed tick unit names a **second, scratch** instance (`01m5mn6z…`, one department, four tasks, five events), and the tick timer writes that one every two minutes rather than the one that carries the work.
+
+My first reading was that `HOLON_HOME` sat one directory too deep, because the plan's `runs:` line printed a doubled path. Re-measured, the doubling is an artifact of *my own probe*: the doubled runtime dir was created at 02:53 on 2026-10-24 by the `Kernel(Home.resolve())` I ran against that home — a fresh empty instance, which is also why that same probe reported `writes: -` and one default `executive` department. Both readings were wrong, and both came from measuring a mechanism against a state my own measurement had created. The lesson is the audit's own: re-measure against the state you found, and never against one you just made.
+
+The real hazard, which neither of my readings was: the tick timer keeps writing the scratch instance while the real organization waits. Seven concurrent agent sessions are running on this host. This is the deployment's to resolve and is recorded rather than fixed, because a kernel change here would be the conflation AGENTS.md law 10 exists to prevent.
+
+**One stray directory this audit left behind, named so the Chair can remove it.** The doubled
+runtime tree above (`<live-home>/execution/runtime/execution/`) was created by my own read-only
+probes, because constructing a `Kernel` against an instance writes state even when the probe only
+reads. It holds one empty `work.db` and an empty `runs/` and nothing else; the live organization's
+state is untouched, one level up. It is exactly the class `doctor`'s `scope.stray` reports — a
+directory at the instance root named by nothing — and it is mine. Removal is the Chair's call, and
+it is the smallest thing on this page:
+
+```sh
+rm -rf <live-home>/execution/runtime/execution   # only if it is the empty dir measured here
+```
 
 What follows is measured on the instance that carries the work, because that is the one a boundary
 would have to protect.
@@ -281,13 +296,26 @@ read is not read for it. A guard now holds that.
 
 ## 5. Verdict
 
-The mechanism is sound — all five seams I attacked held, and the six defects I found are
-fixed with guards. Two of the six were mine: making the plan reachable is not enough, the sequence it
-prints has to be walkable, and the first version told the Chair to run a command that could not work
-(a guard now walks every line); and validating the audit against the printed plan instead of the
-applied ACL over-read what the plan promised (§1f).
+The mechanism is sound — all five seams I attacked held. The defects found inside it and around it
+are fixed with guards, and **three of them were mine**, which is the number this section should
+carry rather than two:
+
+1. making the plan reachable was not enough; the sequence it printed had to be walkable, and the
+   first version told the Chair to run a command that could not work (a guard now walks every line);
+2. validating the audit against the printed plan instead of the applied ACL over-read what the plan
+   promised (§1f);
+3. and worst, the validation round measured the deployment against a state **its own probe had just
+   created**, and concluded the operator's `HOLON_HOME` was one directory too deep. It is correct. A
+   fix written from that reading would have told the Chair to edit a config that already works.
+
+The general lesson, which is the audit's own method turned on the auditor: **every claim about code
+or state is a hypothesis, including the auditor's, and the measurement must be taken against the
+state you found rather than the one your probe made.** It is the same rule the ledger already states
+for design records, applied to the record that was validating them.
 
 The **system is not on**: the boundary is absent from the live instance by one root command, and
 until this change its absence was invisible to the only thing that reports unattended. Everything
-except the root command is fixed; the root command is the Chair's, and the plan that produces it
-now runs from the state the instance is actually in.
+except the root command is fixed; the root command is the Chair's, and the plan that produces it now
+runs from the state the instance is actually in — with the instance it must protect identified by
+id (`01m4sf0…`, three departments, seven employees, 166 tasks), because the heartbeat on this host is
+currently writing a different one.
