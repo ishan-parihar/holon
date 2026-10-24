@@ -322,8 +322,15 @@ class Setup(KernelCase):
                          f"the root script bakes in {root}: a moved checkout stops every agent "
                          "process with no journal entry naming the cause")
         # and the launcher must still be present in the form systemd can resolve
-        self.assertIn("python3 -m holon.execution.isolation runner", script,
+        self.assertIn("-m holon.execution.isolation runner", script,
                       "the runner command itself is what starts the agents")
+        # exec'd by an interpreter, not a bare module path: under systemd's service PATH the name
+        # on PATH may not be the interpreter whose stdlib the module was checked against, so a
+        # literal `python3` is asserted nowhere -- what makes the runner start is an interpreter
+        # resolving the module, however it is spelled.
+        self.assertRegex(script,
+                         r"exec\s+\S*(python|\{\})\S*\s+-m holon\.execution\.isolation runner",
+                         "the runner is exec'd by an interpreter, not a bare module path")
         # the unit must name the per-user bin dirs itself: systemd's service PATH omits them, so
         # without this line the start shell's `command -v holon` finds nothing, prints
         # `readlink: missing operand` and exits 0 -- systemd records a healthy unit that never
