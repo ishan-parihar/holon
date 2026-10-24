@@ -26,7 +26,7 @@ consumed = []
 
 [[services]]
 id = "kosmos"
-command = "kosmos --query"
+command = "kosmos query"
 effect = "read"
 health = "kosmos --version"
 accepts = "a research query"
@@ -107,7 +107,7 @@ class Bylaws(KernelCase):
         self.assertEqual([r["unit"] for r in self.k.wconn.execute("SELECT * FROM api_services")], ["vault"])
         self.assertEqual(self.k.wconn.execute(
             "SELECT command FROM api_services WHERE unit='vault' AND service='kosmos'").fetchone()[0],
-            "kosmos --query")
+            "kosmos query")
         self.assertEqual([f for f in lint.run(self.k, ["api", "bylaws"])
                          if f["rule"] != "bylaws.command"], [],
                        "the fixture declares a tool (kosmos) this machine has not installed, "
@@ -190,7 +190,7 @@ class Bylaws(KernelCase):
     def test_a_fence_that_exists_only_in_act_commands_still_names_the_pooled_services(self):
         """R-05's other half, found by red-team: an act fence is a fence. A department fenced
         only by act_commands ran its execute stages refusing the pooled services' entry points —
-        the brief advertised `kosmos --query` and the policy denied it. Only a fence that exists
+        the brief advertised `kosmos query` and the policy denied it. Only a fence that exists
         is extended; no observe fence is derived from pooling."""
         self.configure('[scope.dept.ops]\nact_commands = ["git"]\n')
         self._sync()
@@ -382,7 +382,7 @@ class Bylaws(KernelCase):
         and lint runs where the operator is.
         """
         (self.home.bylaws_units_dir / "vault.toml").write_text(
-            (VAULT % self.tmp).replace('command = "kosmos --query"',
+            (VAULT % self.tmp).replace('command = "kosmos query"',
                                        'command = "definitely-not-an-installed-tool --query"'))
         self._sync()
         found = [f for f in lint.run(self.k, ["bylaws"]) if f["rule"] == "bylaws.command"]
@@ -393,7 +393,7 @@ class Bylaws(KernelCase):
         # which is the same kind of promise. A dead health probe is a dead capability.
         here = Path(sys.executable)
         (self.home.bylaws_units_dir / "vault.toml").write_text(
-            (VAULT % self.tmp).replace('command = "kosmos --query"', f'command = "{here} -c pass"'
+            (VAULT % self.tmp).replace('command = "kosmos query"', f'command = "{here} -c pass"'
                                        ).replace('health = "kosmos --version"',
                                                  f'health = "{here} --version"'))
         self._sync()
@@ -408,14 +408,14 @@ class Bylaws(KernelCase):
         mutation verbs, and identity's write safety rested on the store's own CLI rather
         than on the capability layer. A read route must name the verb it invokes."""
         (self.home.bylaws_units_dir / "vault.toml").write_text(
-            (VAULT % self.tmp).replace('command = "kosmos --query"', 'command = "kosmos"'))
+            (VAULT % self.tmp).replace('command = "kosmos query"', 'command = "kosmos"'))
         self._sync()
         found = [f for f in lint.run(self.k, ["bylaws"]) if f["severity"] == "error"]
         self.assertTrue(any("effect=read" in f["message"] and "bare 'kosmos'" in f["message"]
                             for f in found), found)
         # narrowed to a verb, the same service passes
         (self.home.bylaws_units_dir / "vault.toml").write_text(
-            (VAULT % self.tmp).replace('command = "kosmos --query"', 'command = "kosmos query"'))
+            (VAULT % self.tmp).replace('command = "kosmos query"', 'command = "kosmos query"'))
         self._sync()
         self.assertEqual([f for f in lint.run(self.k, ["bylaws"])
                           if "effect=read" in f["message"]], [],
@@ -423,9 +423,124 @@ class Bylaws(KernelCase):
         # a service that genuinely needs the whole binary declares write, and is then invisible
         # to an observe posture (context.py:312) rather than offered as a read
         (self.home.bylaws_units_dir / "vault.toml").write_text(
-            (VAULT % self.tmp).replace('command = "kosmos --query"\neffect = "read"',
+            (VAULT % self.tmp).replace('command = "kosmos query"\neffect = "read"',
                                        'command = "kosmos"\neffect = "write"'))
         self._sync()
         self.assertEqual([f for f in lint.run(self.k, ["bylaws"])
                           if "effect=read" in f["message"]], [],
                          "a write-effect service was refused by the read rule")
+
+    def test_a_read_route_may_name_a_verb_free_path(self):
+        """The red-team that caught my own Fix 5 twice over.
+
+        First defect: the rule counted tokens, so a read-effect route whose command is ONE path
+        to a genuinely read-only binary was refused. There is no verb to name on a single-file
+        command, and refusing it would have blocked every legitimate single-binary surface
+        (`/usr/bin/browseros-neo` is one, already shipped in BROWSER).
+
+        Second, and worse: counting tokens also ACCEPTED `kosmos --query`, because a flag looks
+        like a verb if you only count arguments. `identity --version` reaches every verb
+        `identity` has exactly as bare `identity` does. What matters is whether the invocation
+        addresses one verb — the head plus a non-flag argument — not how many tokens there are.
+        """
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
+            (VAULT % self.tmp).replace('command = "kosmos query"',
+                                       'command = "%s"' % (sys.executable,)))
+        self._sync()
+        self.assertEqual([f for f in lint.run(self.k, ["bylaws"])
+                          if "declares effect=read" in f["message"]], [],
+                         "a read route naming one binary path was refused by the verb rule: "
+                         "there is no verb to name on a single-file command")
+        # the second defect's guard: a FLAG is not a verb. `kosmos --query` reaches every verb
+        # the binary has, exactly as the bare name does, so it must still be refused.
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
+            (VAULT % self.tmp).replace('command = "kosmos query"',
+                                       'command = "kosmos --query"'))
+        self._sync()
+        found = [f for f in lint.run(self.k, ["bylaws"]) if "declares effect=read" in f["message"]]
+        self.assertTrue(any("bare 'kosmos --query'" in f["message"] for f in found), found)
+
+    def test_the_reachable_command_question_does_not_depend_on_the_cwd(self):
+        """The concrete cwd-flip, measured (2026-10-24). With `bin/tool` present in the repo root,
+        the pre-fix lint form answered runnable from the repo root and not runnable from /tmp for
+        the SAME manifest. Now one resolver answers both, and it answers FALSE, because a relative
+        path is not something a unit on another machine can be assumed to mean."""
+        root = Path(self.tmp.name) / "dept"
+        (root / "bin").mkdir(parents=True)
+        (root / "bin" / "tool").write_text("#!/bin/sh\n")
+        here = os.getcwd()
+        try:
+            os.chdir(root)
+            self.assertIsNone(units.resolve_token("bin/tool"))
+            os.chdir("/tmp" if os.path.isdir("/tmp") else here)
+            self.assertIsNone(units.resolve_token("bin/tool"),
+                             "the answer for a relative command must not move with the cwd")
+        finally:
+            os.chdir(here)
+
+    def test_a_declared_health_probe_is_run_by_something(self):
+        """Attack 5 of the red-team against my own fixes: C3 (doctor.py) reads
+        `smoke_results()` looking up `failed.get(f"{slug}:{service}")`, and `capabilities/context`
+        marks a route `(down)` off the same name. Neither wrote it. Smoke checks came only from the
+        instance config's `[smoke]` block, so a unit declaring `health = "kosmos --version"` was
+        an operator told their probe was being watched while no duty ever ran it — the whole
+        C3 fix was a consumer with no producer, exactly the failure mode I had just written up as
+        Fix 4's problem.
+
+        Now the producer exists: a declared health is emitted as a smoke check named
+        `<unit>:<service>`, derived from the same manifest being checked. This test asserts the
+        name reaches the check list, and a probe that fails reaches the doctor's warning."""
+        self._sync()
+        checks = self.k.smoke_checks()
+        names = {c["name"]: c for c in checks}
+        self.assertIn("vault:kosmos", names,
+                      "a declared health probe never became a smoke check, so nothing runs it")
+        self.assertEqual(names["vault:kosmos"]["cmd"].strip(), "kosmos --version")
+        self.assertFalse(names["vault:kosmos"]["critical"],
+                         "a dead capability must not be able to block an unrelated department")
+
+    def test_a_read_route_whose_args_name_its_verbs_is_not_refused_for_a_bare_command(self):
+        """Gap 0 of the remaining-gaps outline-plan, which is the false positive Fix 5 shipped.
+
+        Measured on the live instance 2026-10-24T18:26Z: strict lint was 3 errors, and one of them
+        was `bylaws.manifest` refusing `browser.toml`'s `sourcehound` -- a route declaring
+        `effect = "read"` with the bare `sourcehound`. That is the same rule that correctly refused
+        the bare `identity`, and it cannot tell the two apart from the command alone, because
+        Measured: `identity --help` and `sourcehound --help` EACH list a subcommand group. A bare
+        head is the refused form for `identity` (which carries `set`/`propose` behind every verb)
+        and the necessary form for `sourcehound` (whose head is only a dispatcher).
+
+        The evidence that separates them is already in the manifest: `args` documents the call
+        shape, and a group entry point writes its verb set right there as an alternation. So the
+        rule now asks the manifest what it already declares, and a bare name whose `args` is
+        absent or names no verb set still fails -- which is what keeps this from becoming a hole.
+        """
+        # the shape that regressed the live instance: a bare group entry point with its verb set
+        # documented in args, exactly as browser.toml writes it
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
+            (VAULT % self.tmp).replace(
+                'command = "kosmos query"',
+                'command = "kosmos"\nargs = "kosmos <query|notes|list|get> [--json]"'))
+        self._sync()
+        self.assertEqual([f for f in lint.run(self.k, ["bylaws"])
+                          if "declares effect=read" in f["message"]], [],
+                         "a bare command whose args document the verb set was refused: this is "
+                         "the sourcehound false positive that regressed the live instance")
+        # the control that keeps the rule: a bare name whose args name NO verb set still fails,
+        # which is the original defect and must not reopen
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
+            (VAULT % self.tmp).replace('command = "kosmos query"', 'command = "kosmos"'))
+        self._sync()
+        self.assertTrue(any("declares effect=read" in f["message"]
+                            for f in lint.run(self.k, ["bylaws"])),
+                        "a bare command with no args, or args naming only flags, was allowed: the "
+                        "verb-set exemption has become a hole")
+        # a bracket of optional FLAGS is not a verb set, and must not be mistaken for one
+        (self.home.bylaws_units_dir / "vault.toml").write_text(
+            (VAULT % self.tmp).replace(
+                'command = "kosmos query"', 'command = "kosmos"\nargs = "kosmos [--json]"'))
+        self._sync()
+        self.assertTrue(any("declares effect=read" in f["message"]
+                            for f in lint.run(self.k, ["bylaws"])),
+                        "a bracket of optional flags was read as a verb set: `[--json]` has no "
+                        "alternation and must not exempt the route")

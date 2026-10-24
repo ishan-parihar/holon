@@ -1205,7 +1205,14 @@ def lint_core(cfg: Cfg) -> list[str]:
             if "kb: tombstone" in body:
                 continue
             h = next((ln for ln in body.splitlines() if ln.startswith("#")), "")
-            titles.append((f.name, set(re.findall(r"[a-z0-9]{4,}", h.lower()))))
+            # The dates are not part of the question. Two plans named `2026-10-24` and
+            # `2026-10-17` shared `2026` and the two words every gap record carries, scored
+            # exactly 0.50 against the threshold below, and the rule reported a duplication
+            # between a knowledge-base plan and a whole-distribution one -- a false positive
+            # on the document pair an operator is most likely to open. A year and a day
+            # tokenize into the question's vocabulary; they carry no question.
+            bare = re.sub(r"\b\d[\d-]*\d?\b", " ", h.lower())
+            titles.append((f.name, set(re.findall(r"[a-z]{4,}", bare))))
         for i in range(len(titles)):
             for j in range(i + 1, len(titles)):
                 a, b = titles[i][1], titles[j][1]

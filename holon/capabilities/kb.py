@@ -26,7 +26,7 @@ GENOME = Path(__file__).resolve().parent.parent / "vendor" / "genome.py"
 # The vendored CLI and the distribution's own scripts/genome are the SAME build: a KB's verbs and the
 # repo's own lint must agree, or a KB can pass `holon kb run ... lint` and fail `scripts/genome lint`.
 # The pin is the guard for that (a test asserts the two files are byte-identical).
-GENOME_SHA256 = "4d9f854f548db93975fdf3975fba48a8417df1a4732912fa7c1a7fdd00569168"  # genome 2026.10.22-17
+GENOME_SHA256 = "1136ba8c2953e1a5058cfafca240fc4157b848c239cf0fb16c6c3991f917f601"  # genome 2026.10.22-17 + one local fix: W006 compared two plans' H1 headings and the date tokens it tokenized counted as words, so two plans about different subjects scored exactly 0.50 at the threshold (see the commit's own message). Dates are stripped before tokenizing. guard: `DuplicateQuestionRule` in tests/test_kb.py
 READ_VERBS = ("find", "view", "ask", "wake", "show", "lint")
 WRITE_VERBS = ("new", "move", "set", "link")
 JSON_VERBS = ("find", "ask", "show", "new")  # the verbs with a --json form

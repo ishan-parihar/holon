@@ -1980,7 +1980,37 @@ class Kernel:
     def smoke_checks(self, dept: str | None = None) -> list[dict]:
         """Every declared smoke check: {dept (None = everyone), name, cmd, critical, timeout, reason}."""
         sm = self.config.get("smoke", {})
-        found = [(None, c) for c in sm.get("checks") or []]
+        found: list[tuple] = [(None, c) for c in sm.get("checks") or []]
+        # A unit's own declared `health` probe is a smoke check, named `<unit>:<service>`.
+        # Two consumers were already built for that name and nothing wrote it (red-team, 2026-10-24):
+        # `integrity/doctor`'s C3 warning looks up `failed.get(f"{slug}:{service}")`, and
+        # `capabilities/context` marks a route `(down)` from that same name. Both read a key the
+        # producer never emitted, so a unit declaring `health = "kosmos --version"` was an
+        # operator told their probe was being watched while no duty ever ran it -- the whole C3
+        # fix was a consumer with no producer, the same failure mode as Fix 4's.
+        # Derived, not declared: an operator adds a capability and the probe appears, and it
+        # cannot go stale, because the manifest it comes from is the thing being checked.
+        # Scoped so a unit nobody pools contributes no noise, but the default org-wide sweep
+        # covers EVERY pooled unit. When a department IS named, the sweep narrows to what that
+        # department pools, which is the set a failing probe is actually relevant to.
+        pooled: list[str] = [r["slug"] for r in self.wconn.execute(
+            "SELECT DISTINCT u.slug FROM unit_edges e JOIN units u ON u.slug = e.slug"
+            " WHERE e.kind='pool'").fetchall()]
+        if dept:
+            pooled = [r["slug"] for r in self.wconn.execute(
+                "SELECT DISTINCT u.slug FROM unit_edges e JOIN units u ON u.slug = e.slug"
+                " WHERE e.kind='pool' AND (e.other=? OR e.other='*')", (dept,)).fetchall()]
+        try:
+            for slug in pooled:
+                for s in self.wconn.execute("SELECT service, health FROM unit_services"
+                                            " WHERE slug=? AND trim(coalesce(health, '')) <> ''",
+                                            (slug,)).fetchall():
+                    found.append((dept, {"name": f"{slug}:{s['service']}", "cmd": s["health"],
+                                      "critical": False,
+                                      "reason": f"{slug}'s declared probe for its"
+                                                f" `{s['service']}` route"}))
+        except Exception:
+            pass  # a smoke report must never be blocked by a probe the kernel failed to read
         for slug, sub in (sm.get("dept") or {}).items():
             if dept and slug != dept:
                 continue

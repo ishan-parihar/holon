@@ -142,6 +142,28 @@ def sync(k) -> dict:
     return {"units": len(units), "services": n_services}
 
 
+def _names_its_verb_set(args: str) -> bool:
+    """Whether a read route's `args` document the verb set its command may be given.
+
+    The false positive Fix 5 shipped: a bare head was refused outright, and a bare head is the
+    CORRECT form for a command-group CLI. Measured 2026-10-24, `sourcehound` and `identity`
+    both list a subcommand group, so the command alone cannot distinguish a dispatcher from a
+    mutation surface. `args` already can: a group entry point documents its choices right
+    there, as an alternation after the head (`sourcehound <search|read|news|papers|social> …`).
+
+    The test is therefore: an `|`-alternation somewhere in `args`, in any of the shapes a call
+    shape is written in — `<a|b>`, `[a|b]`, or a bare `a | b` run. The head itself does not have to
+    be repeated inside `args`: a string that is nothing but a verb set (`<get|set|propose>`) names
+    the route's verbs just as well as `sourcehound <search|read|…>` does, and requiring the head
+    would refuse a documentation style that is not the defect.
+
+    What this deliberately does NOT do: infer verbs from the POSITION of the alternation, or
+    decide that a bracket of optional flags (`tool [--json]`) is a verb set. `[--json]` has no
+    `|`, so it fails here for the right reason.
+    """
+    return bool(re.search(r"<?\[?\s*\S+\s*\|\s*\S+\s*\]?", args))
+
+
 def validate(k) -> list[str]:
     """bind.service and bind.pool (lint): every consumed ref names a service a unit offers;
     every pooled unit names a department that exists; and the sync is not stale."""
@@ -161,20 +183,44 @@ def validate(k) -> list[str]:
         # was read in exactly one behavioral place (capabilities/context.py hides a write route
         # from an observe posture) and never constrained the command, so `effect = "read"` on
         # `identity` was a promise the kernel transmitted to agents while the binary carried
-        # `set`/`propose`/`validate`. The rule: a read-effect service narrows its command to a
-        # verb. A service that needs the whole binary declares `write`, and then an observe
-        # posture never sees it at all (context.py:312).
+        # `set`/`propose`/`validate`. The rule: a read-effect service invoked through PATH names
+        # the verb it uses, because that invocation can carry any verb the binary has. A service
+        # that needs the whole binary declares `write`, and then an observe posture never sees it
+        # at all (context.py:312).
+        #
+        # Two things the red-team found I had wrong, both fixed here:
+        #   1. A path (absolute OR relative) is exempt even with no verb: it is a file the
+        #      operator addressed, not a name resolved through PATH, so there is no verb to
+        #      name. The defect is a bare command *name*.
+        #   2. Counting tokens was wrong, not just crude: `kosmos --query` is a flag, not a verb,
+        #      so `len(toks) > 1` accepted a command that still names no verb. What matters is
+        #      whether the invocation addresses one verb — the head plus a non-flag argument.
+        #   3. A bare head is CORRECT for a command-group CLI, and refusing it was the false
+        #      positive that made this row exist. Measured 2026-10-24 on the live instance:
+        #      `identity` and `sourcehound` each list a subcommand group, so a bare head is the
+        #      refused form for `identity` (which carries `set`/`propose` behind every verb) and
+        #      the necessary form for `sourcehound` (whose head is only a dispatcher). The rule
+        #      cannot tell them apart from the command alone, so it now asks the manifest what it
+        #      already declares: `args` names the call shape, and a group entry point documents
+        #      its verb set right there — `sourcehound <search|read|news|papers|social> …`. A bare
+        #      name whose `args` names that set has named its verbs; a bare name with a generic or
+        #      absent `args` (`identity`) still says nothing about what it can do, and still fails.
         for s in u["services"]:
             cmd = (s.get("command") or "").strip()
             if s.get("effect") != "read" or not cmd:
                 continue
-            toks = cmd.split()
-            if len(toks) > 1:
-                continue          # already narrowed: the second token is a verb
+            head, *rest = cmd.split()
+            if os.sep in head:
+                continue          # a path, absolute or relative: no verb exists to name
+            if rest and not rest[0].startswith("-"):
+                continue          # the head addresses a verb: `identity get`
+            if _names_its_verb_set(s.get("args") or ""):
+                continue          # a group entry point whose args declare the verb set it offers
             problems.append(f"{u['file']}: service '{s.get('id')}' declares effect=read but its "
-                            f"command is the bare '{toks[0]}' — a read route must name the verb it "
-                            "invokes (identity → `identity get`), or declare effect=write and let "
-                            "context.py:312 keep it out of observe postures")
+                            f"command is the bare '{cmd}' — a read route must name the verb it "
+                            "invokes (identity → `identity get`), or declare the verb set in "
+                            "`args`, or declare effect=write and let context.py:312 keep it out "
+                            "of observe postures")
         for d in u["pool_of"]:
             if d != "*" and d not in known_depts:
                 problems.append(f"{u['file']}: pools '{d}', which is not a department (bind.pool)")
@@ -195,6 +241,26 @@ def validate(k) -> list[str]:
 def _synced_at(k, slug: str) -> str | None:
     r = k.wconn.execute("SELECT synced_at FROM units WHERE slug=?", (slug,)).fetchone()
     return r[0] if r else None
+
+
+def resolve_token(token: str) -> str | None:
+    """Where a command's first token resolves from here, or None.
+
+    One resolver, shared by `command_problems` (lint: is this route runnable at all?) and
+    `execution/isolation.reach` (the same question, asked to decide what to grant). Two copies
+    was the red-team's own finding: they had already drifted, so the same token could be a
+    finding in one and a grant in the other.
+
+    A bare name resolves through PATH (`shutil.which`) — the rule
+    `execution/briefs.holon_command` already applies to `holon` before handing an agent an
+    environment. A path resolves only if absolute: a RELATIVE path (`bin/tool`) resolves against
+    whatever cwd the caller happens to have, which is precisely the thing that made the check
+    non-deterministic, so it is reported as unresolved rather than guessed at.
+    """
+    p = Path(token).expanduser()
+    if os.sep in token:
+        return str(p) if p.is_absolute() and p.exists() else None
+    return shutil.which(token)
 
 
 def command_problems(home) -> list[dict]:
@@ -220,9 +286,7 @@ def command_problems(home) -> list[dict]:
                 if not raw:
                     continue
                 token = raw.split()[0]
-                found = (Path(token).expanduser().exists() if os.sep in token
-                         else shutil.which(token) is not None)
-                if not found:
+                if not resolve_token(token):
                     out.append({"slug": slug, "service": s.get("id", "?"), "key": key,
                                 "token": token, "category": u.get("category", "")})
     return out
