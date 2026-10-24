@@ -223,7 +223,7 @@ validation round ran the names rather than the module.
 
 | Layer | State (re-measured 2026-10-23, 21:15–21:45) |
 |---|---|
-| `[isolation]` config | **no section at all** — the config the kernel reads is `$HOLON_HOME/holon.toml` and on this deployment that file is **absent**, so the instance runs on defaults and `doctor` separately reports `security.auth` ("no Chair key", open mode) |
+| `[isolation]` config | **no section at all.** The file itself exists — `<live-home>/holon.toml` (3906 bytes, 15 sections from `[context]` to `[smoke.dept.pioneer.checks]`, last written 2026-10-23 10:24) — and re-measuring it at 01:23 on 2026-10-24 corrected the first version of this row, which said the file was **absent**. It is not. It carries no `[isolation]` section, so the instance runs on defaults, and `doctor` separately reports `security.auth` ("no Chair key", open mode) |
 | the agent user | **does not exist** (`id holon-agent-<instance>`: no such user) |
 | the runner unit | **not installed** (`/etc/systemd/system`: none) |
 | the broker unit | **installed against the wrong instance, and not running.** Corrected: the first version of this table said "not installed", and a re-measurement on 2026-10-23 at 21:15 found `~/.config/systemd/user/holon-broker.service` — `disabled`, `inactive`, and written against a **scratch** `HOLON_HOME`, not the instance that carries the work |
