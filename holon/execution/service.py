@@ -68,7 +68,11 @@ DEFAULT_CONFIG = {
                 "rubric_agreement_min": 0.8},
     "budget": {"max_running_per_dept": 0, "max_runs_per_dept_per_day": 0,   # 0 = no cap
                "tokens_per_run": 0, "cost_per_run": 0.0},   # H5: compiled into policy.json; 0 = no cap
-    "notify": {"command": ""},   # e.g. a chat CLI with {message}; empty = no notifications
+    "notify": {"command": "", "dropped_marker": ""},   # e.g. a chat CLI with {message}; empty = no
+                                                        # notifications. dropped_marker: the text the
+                                                        # command prints when it had nowhere to deliver,
+                                                        # so an exit 0 that delivered nothing is not read
+                                                        # as a success (see Kernel.notify)
     "events": {"cooldown_s": 300},   # an event routine fires at most once per this (H7)
     "chair": {"channels": []},       # '<platform>:<user id>' refs whose channel messages are the Chair's (H8)
     # what employees may reach beyond their work's workdir; [scope.dept.<slug>] adds to it per department
