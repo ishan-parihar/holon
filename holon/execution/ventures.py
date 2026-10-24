@@ -377,26 +377,52 @@ def _would_refuse(k, rows: list[dict], already: list[dict]) -> list[dict]:
                                                   "comes from relevance to this organization, not from the "
                                                   "existence of a legacy system's protocol files"})
             continue
-        try:
-            cls = k.classify(r["title"], r["intent"], r.get("command"))
-        except Exception as e:  # a classifier that is down is not a reason to hide the refusal
-            cls = {"lane": None, "error": str(e)[:80]}
-        refusal = None
-        if cls.get("lane") == "script" and not r.get("command"):
-            refusal = (f"this job looks deterministic (script, "
-                       f"{(cls.get('confidence') or 0):.0%}): give it as a script with "
-                       f"--command, or say why an agent must do it")
-        elif cls.get("lane") is None and not r.get("command") and k._fires_often(r.get("cron") or ""):
-            # The other refusal, and the one the model's silence hides: with no decision model
-            # there is no lane to compare against, and a job that fires every few minutes as a
-            # full routine buys a body on every firing (288 a day for a */5 cron). The apply
-            # refuses it, so the survey must too — otherwise the dry run again reports a clean
-            # pool that the apply drops.
-            refusal = (f"no decision model is available and this job fires on "
-                       f"'{r.get('cron')}' ({k._per_day(r.get('cron') or '')} times a day): "
-                       f"a full lane would dispatch a body on every firing. Configure the "
-                       f"classifier, give it as a script with --command, or say --why an "
-                       f"agent must do it")
+        # A3: the five checks that are pure argument validation, asked BEFORE the classifier.
+        # `add_routine` raises eight times, and these five depend on nothing but the routine's own
+        # fields — a trigger named exactly once, an event spelled `event:<pattern>`, a cron that
+        # parses, a lane and a command that agree. They were unreportable because they lived inside
+        # `add_routine`, which a dry run never calls: a pool whose protocols all failed them
+        # reported `protocols: 2, skipped: []` against an apply that made 0. Measured 2026-10-24,
+        # exactly these five are functions of the arguments, and the other three depend on the
+        # decision model a dry run may not hold (see service.py `_validate_routine_args`).
+        #
+        # A row declaring no trigger at all is NOT refused here. `legacy_cron` gives a protocol
+        # with no `schedule:` an empty `cron`, and the apply's own call passes that to
+        # `add_routine`, which raises "exactly one" and is caught below as an ordinary refusal.
+        # The dry run must not refuse a row the apply only warns about, and the suite's own guard
+        # (`test_absence_is_not_a_declaration_of_pause`) carries the other half of that rule, so
+        # the check runs only where the row declares a trigger.
+        if r.get("cron") or r.get("event"):
+            try:
+                k._validate_routine_args(r["title"], r["intent"], cron=r.get("cron"),
+                                         event=r.get("event"), lane=r.get("lane"),
+                                         command=r.get("command"))
+            except ValueError as e:
+                refusal = f"refused: arguments — {e}"
+            else:
+                refusal = None
+        else:
+            refusal = None
+        if refusal is None:
+            try:
+                cls = k.classify(r["title"], r["intent"], r.get("command"))
+            except Exception as e:  # a classifier that is down is not a reason to hide the refusal
+                cls = {"lane": None, "error": str(e)[:80]}
+            if cls.get("lane") == "script" and not r.get("command"):
+                refusal = (f"this job looks deterministic (script, "
+                           f"{(cls.get('confidence') or 0):.0%}): give it as a script with "
+                           f"--command, or say why an agent must do it")
+            elif cls.get("lane") is None and not r.get("command") and k._fires_often(r.get("cron") or ""):
+                # The other refusal, and the one the model's silence hides: with no decision model
+                # there is no lane to compare against, and a job that fires every few minutes as a
+                # full routine buys a body on every firing (288 a day for a */5 cron). The apply
+                # refuses it, so the survey must too — otherwise the dry run again reports a clean
+                # pool that the apply drops.
+                refusal = (f"no decision model is available and this job fires on "
+                           f"'{r.get('cron')}' ({k._per_day(r.get('cron') or '')} times a day): "
+                           f"a full lane would dispatch a body on every firing. Configure the "
+                           f"classifier, give it as a script with --command, or say --why an "
+                           f"agent must do it")
         if refusal is None:
             continue
         if skipped_by_status:

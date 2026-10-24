@@ -1310,6 +1310,42 @@ class Kernel:
         lane = "full" if cls["lane"] in (None, "full") or self._external(cls) else "fast"
         return lane, cls
 
+    @staticmethod
+    def _validate_routine_args(title: str, intent: str, *, cron: str | None = None,
+                             event: str | None = None, lane: str | None = None,
+                             command: str | None = None) -> None:
+        """The five checks on a routine's own arguments, before any state is consulted.
+
+        Extracted from `add_routine`'s body on 2026-10-24 for A3: the dry run could not report what the
+        apply would refuse, because the refusal lived in `add_routine`, which a dry run never calls. A
+        survey of a real pool reported `protocols: 2, skipped: []` against an apply that made 0, so an
+        import could look clean and then drop everything.
+
+        These five raise for reasons that are functions of the arguments alone: whether a trigger is
+        named exactly once, whether an event is spelled `event:<pattern>`, whether the cron parses, and
+        whether the lane and the command agree with each other. None of them needs the classifier, the
+        decision model, or the database, so both the apply and the dry run can decide them identically.
+
+        The other three of `add_routine`'s eight raises are NOT here, and that boundary is the point:
+        `this job looks deterministic`, `no decision model is available` and `the classifier says` all
+        depend on `cls`, which comes from the decision model. A dry run can hold it when a model is
+        configured and cannot when it is not, so those stay where a caller can see which case it is in.
+        Raising here is a ValueError with the same message the apply raises, so a refusal reads the
+        same whichever path produced it.
+        """
+        if bool(cron) == bool(event):
+            raise ValueError("a routine needs --cron or --on event:<pattern>, exactly one")
+        if event and not event.startswith("event:"):
+            raise ValueError("an event trigger is 'event:<pattern>': the runtime that sees the event matches it")
+        if cron:
+            Cron(cron)
+        if lane not in (None, *vocab.LANES):
+            raise ValueError(f"lane must be one of {vocab.LANES}")
+        if command and lane not in (None, "script"):
+            raise ValueError("--command makes a script routine; drop --lane or --command")
+        if lane == "script" and not command:
+            raise ValueError("the script lane runs an approved --command")
+
     def add_routine(self, title: str, intent: str, *, dept: str, cron: str | None = None, event: str | None = None,
                     lane: str | None = None,
                     command: str | None = None, rubric: list[str] | None = None, why: str | None = None,
@@ -1324,18 +1360,7 @@ class Kernel:
         the classifier's is lowered to it instead.
         `event` (H7): 'event:<pattern>' — no cron; the runtime that sees a matching event fires it
         (`holon routine fire`), once per [events] cooldown_s; Holon never matches events itself."""
-        if bool(cron) == bool(event):
-            raise ValueError("a routine needs --cron or --on event:<pattern>, exactly one")
-        if event and not event.startswith("event:"):
-            raise ValueError("an event trigger is 'event:<pattern>': the runtime that sees the event matches it")
-        if cron:
-            Cron(cron)
-        if lane not in (None, *vocab.LANES):
-            raise ValueError(f"lane must be one of {vocab.LANES}")
-        if command and lane not in (None, "script"):
-            raise ValueError("--command makes a script routine; drop --lane or --command")
-        if lane == "script" and not command:
-            raise ValueError("the script lane runs an approved --command")
+        self._validate_routine_args(title, intent, cron=cron, event=event, lane=lane, command=command)
         cls = self.classify(title, intent, command)
         order = list(vocab.LANES)
         notes = []
