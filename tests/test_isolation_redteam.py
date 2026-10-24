@@ -39,6 +39,7 @@ import os
 import pathlib
 import re
 import secrets
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -528,6 +529,65 @@ class Deployment(KernelCase):
         integers = sorted({n.split(".")[0] for n in numbers}, key=int)
         self.assertEqual(integers, [str(i) for i in range(1, int(integers[-1]) + 1)],
                          f"the sequence skips a level: printed {numbers}")
+
+    def test_read_only_is_not_achievable_the_way_the_docs_claim_it_is(self):
+        """AGENTS.md line 89 says: "read live state only with `mode=ro`, and `holon doctor`,
+        before you conclude." The audit record's §2 and its requirement map both wrote
+        "measured on the live instance (mode=ro)". Measured 2026-10-24, that claim is
+        false every time it is made.
+
+        `Kernel.__init__` calls `connect(home.work_db)` -- a read-WRITE connection,
+        because `readonly=False` is the default -- and then `migrate(self.wconn)
+        (service.py:266-268). So "reading" the live instance through the kernel opens
+        the write side of it. `connect(readonly=False)` sets
+        `PRAGMA journal_mode=WAL` -- writing the db file before any read happens.
+        And `migrate` runs `CREATE TABLE IF NOT EXISTS schema_migrations` and an
+        `ALTER TABLE schema_migrations ADD COLUMN checksum` and
+        `UPDATE ... SET checksum` on every connection, read-only intent included
+        (db.py:74-87).
+
+        This is the same defect class as the audit's own strays, one level deeper:
+        a read-only probe is not read-only, and it writes whether the callers meant
+        it to or not. The guard is the last sentence of this class: this is exactly
+        the probe I used, so the guard is the fix I owe.
+
+        The contract to satisfy: the kernel's own connection offers a read-only mode; a
+        `Kernel` built with it opens both databases `mode=ro`, runs no migration, and
+        creates no directory -- so a probe can look at live state without writing it."""
+        from holon.execution.service import Kernel
+        # A home with no instance fails loudly rather than being brought into being: that is
+        # the correct strictness for a read-only probe, and it is measured here so nobody
+        # later mistakes `mode=ro` for "will migrate if missing".
+        empty = self.tmp / "empty-home"
+        empty.mkdir(parents=True)
+        with self.assertRaises(sqlite3.OperationalError):
+            Kernel(Home(empty), actor="auditor", readonly=True)
+
+        # and on a real instance it touches nothing: build one, then re-open read-only
+        fresh = self.tmp / "ro-probe" / "home"
+        fresh.mkdir(parents=True)
+        home = Home(fresh)
+        Kernel(home)  # the writer brings the instance into being
+        for p in fresh.rglob("*"):
+            p.chmod(0o644 if p.is_file() else 0o755)
+        before = {q.relative_to(fresh): q.stat().st_mtime_ns for q in fresh.rglob("*") if q.is_file()}
+        sidecars_before = {q for q in fresh.rglob("*") if q.name.endswith(("-wal", "-shm"))}
+        k = Kernel(home, actor="auditor", readonly=True)
+        try:
+            self.assertTrue(k.readonly)
+            with self.assertRaises(sqlite3.OperationalError):
+                k.wconn.execute("INSERT INTO tasks (id, title) VALUES ('x', 'y')")
+        finally:
+            k.wconn.close()
+            k.mconn.close()
+        after = {q.relative_to(fresh): q.stat().st_mtime_ns for q in fresh.rglob("*") if q.is_file()}
+        self.assertEqual(before, after,
+                         "a read-only Kernel modified an existing database: "
+                         f"{[n for n in after if before.get(n) != after[n]]}")
+        # sidecars may already exist from the writer pass above; a read-only pass adds none
+        sidecars_now = {q for q in fresh.rglob("*") if q.name.endswith(("-wal", "-shm"))}
+        self.assertEqual(sidecars_before, sidecars_now,
+                         "a read-only Kernel left WAL sidecars: it opened the write side")
 
 
 if __name__ == "__main__":

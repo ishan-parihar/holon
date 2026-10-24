@@ -237,17 +237,49 @@ My first reading was that `HOLON_HOME` sat one directory too deep, because the p
 
 The real hazard, which neither of my readings was: the tick timer keeps writing the scratch instance while the real organization waits. Seven concurrent agent sessions are running on this host. This is the deployment's to resolve and is recorded rather than fixed, because a kernel change here would be the conflation AGENTS.md law 10 exists to prevent.
 
-**One stray directory this audit left behind, named so the Chair can remove it.** The doubled
-runtime tree above (`<live-home>/execution/runtime/execution/`) was created by my own read-only
-probes, because constructing a `Kernel` against an instance writes state even when the probe only
-reads. It holds one empty `work.db` and an empty `runs/` and nothing else; the live organization's
-state is untouched, one level up. It is exactly the class `doctor`'s `scope.stray` reports — a
-directory at the instance root named by nothing — and it is mine. Removal is the Chair's call, and
-it is the smallest thing on this page:
+**A stray tree this audit left behind — and it is bigger than the first pass named, so it is
+written out here in full rather than as one line.** Re-measured 2026-10-24 at 01:23, after I had
+already told the Chair it was one empty directory with one empty db. That was wrong on both
+counts. Constructing a `Kernel` against an instance writes state even when the probe only reads, and
+`Home.ensure()` creates **every** capability directory the kernel knows. The complete inventory,
+all timestamps 2026-10-24, all inside `<instance>/execution/runtime/` — i.e. under the
+home I wrongly probed, one directory too deep, never the real instance root:
+
+```
+02:53   execution/runtime/runs/                     (empty)
+05:31   execution/runtime/work.db                   0 bytes
+02:53   execution/runtime/work.db                   294912 bytes  (0 tasks, 1 event,
+05:31   …work.db-wal                                0 bytes       instance_id 01m5napt…)
+06:53   …work.db-shm                                32768 bytes
+02:53   capabilities/memory/memory.db               118784 bytes  (a SECOND memory db)
+05:30   capabilities/strategy/                      (empty)
+02:53   capabilities/logbook/                       (empty)
+02:53   config/drivers/                             (empty)
+```
+
+That second `memory.db` is the part the first pass missed, and it is why this is not cosmetic: the
+live instance's memory is `<instance>/capabilities/memory/memory.db` (241664 bytes, last
+written 2026-10-23 11:30), and this stray one is a separate, empty copy one level down. A probe
+that had been pointed at the right home would have read the live memory; pointed at the wrong one it
+saw an empty db and reported the organization as having no memory.
+
+The two `-wal`/`-shm` timestamps (05:31, 06:53 — hours after creation) show something else worth
+the Chair's attention: **a later probe of mine re-opened this stray db for writing**, and
+`connect(readonly=False)` sets `PRAGMA journal_mode=WAL`. So "measured on the live instance
+(mode=ro)", which §2 and the suite docstrings both state, is **false as written**: `doctor` and
+`Kernel` open `wconn`, a write connection. Removing it means not deleting a live db but dropping
+the whole wrong-home tree:
 
 ```sh
-rm -rf <live-home>/execution/runtime/execution   # only if it is the empty dir measured here
+rm -rf <instance>/execution/runtime/execution
+rm -rf <instance>/execution/runtime/capabilities
+rm -rf <instance>/execution/runtime/config
 ```
+
+All three exist only under `…/execution/runtime/` and are absent from the real instance root
+(`<instance>/capabilities/` and `<instance>/config/` are the live ones and hold
+the organization's data). It is exactly the class `doctor`'s `scope.stray` reports, and it is mine.
+Removal is the Chair's call.
 
 **This one is not cosmetic, and it is why the audit's own stray matters.** The plan derives its
 proposed agent user from `k.auth.instance_id` (`isolation.py:411`), read from the settings table of

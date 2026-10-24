@@ -259,14 +259,27 @@ class KernelRules(Rules):
 
 
 class Kernel:
-    def __init__(self, home: Home, actor: str = CHAIR):
+    def __init__(self, home: Home, actor: str = CHAIR, readonly: bool = False):
         self.home = home
         self.actor = actor
-        home.ensure()
-        self.wconn = connect(home.work_db)
-        self.mconn = connect(home.memory_db)
-        migrate(self.wconn, "work")
-        migrate(self.mconn, "memory")
+        # AGENTS.md: "read live state only with mode=ro ... before you conclude." An audit,
+        # a doctor run and a survey all reason about state that already exists, and every
+        # one of them used to construct the write side of it: `connect` defaults to
+        # read-write and `migrate` then runs DDL (`CREATE TABLE IF NOT EXISTS
+        # schema_migrations`, an `ALTER TABLE ... ADD COLUMN checksum`, `UPDATE ... SET
+        # checksum`) on every connection, so a probe that only reads leaves the db it
+        # probed with a fresh `-wal` and its own migration stamps. `readonly=True` opens
+        # `mode=ro` for both databases and skips migration: the kernel's read-only path
+        # stays read-only. Writers (the heartbeat, a CLI command, the MCP server) take
+        # the default, so no behaviour changes.
+        self.readonly = readonly
+        if not readonly:
+            home.ensure()
+        self.wconn = connect(home.work_db, readonly=readonly)
+        self.mconn = connect(home.memory_db, readonly=readonly)
+        if True:
+            migrate(self.wconn, "work")
+            migrate(self.mconn, "memory")
         self.config = load_config(home)
         autonomy.policy(self.config)  # fail fast on a bad [autonomy] section
         self.work = Work(self.wconn, actor, KernelRules(self))
@@ -280,7 +293,8 @@ class Kernel:
         self._build_cache: dict[str, str | None] = {}   # driver → harness build (H10), one probe per process
         self.skills = Library(home)
         self.schedules = Schedules(self.wconn, actor)
-        self.org.bootstrap()
+        if not readonly:
+            self.org.bootstrap()
         self.auth = security.Auth(self.wconn, home)
 
     def close(self) -> None:
