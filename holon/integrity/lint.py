@@ -980,12 +980,17 @@ def pack_scrub(k, f: Findings) -> None:
 # The documents whose tables carry claims an agent or the Chair acts on. The reading order in
 # AGENTS.md names INTENT, BYLAWS and CONTRACT as the kernel's reference and law docs, so a row
 # that cannot render there is a claim nobody can read. Measured 2026-10-25 across every tracked
-# markdown file in the distribution: 944 pipe rows (the working tree carries 970; the extra 26 are
-# gitignored build/ copies, which are not the distribution), of which the original four files
-# judged 377 — and the first pass over the rest found a real one, in `docs/design/`, whose three
-# rows had lost their last cell. Judged today: 601 of 944; the 343 rows in design records, adapter
-# READMEs and skill files carry installation locations and dated findings, not law, and were
-# re-checked by hand against these same rules (2026-10-25: zero findings).
+# markdown file in the distribution. Measured 2026-10-25 the working tree carried 970 pipe rows and
+# the tracked set 944 — the 26-row gap is gitignored build/ copies, which are not the distribution,
+# so every figure here names its file set rather than one "total". The original four files judged
+# 377 of them, and the first pass over the rest found a real one: three rows in `docs/design/` had
+# lost their last cell. The remainder — 343 rows at that measurement, in design records, adapter
+# READMEs and skill files — carries installation locations and dated findings rather than law, and
+# was re-checked by hand against these same rules (2026-10-25: zero findings). These counts are a
+# snapshot of that date and grow by one whenever this ledger gains a row: they state the ratio the
+# pack covers, so re-derive them from `git ls-files '*.md'` rather than trusting a number that
+# ages. The invariant the pack must keep is not a row count — it is that every document carrying
+# law renders, which `test_the_pack_checks_every_document_that_carries_law` holds.
 _TABLE_FILES = (
     "AGENTS.md", "README.md", "docs/COMMANDS.md", "TODO.md",
     "docs/INTENT.md", "docs/BYLAWS.md", "docs/CONTRACT.md", "docs/ARCHITECTURE.md",
