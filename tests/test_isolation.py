@@ -174,6 +174,34 @@ class Isolated(KernelCase):
         self.reconfigure("")
         self.assertIn(("isolation.off", "error"), {(f["check"], f["severity"]) for f in doctor.run(self.k)})
 
+    def test_a_half_built_boundary_is_an_error_naming_the_regeneration_command(self):
+        """The Chair's live run 2026-10-25: `sh: /tmp/holon-isolation.sh: No such file or directory`.
+        The config named an agent user that had never been created, because the sequence's step 1
+        (the root script) lived in `/tmp` and vanished — tmpfs on the live host, plus the 10-day
+        tmpfiles sweep — and nothing re-created or checked for it. The machine looked configured:
+        the config row existed, and the user did not. Every step after step 1 failed on a machine
+        whose own doctor had said nothing about the gap.
+
+        The check must name the command that regenerates the script and the durable path it lands
+        at — the remediation-naming rule the repo already enforces (`a message that names the fix
+        must name the fix that works`), applied to the sequence's own first step."""
+        import pwd
+        real = pwd.getpwnam
+        # an agent user that does not exist: exactly the half-built state
+        def missing(name):
+            raise KeyError(f"getpwnam(): name not found: {name}")
+        pwd.getpwnam = missing
+        try:
+            from holon.integrity import doctor
+            found = [f for f in doctor.run(self.k) if f["check"] == "isolation.half"]
+            self.assertTrue(found, "a configured agent user that does not exist is an error, not silence")
+            msg = found[0]["message"]
+            self.assertIn("holon isolation plan", msg, "the remediation names the regeneration command")
+            self.assertIn(str(self.home.root / "isolation" / "setup.sh"), msg,
+                          "the remediation names the durable path inside the instance")
+        finally:
+            pwd.getpwnam = real
+
 
 class Setup(KernelCase):
     def test_a_knowledge_base_is_readable_by_the_agent_user_but_never_writable(self):
@@ -490,6 +518,62 @@ class Setup(KernelCase):
         from holon.capabilities.skills import SkillError
         with self.assertRaises(SkillError):
             self.k.skills.resolve("../../../.config", "x.md")
+
+    def test_the_setup_script_lands_where_a_reboot_cannot_take_it(self):
+        """The Chair's live run on 2026-10-25: `sh: /tmp/holon-isolation.sh: No such file or
+        directory`. The activation sequence BYLAWS §11 prints named a file in `/tmp`, and `/tmp` on
+        the live host is tmpfs (gone per boot) *and* cleared by tmpfiles.d at 10 days — the one file
+        the sequence depends on was the one file guaranteed to disappear. The plan is a deterministic
+        function of instance state, so the script is a cache, not a deliverable: it belongs under
+        `$HOLON_HOME` (which `holon backup` covers), where a later step can find it on any day of
+        any uptime.
+
+        This guards three things: the plan carries a default durable path; that path is inside the
+        instance, not a volatile dir; and it is derivable from the instance alone, so regenerating
+        it is one command from any state."""
+        from holon.execution import isolation
+        plan = isolation.setup_plan(self.k)
+        default = Path(plan["setup_script"])
+        self.assertTrue(default.is_absolute(), "the default is a path, not a filename a caller must place")
+        self.assertFalse(default.is_relative_to("/tmp"),
+                         "the default must not live in a dir wiped per boot or cleared at 10 days")
+        self.assertTrue(str(self.home.root) in str(default),
+                        "the default lives inside the instance, where holon backup carries it")
+
+    def test_the_printed_sequence_names_the_durable_path_it_writes(self):
+        """The printed step 1 and the file the command writes must be the same file. With no
+        `--write`, the plan still names the durable path and says how to regenerate it, because the
+        sequence a doc prints must be re-runnable from any state — an operator who lost the file is
+        one command away, not one archaeology dig (measured: nothing re-created it; the docs treated
+        a pure function's output as a deliverable)."""
+        from holon.execution import isolation
+        plan = isolation.setup_plan(self.k)
+        captured = io.StringIO()
+        with contextlib.redirect_stdout(captured):
+            with contextlib.suppress(SystemExit):
+                from holon import cli
+                cli.main(["--home", str(self.home.root), "isolation", "plan"])
+        printed = captured.getvalue()
+        self.assertIn(plan["setup_script"], printed,
+                      "the printed step 1 names the path this plan writes by default")
+        self.assertIn("holon isolation plan", printed,
+                      "the sequence tells the operator how to regenerate the script")
+
+    def test_a_written_setup_script_survives_in_the_instance(self):
+        """The write lands where the sequence says it does, with parents created, so a fresh
+        machine's first `holon isolation plan` produces the file the next steps consume."""
+        from holon.execution import isolation
+        plan = isolation.setup_plan(self.k)
+        target = Path(plan["setup_script"])
+        self.assertFalse(target.exists(), "the precondition: nothing has written it yet")
+        with contextlib.redirect_stdout(io.StringIO()):
+            with contextlib.suppress(SystemExit):
+                from holon import cli
+                cli.main(["--home", str(self.home.root), "isolation", "plan"])
+        self.assertTrue(target.exists(),
+                        f"running the plan writes the script at its durable default {target}")
+        self.assertIn("useradd --system", target.read_text(),
+                      "the file written is the root script, not the plan's other fields")
 
 
 class PreparedUnderIsolation(Isolated):

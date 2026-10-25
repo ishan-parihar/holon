@@ -353,8 +353,8 @@ process runs as the agent's own Unix user, an agent with a shell can read the Ch
 Both services listen on abstract Unix sockets and check the caller's uid. Set up, once:
 
 ```sh
-holon isolation plan --write /tmp/holon-isolation.sh   # review it
-sudo sh /tmp/holon-isolation.sh                        # root: the agent user and its runner service
+holon isolation plan          # writes the root script to $HOLON_HOME/isolation/setup.sh, durably
+sudo sh $HOLON_HOME/isolation/setup.sh     # root: the agent user and its runner service
 holon isolation apply --force                          # you: the ACLs (--force: it rewrites every one)
 python3 install.py --systemd                           # writes and starts holon-broker
 holon doctor                                           # the isolation checks

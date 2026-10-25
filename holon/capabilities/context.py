@@ -22,7 +22,8 @@ from holon.core import vocab
 DEFAULT_BUDGET_CHARS = 24_000  # ~6k tokens
 # the cross-domain recall family renders last in priority order; this floor keeps it from being
 # crowded out by large stage material on exactly the tasks that need it most (KB-1)
-RECALL_TITLES = ("Relevant memory", "Possibly relevant", "Related past work", "Related logbook entries")
+RECALL_TITLES = ("Relevant memory", "Possibly relevant", "Related past work", "Related logbook entries",
+                "Precedent: what the organization already learned")
 # authoritative and small: the floor never sacrifices these, only large stage material does
 PROTECTED_TITLES = ("Your role", "Task", "Constraints, decisions, preferences", "Project state")
 
@@ -426,6 +427,22 @@ def compile_context(home: Home, work: Work, memory: Memory, node_id: str,
         b.add("Related past work", "\n".join(f"- {e['ts'][:10]} {e['digest']}" for e in eps))
     _logbook(home, text, b)
     _kb(home, task_dept, b)
+
+    # 7. precedent: what the organization already learned about this work's mechanisms (the Chair's
+    # 2026-10-25 red-team ruling: the ledger and design records are the organization's hard-won
+    # findings, and no brief ever carried them — an executor touching isolation had no way to learn
+    # that isolation's last three defects were a volatile script path, a refused plan and an ACL
+    # arg limit). A capped cut over the derived ad index, read-only, fail-open: an instance that
+    # has not built the index (or a build whose distribution carries no tests) gets silence, not
+    # an error — the section is enrichment, never a dependency.
+    try:
+        from holon.capabilities import ad
+        hits = ad.precedents(home, f"{task['title']} {task['intent']}", limit=4)
+        if hits:
+            lines = [f"- {h['text']}" for h in hits]
+            b.add("Precedent: what the organization already learned", "\n".join(lines))
+    except Exception:
+        pass   # fail-open: no index, no tests, no section — the bundle's own discipline
 
     # render within budget, in priority order (two passes so the gap block can lead); the recall
     # family is reserved the floor: non-recall sections stop being added once that much remains,

@@ -38,6 +38,22 @@ def _isolation(k, add) -> None:
         add("error", "isolation.off", "agents run as the kernel's user: one with a shell can read the Chair key and "
             "write work.db (set [isolation] agent_user; `holon isolation plan`)")
         return
+    # Half-built boundary: the config names the user but the root step never ran. The Chair's
+    # live run 2026-10-25 found the sequence's own step 1 missing (`sh: /tmp/holon-isolation.sh: No
+    # such file or directory`): every step after it fails on a machine that *looks* configured,
+    # because the config row exists and the user does not. The message must name the regeneration
+    # command, which is durable by default now: the script lives at
+    # $HOLON_HOME/isolation/setup.sh and `holon isolation plan` rewrites it.
+    import pwd
+    agent = k.isolation["agent_user"]
+    try:
+        pwd.getpwnam(agent)
+    except KeyError:
+        script = k.home.root / "isolation" / "setup.sh"
+        add("error", "isolation.half", f"[isolation] names agent user {agent!r}, which does not exist: the "
+            f"root step never ran. `holon isolation plan` regenerates the script at {script}, "
+            f"then run it as root (`sudo sh {script}`)")
+        return
     from holon.execution import isolation
     try:
         p = isolation.probe(k)

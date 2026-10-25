@@ -280,7 +280,8 @@ Onboarding runbook — instance ready at {home} (export HOLON_HOME={home}).
    or reject with what to change. holon metrics --dept <slug> is the feedback; holon lint &&
    holon doctor are the health checks. Every command: holon help
 6. Optional hardening: holon isolation plan — agents as their own OS user through a broker
-   (the doctor warns until it is done).""")
+   (the doctor warns until it is done; the root script lands durably at
+   $HOLON_HOME/isolation/setup.sh, and rerunning the command regenerates it).""")
     if webhook_url:
         print(f"""
 Notion webhooks: in the integration's Webhooks tab, subscribe

@@ -23,7 +23,7 @@ FAMILY_ORDER = [
     ("the work graph", "task", "plan", "claim", "submit", "run", "run-script", "verify", "dispatch",
      "post-execute", "audit"),
     ("a system (department)", "dept", "venture", "bylaws", "scope", "smoke"),
-    ("knowledge", "kb", "memory", "recall", "law", "playbook"),
+    ("knowledge", "kb", "memory", "recall", "law", "ad", "playbook"),
     ("skills", "skill"),
     ("recurring work and objectives", "schedule", "routine", "objective"),
     ("communication", "msg"),

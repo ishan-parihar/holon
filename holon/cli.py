@@ -1769,18 +1769,24 @@ def cmd_broker(args, k):
 def cmd_isolation_plan(args, k):
     from holon.execution import isolation
     plan = isolation.setup_plan(k)
-    if args.write:
-        Path(args.write).write_text(plan["root_script"])
+    # `--write` names a path for review; the default is the durable one inside the instance, so
+    # the sequence's step 1 and the file it names survive a reboot and the tmpfiles sweep. A
+    # deterministic plan's output is a cache, not a deliverable: writing it on every run means
+    # regenerating it is just running the command again (2026-10-25: the docs named /tmp, and the
+    # Chair's live `sudo sh` found no file — nothing re-created it, because nothing owned it).
+    target = Path(args.write) if args.write else Path(plan["setup_script"])
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(plan["root_script"])
     # The plan is reachable from a cold start: with no agent user named it proposes one (the
     # name the root script creates), and the operator's step is to write it into holon.toml
     # rather than to guess it before the plan can be produced at all.
-    first = (f"1. as root, once: sudo sh {args.write}\n" if args.write else
+    first = (f"1. as root, once: sudo sh {target}   (written here; `holon isolation plan` regenerates it)\n" if args.write else
              # WITHOUT `--write` the script is the plan's own step 1 and must be labelled as one.
              # Measured 2026-10-23 on the live instance: the raw script was printed and the
              # numbered list then began at "1.5.", so an operator counting along had no step 1
              # — the 46-line shell they were told to read was the one step with no label. The
              # numbering is the whole document; a headless step is where a reader skims.
-             f"1. as root, once: review this script and run it with sudo\n{plan['root_script']}\n")
+             f"1. as root, once: review this script and run it with sudo (also written to {target}; `holon isolation plan` regenerates it)\n{plan['root_script']}\n")
     steps = [first]
     if plan.get("proposed"):
         steps.append(f"1.5. write into holon.toml:\n"
@@ -1826,6 +1832,43 @@ def cmd_mcp(args, k):
 def cmd_help(args, k):
     m = manifest()
     _out(args, m, "\n".join(f"{c['command']:<22} [{c['actor']:<8}] {c['help']}" for c in m))
+
+
+# ── the architecture index (holon/capabilities/ad.py; the Chair's 2026-10-25 red-team ruling) ──
+
+@command("ad index", "chair", "rebuild the architecture index from the corpus (the ledger, the design "
+         "records, the decisions): refuses to complete while a ledger row names a test the suite does "
+         "not carry", mutates=True)
+def cmd_ad_index(args, k):
+    from holon.capabilities import ad
+    r = ad.build(k)
+    _out(args, r, f"indexed {r['findings']} findings, {r['records']} design records, "
+                  f"{r['decisions']} decisions, {r['guards']} guards -> {r['db']}")
+
+
+@command("ad find", "any", "search the organization's findings, decisions and design records by topic",
+         arg("query", nargs="+", help="words to search for; quote a phrase"), mutates=False)
+def cmd_ad_find(args, k):
+    from holon.capabilities import ad
+    hits = ad.find(k, " ".join(args.query))
+    if not hits:
+        print("no findings, decisions or records match; `holon ad index` builds the index")
+        return
+    _out(args, hits, "\n".join(f"- [{h['source']}] {h['text']}" for h in hits))
+
+
+@command("ad show", "any", "one finding, decision or design record by id",
+         arg("id", help="an area (findings), an AD id, or a record's file stem"), mutates=False)
+def cmd_ad_show(args, k):
+    from holon.capabilities import ad
+    r = ad.show(k, args.id)
+    if r is None:
+        print(f"nothing carries the id {args.id!r}")
+        return
+    if r["kind"] == "findings":
+        _out(args, r, "\n".join(f"- [{row['area']}] {row['defect'][:400]}" for row in r["rows"]))
+    else:
+        _out(args, r, f"{r.get('id')}: {r.get('title')} ({r.get('status')})")
 
 
 # ── knowledge bases (holon/capabilities/kb.py; plan docs/plans/2026-10-19-holon-knowledge-layer.md) ──

@@ -503,6 +503,14 @@ def setup_plan(k) -> dict:
         else:
             acl.append(["setfacl", "-m", f"u:{agent}:{mode.replace('X', 'x')}", str(p)])
     runner_addr = (iso or {}).get("runner") or f"@holon-runner-{k.auth.instance_id}"
+    # The one file the sequence depends on must be the one file that cannot disappear. Measured
+    # 2026-10-25 (the Chair's live run): the docs named `/tmp/holon-isolation.sh`, and `/tmp` is
+    # tmpfs (gone per boot) *and* cleared by tmpfiles.d at 10 days — the script the sequence told
+    # root to run was the one file guaranteed to be missing on the day it was needed, and nothing
+    # re-created or checked for it. The plan is a deterministic function of instance state, so the
+    # script is a cache of the plan, not a deliverable: it belongs under `$HOLON_HOME`, which
+    # `holon backup` carries to the next machine, and regenerating it is one command.
+    setup_script = k.home.root / "isolation" / "setup.sh"
     # When no agent user was named yet, root records the one it creates: the kernel's own config is
     # what every later step reads, and a boundary whose user exists only in a shell transcript is
     # one reboot from being forgotten.
@@ -546,7 +554,8 @@ systemctl daemon-reload
 systemctl enable --now {unit}.service
 """
     return {"agent_user": agent, "proposed": proposed, "runner": runner_addr,
-            "root_script": root, "acl": acl, "runner_unit": unit, **{k_: [str(x) for x in v]
+            "root_script": root, "acl": acl, "runner_unit": unit,
+            "setup_script": str(setup_script), **{k_: [str(x) for x in v]
             for k_, v in (("writes", r["writes"]), ("reads", r["reads"]))}, "runs": str(r["runs"])}
 
 

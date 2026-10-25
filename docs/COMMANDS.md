@@ -115,6 +115,9 @@ is not in this file fails `holon lint` — so this file can never drift from the
 | `holon memory unpin` <item_id> | chair | unpin an item |
 | `holon recall` `--limit` `--dept` <question> | any | one joined answer from the organization's knowledge: memory, episodes, skills, playbooks |
 | `holon law show` <doc> | any | the distribution's law docs (read-only): intent, bylaws, contract |
+| `holon ad find` <query> | any | search the organization's findings, decisions and design records by topic |
+| `holon ad index` | chair | rebuild the architecture index from the corpus (the ledger, the design records, the decisions): refuses to complete while a ledger row names a test the suite does not carry |
+| `holon ad show` <id> | any | one finding, decision or design record by id |
 | `holon playbook list` `--dept` | any | playbooks: each routine's and task class's protocol and rubric, with its version |
 | `holon playbook show` `--dept` <name> | any | a playbook: its protocol, rubric, and the evidence its next refinement will read |
 
