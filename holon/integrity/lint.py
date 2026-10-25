@@ -980,6 +980,20 @@ def pack_scrub(k, f: Findings) -> None:
 _TABLE_FILES = ("AGENTS.md", "README.md", "docs/COMMANDS.md", "TODO.md")
 
 
+def _table_cells(line: str) -> int:
+    """The cells in one row, counted the way markdown counts them.
+
+    An escaped pipe (`\\|`) is a literal character and not a cell separator, so a table that
+    legitimately carries one — a shell pipeline, a command fence — is not ragged.
+    """
+    body = line.strip()
+    if body.startswith("|"):
+        body = body[1:]
+    if body.endswith("|"):
+        body = body[:-1]
+    return len(body.replace(r"\|", "\x00").split("|"))
+
+
 def _broken_tables(text: str) -> list[tuple[int, str, str]]:
     """Every row in every markdown table in `text` that cannot render as part of its table.
 
@@ -1002,9 +1016,9 @@ def _broken_tables(text: str) -> list[tuple[int, str, str]]:
             i += 1
         if len(block) < 2:
             continue                      # one pipe line is not a table; nothing to compare it to
-        header_width = len(block[0][1].strip().strip("|").split("|"))
+        header_width = _table_cells(block[0][1])
         for n, l in block:
-            cells = len(l.strip().strip("|").split("|"))
+            cells = _table_cells(l)
             if not l.rstrip().endswith("|"):
                 out.append((n, "tables.unterminated",
                             "row opens with `|` but does not close: it renders as prose and the "

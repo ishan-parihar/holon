@@ -1084,3 +1084,22 @@ class MarkdownTables(KernelCase):
     def test_the_distributions_own_tables_pass(self):
         self.assertEqual(lint.run(self.k, ["tables"]), [], "every shipped table is well formed")
         self.assertIn("tables", lint.PACKS)
+
+    def test_an_escaped_pipe_is_a_literal_not_a_new_cell(self):
+        """Found by this ledger row's own insertion: the row's prose named the defect as "a cell's
+        trailing `* |` with `*`", and that literal pipe counted as a fourth separator, so the pack
+        reported its own well-formed row as ragged — a false positive that would have sent its
+        author back to a table that was not broken. Markdown agrees: `\\|` inside a cell is a
+        literal. The pack counts cells markdown's way, and reverting `_table_cells` fails this."""
+        doc = ROOT / "docs" / "COMMANDS.md"
+        original = doc.read_text()
+        try:
+            lines = original.splitlines(keepends=True)
+            row = next(i for i, l in enumerate(lines) if l.startswith("| "))
+            inner = lines[row].rstrip()[:-1]        # keep the closing pipe, add an escaped pipe
+            lines[row] = inner + " a literal \\| here |\n"
+            found = lint.run(self.k, ["tables"])
+            self.assertNotIn("tables.ragged", [f["rule"] for f in found],
+                             f"an escaped pipe is a literal, not a cell separator: {found}")
+        finally:
+            doc.write_text(original)
