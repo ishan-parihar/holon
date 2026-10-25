@@ -223,16 +223,88 @@ class ModelDependentRefusalsArePredicted(KernelCase):
                          "the shortfall the gate names")
 
     def test_the_strict_only_refusal_is_unreachable_from_an_import(self):
-        """Why nothing needs building here: the third raise needs `strict=True`, and
-        measured call by call, both importers pass `strict=False`. This guard keeps the
-        withdrawn claim from coming back as a new gap."""
+        """Why nothing needs building here: the third raise fires only under `strict=True`,
+        and measured call by call, every import passes `strict=False`. This guard stays
+        behavioural on purpose — see the withdrawn version in the note below."""
+        # The one case that reaches the raise: a lane costlier than the classifier's own,
+        # with no `why`. A stubbed classifier that judges every job `fast` puts `full` above
+        # it, and LANES is ordered (script, fast, full), so the branch is live.
+        def fast(title, intent, command=None):
+            return {"lane": "fast", "confidence": 0.9, "external_p": None, "source": "stub",
+                    "model_lane": "fast", "probabilities": None, "error": None}
+
+        self.k.classify = fast
+        with self.assertRaises(ValueError, msg="an interactive add under strict=True refuses"):
+            self.k.add_routine("costly", "Do the thing.", dept="eng", cron="0 9 * * 1", lane="full")
+
+        # The importers' shape is `strict=False`, where the same request is lowered instead
+        # of refused - and no raise. The distinction this guard needs is exactly that
+        # contrast: refused under the default, accepted under the importers' flag.
+        # (An earlier version of this assertion read the lane back and could not: the
+        # proposal's output row belongs to its child stage, and the proposal row's own
+        # `lane` column reads 'full' in both shapes. Measured, then dropped rather than
+        # pinned - the refusal contrast is the claim, and it does not need the lane.)
+        made = self.k.add_routine("costly", "Do the thing.", dept="eng", cron="0 9 * * 1",
+                                 lane="full", strict=False)
+        self.assertEqual(made["stage"], "approve",
+                         "strict=False lands a proposal instead of raising, so an import cannot refuse here")
+
+    def test_the_strict_only_refusal_guard_cannot_pass_on_a_docstring(self):
+        """A guard that asserts on source text is a detector whose pattern can appear in
+        prose, and this file's own earlier version of the guard above was that. Measured:
+        it read `assertIn("strict=False", getsource(module))`, and a docstring carrying the
+        substring - `service.py:1363` already carries it in one, describing the parameter -
+        made it pass with no call site changed. A guard that cannot detect the failure it
+        exists to prevent is worse than none, because it reads as proof.
+
+        So this test pins the call sites structurally, by signature: each of the four
+        non-interactive call sites must carry `strict=False` as a keyword argument, and the
+        interactive one must take the default. Measured call by call because that is the
+        claim, and V-77's lesson is that a substring detector fires on the correct answer."""
         import inspect
         from holon.execution import portability as P
         from holon.execution import ventures as V
-        self.assertIn("strict=False", inspect.getsource(V.venture_import),
-                      "the venture import passes strict=False")
-        self.assertIn("strict=False", inspect.getsource(P),
-                      "the portability import passes strict=False")
+
+        sites = {
+            "ventures.venture_import": V.venture_import,
+            "portability.import_department": P.import_department,
+        }
+        def _call_statements(fn_src: str) -> list[str]:
+            """Every `add_routine(...)` statement, whole, found by balancing parentheses
+            rather than by a line count. The kwargs sit on continuation lines - measured:
+            `venture_import`'s call spans 2 lines and `import_department`'s spans 5 - so a
+            fixed window is a guess about where the source will sit next week."""
+            lines, out, i = fn_src.splitlines(), [], 0
+            while i < len(lines):
+                if "add_routine(" not in lines[i]:
+                    i += 1
+                    continue
+                depth, started, region = 0, False, []
+                while i < len(lines):
+                    line = lines[i]
+                    region.append(line)
+                    depth += line.count("(") - line.count(")")
+                    started = started or "(" in line
+                    i += 1
+                    if started and depth <= 0:
+                        break
+                out.append(" ".join(region))
+            return out
+
+        for name, fn in sites.items():
+            stmts = _call_statements(inspect.getsource(fn))
+            with self.subTest(call_site=name):
+                self.assertTrue(stmts, f"{name} must call add_routine")
+                for stmt in stmts:
+                    self.assertIn("strict=False", stmt,
+                                  f"{name} must pass strict=False at its call site, "
+                                  "not merely mention the substring somewhere in the module")
+
+        # And the interactive path takes the default, so an interactive add CAN raise it -
+        # which is why this is a boundary and not a defect.
+        sig = inspect.signature(self.k.add_routine)
+        self.assertTrue(sig.parameters["strict"].default,
+                        "the interactive add's default is strict=True")
 
 
 class TheBoundaryIsWhatIsLeft(KernelCase):
