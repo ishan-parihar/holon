@@ -182,3 +182,87 @@ class AReprIsNeverAHomePath(unittest.TestCase):
         self.assertEqual([], hits,
                          "str(X.home) on a Home object yields its repr: " + ", ".join(hits)
                          + ". Pass the root instead: str(home.root)")
+
+
+class AGuardReadsTheRepoNotTheCwd(unittest.TestCase):
+    """A guard that reads the repository by a cwd-relative path reads nothing at all.
+
+    Measured 2026-10-25, by running the suite from a directory that is not the repository
+    root: `tests/test_core.py::NoDeadVocabulary` read `pathlib.Path("holon")` and
+    `pathlib.Path("tests")`, both of which resolve against the **working directory**. From
+    anywhere else the glob matched nothing, every mention counted as zero, and the guard
+    failed claiming `vocab.ROLES` had no reader -- a finding about where the suite was run,
+    not about the code. The failure was therefore a false positive produced by the guard
+    itself, and the same shape would have hidden a REAL dead enumeration on any run that
+    was not launched from the repository root.
+
+    The check is run, not asserted about: the guard under test is executed in a working
+    directory of this guard's own, and it must pass there. The defect is still observable
+    from that directory -- the pre-fix guard failed there -- so this is a real check rather
+    than a null one.
+
+    The second half is a scan: no test may read a repository tree through a cwd-relative
+    path. The shape is `Path("holon")` / `Path("tests")` / `Path("docs")` -- a literal
+    relative path naming a tree of the distribution. `Path(__file__).resolve().parents[1]`
+    is the fix the repository already uses everywhere else (`tests/helpers.py:13`).
+    """
+
+    def test_the_vocabulary_guard_passes_from_any_directory(self):
+        import os
+        import shutil
+        import subprocess
+        import sys
+        import tempfile
+
+        sandbox = Path(tempfile.mkdtemp(prefix=f"cwd-guard-{REPO.name}-"))
+        self.addCleanup(shutil.rmtree, sandbox, ignore_errors=True)
+        proc = subprocess.run(
+            [sys.executable, "-m", "unittest",
+             "tests.test_core.NoDeadVocabulary.test_every_vocabulary_member_has_a_reader"],
+            cwd=str(sandbox), capture_output=True, text=True, timeout=900,
+            env={**os.environ, "PYTHONPATH": str(REPO)},
+        )
+        self.assertEqual(0, proc.returncode,
+                         "the vocabulary guard must read the repository, not the working "
+                         f"directory: run from {sandbox} it failed.\n{proc.stderr[-1500:]}")
+
+    def test_no_test_reads_a_repository_tree_through_a_relative_path(self):
+        """The shape is a literal relative path naming a tree of the distribution.
+
+        `Path("holon")` resolves against the cwd; `Path(__file__).resolve().parents[1]`
+        resolves against the file. A guard that reads the code under test must use the
+        second one. This file is excluded from its own scan (it names the shape to
+        describe it)."""
+        import ast as _ast
+
+        trees = {"holon", "tests", "docs", "schemas", "adapters"}
+        hits = []
+        for path in sorted((REPO / "tests").glob("*.py")):
+            if path.name == Path(__file__).name:
+                continue
+            try:
+                tree = _ast.parse(path.read_text())
+            except SyntaxError:
+                continue
+            for node in _ast.walk(tree):
+                if not isinstance(node, _ast.Call):
+                    continue
+                func = node.func
+                # Path("holon") / pathlib.Path("holon")
+                if isinstance(func, _ast.Name) and func.id == "Path":
+                    pass
+                elif (isinstance(func, _ast.Attribute) and func.attr == "Path"
+                      and isinstance(func.value, _ast.Name) and func.value.id == "pathlib"):
+                    pass
+                else:
+                    continue
+                if not node.args:
+                    continue
+                arg = node.args[0]
+                if isinstance(arg, _ast.Constant) and isinstance(arg.value, str) \
+                        and arg.value.split("/")[0] in trees:
+                    hits.append(f"{path.name}:{node.lineno} {arg.value!r}")
+        self.assertEqual([], hits,
+                         "a guard that reads the tree under test through a cwd-relative path "
+                         "reads nothing when run from anywhere else: " + ", ".join(hits)
+                         + ". Use Path(__file__).resolve().parents[1] instead")

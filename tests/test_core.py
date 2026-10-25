@@ -547,9 +547,16 @@ class NoDeadVocabulary(unittest.TestCase):
         import re
         from holon.core import vocab
 
+        # The repository root, not the cwd. Measured 2026-10-25: this guard read
+        # `pathlib.Path("holon")` and `pathlib.Path("tests")`, which resolve against the
+        # working directory — so from any other directory it saw NO source at all, every
+        # mention counted as zero, and it failed claiming `vocab.ROLES` had no reader.
+        # A guard that only works from one directory is a flaky guard: it passed or failed
+        # on where it was run, not on what the code says.
+        root = pathlib.Path(__file__).resolve().parents[1]
         src = ""
         for tree in ("holon", "tests"):
-            src += "".join(p.read_text() for p in pathlib.Path(tree).rglob("*.py"))
+            src += "".join(p.read_text() for p in (root / tree).rglob("*.py"))
         vocab_src = pathlib.Path(vocab.__file__).read_text()
         for name, value in vars(vocab).items():
             if name.startswith("_") or not name.isupper():
