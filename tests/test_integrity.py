@@ -1085,6 +1085,61 @@ class MarkdownTables(KernelCase):
         self.assertEqual(lint.run(self.k, ["tables"]), [], "every shipped table is well formed")
         self.assertIn("tables", lint.PACKS)
 
+    def test_an_example_table_inside_a_fence_is_not_a_table(self):
+        """Found by probing the pack for false positives (2026-10-25): a document that shows a
+        deliberately broken table as an illustration — a "don't do this", the pack's own
+        illustration, a test fixture — was reported as ragged. The pack has no concept of a
+        fenced code block, so it could not tell an example from a claim. Markdown has one: an
+        example is not a table. The pack now tracks fence state, and this guard fails if it
+        stops doing so."""
+        doc = ROOT / "docs" / "COMMANDS.md"
+        original = doc.read_text()
+        try:
+            # plant an example table with a deliberately ragged row, inside a fence
+            example = ["```\n", "| a | b |\n", "| --- | --- |\n", "| 1 | 2 | 3 |\n", "```\n"]
+            doc.write_text(original + "\n" + "".join(example))
+            out = lint.run(self.k, ["tables"])
+            self.assertNotIn("tables.ragged", [f["rule"] for f in out],
+                             f"an example inside a fence is not a ragged table: {out}")
+            self.assertNotIn("tables.unterminated", [f["rule"] for f in out],
+                            f"an example inside a fence is not an unterminated table: {out}")
+        finally:
+            doc.write_text(original)
+
+    def test_a_real_break_after_an_example_is_still_reported(self):
+        """The other half of the fence fix, and the one that keeps the pack honest: skipping
+        fenced content must not silence the defect it exists to catch.
+
+        The broken row must sit *after* a fence, because that is the region a fence-aware pack
+        can get wrong. Found by mutation-testing this guard's own first two drafts, both of
+        which were wrong in ways their runs did not catch. (1) The first planted its example
+        and broke a row near the file's top, so a mutation skipping everything after the first
+        fence left the guard passing while the pack had gone blind — a guard that could not
+        fail the failure it named. (2) The second rewrote it onto `docs/COMMANDS.md`, which
+        **has no fenced block at all** (measured: 0 fences, 153 table rows), so the mutation's
+        "after a fence" condition was never true and nothing was skipped: the mutation was a
+        null test, which is the same failure in the other direction. This version uses
+        `AGENTS.md`, measured to carry a fence at line 73 with 174 table rows after it, and
+        breaks one of those rows."""
+        doc = ROOT / "AGENTS.md"
+        original = doc.read_text()
+        try:
+            lines = original.splitlines(keepends=True)
+            first_fence = next(i for i, l in enumerate(lines)
+                               if l.lstrip().startswith("```"))
+            after = [i for i in range(first_fence + 1, len(lines))
+                     if lines[i].startswith("| ") and lines[i].rstrip().endswith("|")
+                     and "---" not in lines[i]]
+            self.assertTrue(after, "the document must carry tables after its first fence")
+            victim = after[len(after) // 2]          # a middle row, so the table has rows
+            lines[victim] = lines[victim].rstrip()[:-1] + " | extra |\n"
+            doc.write_text("".join(lines))
+            out = lint.run(self.k, ["tables"])
+            self.assertIn("tables.ragged", [f["rule"] for f in out],
+                          f"a real ragged row after a fence is still reported: {out}")
+        finally:
+            doc.write_text(original)
+
     def test_an_escaped_pipe_is_a_literal_not_a_new_cell(self):
         """Found by this ledger row's own insertion: the row's prose named the defect as "a cell's
         trailing `* |` with `*`", and that literal pipe counted as a fourth separator, so the pack

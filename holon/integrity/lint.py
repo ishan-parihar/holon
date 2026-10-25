@@ -994,6 +994,29 @@ def _table_cells(line: str) -> int:
     return len(body.replace(r"\|", "\x00").split("|"))
 
 
+def _in_fence(lines: list[str], i: int) -> bool:
+    """True when line `i` sits inside a fenced code block.
+
+    Counted the way markdown counts it: a line whose first unstripped content is a triple
+    backtick toggles fence state. An ``=`` or `-` underline is not a fence, and an
+    indented opening is not a close (``` inside a ```-fence closes it only at the same or
+    a lesser indent, which no shipped document relies on).
+    """
+    in_fence = False
+    for j in range(i):
+        stripped = lines[j].lstrip()
+        if not in_fence:
+            if stripped.startswith("```"):
+                in_fence = True
+        else:
+            # a close must be backticks only (``` or ~~~), optionally followed by a lang or
+            # nothing; anything else — a ``` inside a table cell shown as text — stays inside
+            close = re.match(r"^(```+|~~~+)", stripped)
+            if close:
+                in_fence = False
+    return in_fence
+
+
 def _broken_tables(text: str) -> list[tuple[int, str, str]]:
     """Every row in every markdown table in `text` that cannot render as part of its table.
 
@@ -1001,17 +1024,22 @@ def _broken_tables(text: str) -> list[tuple[int, str, str]]:
       `tables.unterminated` — the row opens with `|` but does not close: it is not a row.
       `tables.ragged` — the row's column count differs from its table's header, which decides the
         shape. A separator row (`| --- |`) is skipped, and a table with no header row yet is not
-        judged, because the first row is its header.
+        judged, because the first row is its header. A row inside a fenced code block is not
+        judged at all: it is an example, not a table — measured 2026-10-25 while validating the
+        pack, a doc that shows a deliberately ragged table as a "don't do this" illustration
+        was reported as ragged, which is the false positive that sends an author to a table
+        that is not broken.
     """
     out: list[tuple[int, str, str]] = []
     lines = text.splitlines()
     i = 0
     while i < len(lines):
-        if not lines[i].lstrip().startswith("|"):
+        if not lines[i].lstrip().startswith("|") or _in_fence(lines, i):
             i += 1
             continue
         block = []
-        while i < len(lines) and lines[i].lstrip().startswith("|"):
+        while (i < len(lines) and lines[i].lstrip().startswith("|")
+               and not _in_fence(lines, i)):
             block.append((i + 1, lines[i]))
             i += 1
         if len(block) < 2:
