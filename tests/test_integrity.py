@@ -578,8 +578,11 @@ class Doctor(KernelCase):
         c = self.k.claim("execute", self.dev1)
         self.k.submit(c.run["id"], self.exec_env())
         self.k.verify(t["id"], "pass", "ok")
-        self.assertEqual([f["check"] for f in doctor.run(self.k)], ["isolation.off"],
-                         "healthy, except that agents still run as the kernel's user (a warning until isolated)")
+        self.assertEqual([f["check"] for f in doctor.run(self.k)],
+                         ["isolation.off", "backup.same_device"],
+                         "healthy, except that agents still run as the kernel's user (a warning "
+                         "until isolated) and the backups go to the same device as the instance "
+                         "(a warning until `[healing] backup_to` points elsewhere)")
 
     def test_a_rewritten_audit_trail_is_detected(self):
         self.add(dept="eng")
@@ -759,6 +762,37 @@ class Operations(KernelCase):
         backup.restore(self.k, out["path"])
         self.assertTrue((base / "disk-usage" / "out.md").exists(), "the nested workdir came back")
         self.assertTrue((base / "notes-digest" / "out.md").exists(), "and so did its sibling")
+
+    def test_doctor_says_when_the_backup_is_on_the_same_device_as_the_instance(self):
+        """A backup on the same device as the instance does not survive the device.
+
+        Measured 2026-10-25 on the live instance: the backup directory is
+        `$HOLON_HOME/backups` and the instance is `$HOLON_HOME` -- the same disk, the same
+        btrfs pool. BYLAWS §6 says plainly: "point it at another disk or a synced mount,
+        or a dead disk takes the backups too." Nothing checked whether it was.
+
+        The rule: doctor names it when the backup directory and the instance share a
+        device. This is a WARNING, not an error: the backup is still the best thing
+        available when there is no second disk, and the finding says what would close it
+        (`[healing] backup_to`). The operator's machine, their call -- but the machine must
+        say it, because the operator cannot see it from the instance."""
+        from holon.integrity import doctor as doctor_mod
+        self.k.config["healing"]["backup_to"] = str(self.home.root / "backups")
+        findings = [f for f in doctor.run(self.k) if f["check"] == "backup.same_device"]
+        self.assertTrue(findings, "doctor must say when the backup shares a device with the instance")
+        self.assertIn("backup_to", findings[0]["message"],
+                      "the finding names the setting that closes it")
+
+    def test_doctor_is_quiet_when_the_backup_is_on_another_device(self):
+        """The other side of the rule: a backup on a different device is not a finding."""
+        from holon.integrity import doctor as doctor_mod
+        # a tmpfs is a different device from the instance's filesystem
+        other = Path("/dev/shm") if Path("/dev/shm").exists() else None
+        if other is None:
+            self.skipTest("no second filesystem to measure against")
+        self.k.config["healing"]["backup_to"] = str(other / "holon-backup-test")
+        findings = [f for f in doctor.run(self.k) if f["check"] == "backup.same_device"]
+        self.assertEqual([], findings, "a backup on another device is not a finding")
 
     def test_backup_and_restore_round_trip(self):
         from holon.integrity import backup

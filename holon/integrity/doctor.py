@@ -7,6 +7,7 @@ guarantees do not hold right now and need the Chair.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import stat
 from pathlib import Path
@@ -300,6 +301,30 @@ def run(k) -> list[dict]:
     # no backup at all is not this finding (the retention check owns that one).
     from holon.integrity import backup as _backup
     dest = (k.config.get("healing", {}) or {}).get("backup_to") or str(k.home.root / "backups")
+    # A backup on the SAME DEVICE as the instance does not survive the device (2026-10-25).
+    # BYLAWS §6 says it plainly -- "point it at another disk or a synced mount, or a dead
+    # disk takes the backups too" -- and nothing checked whether it was. Measured on the
+    # live instance: the backup directory is `$HOLON_HOME/backups`, the same btrfs pool as
+    # the instance, so a dead disk took the organization with it.
+    #
+    # This is a WARNING, not an error: with no second disk the backup is still the best
+    # thing available, and where the backups live is the operator's call. But the machine
+    # must say it -- an operator cannot see a device boundary from inside the instance.
+    # The finding names the setting that closes it.
+    _dest_p = Path(dest).expanduser()
+    if not _dest_p.exists():
+        _q = _dest_p
+        while not _q.exists() and _q != _q.parent:
+            _q = _q.parent
+        _dest_p = _q
+    try:
+        _same = os.stat(_dest_p).st_dev == os.stat(k.home.root).st_dev
+    except OSError:
+        _same = False
+    if _same:
+        add("warning", "backup.same_device",
+            f"the backups go to {dest}, on the same device as the instance: a dead disk takes "
+            "the backups with it -- set [healing] backup_to to another disk or a synced mount")
     latest = _backup.backups(dest)
     if latest:
         try:

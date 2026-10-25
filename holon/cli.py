@@ -269,8 +269,9 @@ def cmd_dept_export(args, k):
                      "note: no secret value and no approval travels with it")
 
 
-@command("dept import", "chair", "create a department from an archive (G12). Every routine lands "
-         "unapproved: an import is not an approval", arg("archive"))
+@command("dept import", "chair", "create a department from an archive (G12). The archive's checksums "
+         "are verified first: a tampered archive is refused, and nothing is created. Every routine "
+         "lands unapproved: an import is not an approval", arg("archive"))
 def cmd_dept_import(args, k):
     out = k.import_department(args.archive)
     _out(args, out, f"{out['dept']}: {out['employees']} employees, {out['routines']} routines "
