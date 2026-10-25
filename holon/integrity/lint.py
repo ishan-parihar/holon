@@ -977,7 +977,15 @@ def pack_scrub(k, f: Findings) -> None:
 # a document's claim structure, so a row that cannot render is a claim a reader cannot see — and a
 # ragged table is worse than a missing one, because it looks like more rows than it has.
 
-_TABLE_FILES = ("AGENTS.md", "README.md", "docs/COMMANDS.md", "TODO.md")
+# The documents whose tables carry claims an agent or the Chair acts on. The reading order in
+# AGENTS.md names INTENT, BYLAWS and CONTRACT as the kernel's reference and law docs, so a row
+# that cannot render there is a claim nobody can read. Measured 2026-10-25 across every .md in the
+# distribution: 970 pipe rows, of which the original four files carried 377 — and the first pass
+# over the rest found a real one, in `docs/design/`, whose three rows had lost their last cell.
+_TABLE_FILES = (
+    "AGENTS.md", "README.md", "docs/COMMANDS.md", "TODO.md",
+    "docs/INTENT.md", "docs/BYLAWS.md", "docs/CONTRACT.md", "docs/ARCHITECTURE.md",
+)
 
 
 def _table_cells(line: str) -> int:

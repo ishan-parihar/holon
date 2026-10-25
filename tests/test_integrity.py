@@ -1085,6 +1085,19 @@ class MarkdownTables(KernelCase):
         self.assertEqual(lint.run(self.k, ["tables"]), [], "every shipped table is well formed")
         self.assertIn("tables", lint.PACKS)
 
+    def test_the_pack_checks_every_document_that_carries_law(self):
+        """Found by re-reading the pack's own file list against what it leaves out: the pack
+        originally checked four files, measured to carry 377 of the distribution's 970 pipe
+        rows, so 593 rows — including the law docs the reading order names first — were
+        unjudged. The first pass over the rest found a real one: three rows in
+        `docs/design/2026-10-23-the-chair-control-surface.md` had lost their last cell, so
+        their status column was invisible in a table describing what was landed. The reading
+        order now names the reference layer, so INTENT, BYLAWS and CONTRACT are judged too,
+        and this guard fails if the list loses one of them."""
+        for rel in ("docs/INTENT.md", "docs/BYLAWS.md", "docs/CONTRACT.md", "docs/ARCHITECTURE.md"):
+            self.assertIn(rel, lint._TABLE_FILES, f"{rel} is law, so its tables are judged")
+        self.assertTrue((ROOT / rel).exists())
+
     def test_an_example_table_inside_a_fence_is_not_a_table(self):
         """Found by probing the pack for false positives (2026-10-25): a document that shows a
         deliberately broken table as an illustration — a "don't do this", the pack's own

@@ -285,9 +285,9 @@ The order that keeps every step verifiable, and the gate each step owes:
 |---|---|---|---|
 | 1 | `chair_actions()` in the kernel, derived from `REGISTRY` | a guard pinning both halves of the derivation | **landed `dbfb878`** |
 | 2 | structured digest rows beside the prose | the digest still renders for a plaintext `[notify] command` (backwards compatible) | **landed `956bef6`** |
-| 3 | `adapters/telegram/` render + session, long-poll only | a fake Bot API (`tests/fake_telegram.py`) with the same shape as `tests/fake_notion.py` |
-| 4 | wire it as the live `[notify] command` | **one test crosses the seam with the real artifact**: a real prepared digest rendered into a real `sendMessage` call |
-| 5 | `--force` gating for destructive buttons | a guard that the adapter never passes `--force` on a first tap, and that `isolation apply` gains its own gate before it is button-reachable |
+| 3 | `adapters/telegram/` render + session, long-poll only | a fake Bot API (`tests/fake_telegram.py`) with the same shape as `tests/fake_notion.py` | **not started** |
+| 4 | wire it as the live `[notify] command` | **one test crosses the seam with the real artifact**: a real prepared digest rendered into a real `sendMessage` call | **not started** |
+| 5 | `--force` gating for destructive buttons | a guard that the adapter never passes `--force` on a first tap, and that `isolation apply` gains its own gate before it is button-reachable | **not started** |
 
 Step 4 is the one that makes it real, and it is the one most easily skipped — the same lesson the
 AGENTS.md records for interface packages: *"an interface package is done only when one test
