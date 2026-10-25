@@ -127,6 +127,10 @@ def import_department(k, archive: str) -> dict:
     manifest_path = src / MANIFEST
     if not manifest_path.exists():
         raise ValueError(f"{src} is not a department archive (no {MANIFEST})")
+    # Verify BEFORE anything is created: an import that half-applies a damaged archive is
+    # worse than one that refuses it. The archive carries its own checksums (the export
+    # writes them), and this is the line that reads them.
+    verify_archive(str(src), refuse=True)
     manifest = json.loads(manifest_path.read_text())
     d = manifest["dept"]
     slug = d["slug"]
@@ -199,9 +203,32 @@ def import_department(k, archive: str) -> dict:
     return summary
 
 
-def verify_archive(archive: str) -> dict:
-    """The archive's checksums, so a reader can tell whether it is intact."""
+def verify_archive(archive: str, refuse: bool = False) -> dict:
+    """The archive's checksums, so a reader can tell whether it is intact.
+
+    This is what reads the `checksums.json` the export writes. Before this, the file was a
+    promise nothing kept: the reader existed and no line called it, so a tampered archive
+    imported silently -- a department whose manifest had been edited landed as if it were
+    the one that was exported.
+
+    With `refuse=True` a corrupt archive is refused BY NAME instead of reported. The
+    import uses that: it verifies BEFORE it creates anything, because an import that
+    half-applies a damaged archive is worse than one that refuses it.
+
+    A missing `checksums.json` is not a corrupt archive: an archive written by hand (or by
+    an older kernel) has none, and refusing it would refuse a legitimate import. It is
+    accepted, and `verified` says the reader did not check."""
     src = Path(archive).expanduser().resolve()
-    sums = json.loads((src / "checksums.json").read_text())["files"]
+    sums_file = src / "checksums.json"
+    if not sums_file.exists():
+        return {"path": str(src), "files": 0, "corrupt": [], "verified": False}
+    try:
+        sums = json.loads(sums_file.read_text())["files"]
+    except (OSError, ValueError, KeyError) as e:
+        raise ValueError(f"{src} has an unreadable checksums.json ({e}): an archive whose "
+                         "integrity cannot be checked is refused, not imported") from e
     bad = [f for f, h in sums.items() if not (src / f).exists() or _sha(src / f) != h]
-    return {"path": str(src), "files": len(sums), "corrupt": bad}
+    if bad and refuse:
+        raise ValueError(f"{src} is corrupt: {len(bad)} file(s) do not match their checksums "
+                         f"({', '.join(bad[:5])}) -- the archive was changed after it was exported")
+    return {"path": str(src), "files": len(sums), "corrupt": bad, "verified": True}

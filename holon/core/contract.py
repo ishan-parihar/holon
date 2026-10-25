@@ -272,16 +272,6 @@ def validate(stage: str, env: Any) -> dict:
     return env
 
 
-def _list_fields() -> dict[str, F]:
-    """Every field the contract says IS a list, across every stage and variant.
-
-    Derived from the spec — the one writer of the rules — so a new field that is a list
-    is covered the moment it is declared, and the repair can never touch a field the
-    contract does not call a list.
-    """
-    return _LIST_FIELDS
-
-
 def _repair_untyped_lists(env: dict) -> dict:
     """A list that arrived as `{"item": ...}` is unwrapped.
 

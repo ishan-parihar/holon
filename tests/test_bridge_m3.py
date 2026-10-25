@@ -68,6 +68,56 @@ class DepartmentArchive(KernelCase):
                          "the archive must never carry a secret value")
         self.assertIn(str(secret), blob, "it carries the path instead")
 
+    def test_an_import_refuses_a_tampered_archive(self):
+        """The archive carries its own checksums, so a reader can tell whether it is intact.
+
+        Measured 2026-10-25: `export_department` wrote `checksums.json` and NOTHING read
+        it. `verify_archive` existed -- the reader -- and no line called it, so a tampered
+        archive imported silently: the checksums were a promise nothing kept.
+
+        The rule: an import verifies the archive's checksums BEFORE it creates anything.
+        A tampered archive is refused by name, and the instance is left untouched -- an
+        import that half-applies a damaged archive is worse than one that refuses it."""
+        from holon.core.paths import Home
+        from holon.execution.service import Kernel
+        d = self.department()
+        out = self.k.export_department(d["id"], str(self.tmp / "archive-tampered"))
+        archive = Path(out["path"])
+        # tamper: rewrite the manifest the import reads
+        manifest = json.loads((archive / "department.json").read_text())
+        manifest["dept"]["name"] = "Engineered By Someone Else"
+        (archive / "department.json").write_text(json.dumps(manifest, indent=2, default=str))
+        home2 = Home(self.tmp / "home-tampered")
+        home2.root.mkdir(parents=True)
+        k2 = Kernel(home2)
+        try:
+            with self.assertRaises(ValueError) as ctx:
+                k2.import_department(str(archive))
+            self.assertIn("checksum", str(ctx.exception).lower(),
+                          f"the refusal names the checksum: {ctx.exception}")
+            slugs = [x["slug"] for x in k2.org.depts()]
+            self.assertNotIn("eng", slugs,
+                             "a refused import creates nothing: the instance is untouched "
+                             f"(it holds only what it bootstrapped: {slugs})")
+        finally:
+            k2.close()
+
+    def test_an_intact_archive_imports(self):
+        """The other side of the rule: an intact archive still imports. A verification that
+        refuses everything is not a verification."""
+        from holon.core.paths import Home
+        from holon.execution.service import Kernel
+        d = self.department()
+        out = self.k.export_department(d["id"], str(self.tmp / "archive-intact"))
+        home2 = Home(self.tmp / "home-intact")
+        home2.root.mkdir(parents=True)
+        k2 = Kernel(home2)
+        try:
+            got = k2.import_department(out["path"])
+            self.assertEqual(got["dept"], "eng")
+        finally:
+            k2.close()
+
     def test_a_round_trip_restores_the_departments_shape(self):
         """Export, then import into a fresh instance: the same profile, the same
         employees' roles, the same routines."""

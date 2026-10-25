@@ -78,7 +78,7 @@ is not in this file fails `holon lint` — so this file can never drift from the
 |---|---|---|
 | `holon dept create` `--name` `--mission` `--parent` `--profile` <slug> | chair | create a department from a bylaws profile |
 | `holon dept export` `--to` <slug> | chair | write a department's archive: its profile, its people (never their keys), its reach, its checks, its secret PATHS, its routines and its knowledge bases (G12) |
-| `holon dept import` <archive> | chair | create a department from an archive (G12). Every routine lands unapproved: an import is not an approval |
+| `holon dept import` <archive> | chair | create a department from an archive (G12). The archive's checksums are verified first: a tampered archive is refused, and nothing is created. Every routine lands unapproved: an import is not an approval |
 | `holon dept list` | any | departments |
 | `holon dept profile` `--reason` <slug> <profile> | chair | change a department's bylaws profile |
 | `holon dept profiles` | any | available bylaws profiles |

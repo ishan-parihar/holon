@@ -133,11 +133,13 @@ def build(home: Home, run: dict, node: dict, context_md: str, library: Library |
     from holon.core import contract as _contract
     (d / "envelope.schema.json").write_text(_contract.schema_text(stage))
     if policy:
-        (d / "policy.json").write_text(json.dumps(policy, indent=2))
-        try:
-            (d / "policy.json").chmod(0o640)   # the enforcing harness must read it (CONTRACT §10, H-07)
-        except OSError:   # pragma: no cover - the mode is advisory outside isolation
-            pass
+        # The ONE writer of policy.json (holon/execution/policy.py). This used to be a
+        # copy-paste of that helper's body, so the helper was dead and the copy nobody
+        # read was the one that ran -- a stricter mode or a checksum added to the helper
+        # would have changed nothing. The mode is not cosmetic: 0640 is what lets the
+        # enforcing harness READ the policy it must enforce (CONTRACT §10, H-07/H-08).
+        from holon.execution import policy as _policy
+        _policy.write_policy(d, policy)
     bj = d / "brief.json"
     bj.write_text(json.dumps({
         "run_id": run["id"], "task_id": node["id"], "work_id": node["parent_id"], "stage": stage,
