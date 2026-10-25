@@ -1119,9 +1119,10 @@ class MarkdownTables(KernelCase):
 
     def test_the_pack_checks_every_document_that_carries_law(self):
         """Found by re-reading the pack's own file list against what it leaves out: the pack
-        originally checked four files, measured to carry 377 of the distribution's 970 pipe
-        rows, so 593 rows — including the law docs the reading order names first — were
-        unjudged. The first pass over the rest found a real one: three rows in
+        originally checked four files, measured to carry 377 of the 944 pipe rows the
+        distribution's tracked markdown carries (the working tree's 970 includes 26 gitignored
+        `build/` rows), so 567 rows — including the law docs the reading order names first —
+        were unjudged. The first pass over the rest found a real one: three rows in
         `docs/design/2026-10-23-the-chair-control-surface.md` had lost their last cell, so
         their status column was invisible in a table describing what was landed. The reading
         order now names the reference layer, so INTENT, BYLAWS and CONTRACT are judged too,
@@ -1203,3 +1204,53 @@ class MarkdownTables(KernelCase):
                              f"an escaped pipe is a literal, not a cell separator: {found}")
         finally:
             doc.write_text(original)
+
+    def test_no_citation_names_a_document_this_repo_does_not_carry(self):
+        """Found while validating the tables pack (2026-10-25): two of the distribution's own
+        documents name a file the distribution does not carry, and one of them is a **law**.
+        `AGENTS.md` law 10 tells every agent to *read*
+        `docs/design/2026-10-20-the-a-side-program-boundary-and-solutions.md` before reporting
+        anything about the organism, the ventures or the migration — and that path has never
+        existed in this repository (`git log --oneline --all -- <path>` is empty; the record lives
+        in the operator's overlay, whose design records the AGENTS.md overlay section names as the
+        place they belong). `docs/INTENT.md` design law 7 names the same path, and `TODO.md`'s H9
+        row records it as landed. `docs/design/2026-10-16-capability-layer-audit.md` separately
+        cites `docs/agentic-os/AUDIT-2026-10-16-capability-layer.md`, which is absent too.
+
+        The same class as `test_the_plan_the_code_cites_exists_and_names_the_phases`: a module
+        named a plan no reader could open. Here a law doc does it, which is worse — the sentence
+        is an instruction, so an agent following it finds nothing and has no way to tell whether
+        the record was scrubbed away, moved, or never written. A citation to a file this
+        repository lacks is a defect, and the guard names the file so the author can fix the
+        sentence rather than wonder what it meant.
+
+        Deliberate exceptions, each measured and each documented rather than silent:
+        `docs/STATUS.md` is the overlay's own file (AGENTS.md says so), so a citation to it is
+        correct here and resolves only in the overlay; and
+        `docs/agentic-os/AUDIT-2026-10-16-capability-layer.md` is a record in the **other
+        stack's** repository, which law 10 (two stacks) puts outside this one by construction —
+        the design record that cites it says so in the same sentence. A citation that crosses the
+        boundary into B's own repository is correct; only a citation that points at a file *this*
+        repository should carry is a defect."""
+        import re
+        repo = ROOT
+        docs = sorted(p for p in repo.rglob("*.md")
+                      if ".git/" not in str(p) and not str(p).startswith(str(repo / "build")))
+        # paths the law itself places outside this repository, each named for a reason
+        outside = {
+            "docs/STATUS.md",                        # the operator overlay's own file
+            "docs/agentic-os/AUDIT-2026-10-16-capability-layer.md",   # stack B's repository
+        }
+        broken: dict[str, list[str]] = {}
+        for p in docs:
+            text = p.read_text(errors="replace")
+            for m in re.finditer(r"`((?:docs|holon|adapters|scripts)/[A-Za-z0-9_@./-]+\.md)`", text):
+                rel = m.group(1)
+                if rel in outside or (repo / rel).exists():
+                    continue
+                broken.setdefault(rel, []).append(str(p.relative_to(repo)))
+        self.assertEqual(broken, {},
+                         "a citation names a .md file this repository does not carry: "
+                         + "; ".join(f"{rel} (cited by {', '.join(sorted(set(srcs)))})"
+                                     for rel, srcs in sorted(broken.items())))
+

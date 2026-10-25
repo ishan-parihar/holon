@@ -94,5 +94,6 @@ six roles, a profile of slots, a pipeline, tailored skills, and an autonomy poli
    never evidence about the other**, a gap in Holon is Holon's to close, and Holon's work never
    waits on the other program's state. Where a document describes Holon as the operating system
    *for* another system's ventures, that is a **proposal awaiting a decision**, never a fact about
-   what is running today. The scope statement and the A-side gap list:
-   `docs/design/2026-10-20-the-a-side-program-boundary-and-solutions.md`.
+   what is running today. The scope statement and the A-side gap list sit in the operator's
+   own overlay as a dated `docs/design/` record (2026-10-20, the A-side boundary), because the law
+   above is the part every distribution carries.

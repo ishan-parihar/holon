@@ -9,9 +9,9 @@ tags: [audit, capability-layer, units, policy, operant, notion, worklist]
 
 Status: **proposed work list** (published scrubbed; the full record with operator context lives
 in the private overlay). It was found by reading the kernel at `a513f4b`, the operant runtime's
-source and a live instance read-only. Item ids (R-nn) match the operant repository's
+source and a live instance read-only. Item ids (R-nn) match the runtime repository's own
 `docs/agentic-os/AUDIT-2026-10-16-capability-layer.md`, so a fix on either side can name its
-counterpart.
+counterpart; that record lives in the other stack's repository, not in this one.
 
 **How to use it.** §1 items are defects: fix them now, tests first (AGENTS.md law 9), each with a
 guard test and a regression-ledger row in the same commit. §2 items change a mechanism's design:
