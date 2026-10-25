@@ -896,6 +896,76 @@ class KeysList(KernelCase):
         self.assertIn("conformance-scratch-123.chair", {r["file"] for r in rows})
 
 
+class KeysGcOrphans(KernelCase):
+    """Measured on the live instance 2026-10-25: `holon keys gc --apply` quarantined a still-live
+    scratch instance's Chair key at 2026-10-23T15:14:02Z, the same second that key was written, so
+    both `holon-tick.service` and `holon-broker.service` were left naming a home whose key file no
+    longer existed. `holon tick` is a kernel-actor command: with no key file, `Auth.principal()`
+    returns anonymous, so every tick for the next 69 minutes was refused with "`tick` is for the
+    kernel actor class (you are anonymous)" — 64 of them — and nothing said so, because the operant
+    gateway's clock organ ticks the live home independently and stamps `.clock/last_tick` from there.
+
+    The gc rule keeps only the running home's own key, and every scratch instance mints its key into
+    the one shared `~/.config/holon/keys` (a scratch install has no HOLON_CHAIR_KEY_FILE), so a gc
+    run from any home reads every other instance's key as an orphan. The key file's stem is that
+    instance's id and its database records it, so "no local instance claims it" is checkable in a
+    way the keep-set rule never was."""
+
+    def _sandbox_home(self) -> Path:
+        """A private HOME whose `~/.config/holon/keys` is the shared key dir, so the unsets below
+        reproduce a scratch install's real behaviour without writing into the operator's key dir
+        (which `KeyHygiene` holds as a floor)."""
+        home = self.tmp / "sandbox-home"
+        keys = home / ".config" / "holon" / "keys"
+        keys.mkdir(parents=True, exist_ok=True)
+        os.environ["HOME"] = str(home)
+        self.addCleanup(self._restore_home)
+        return keys
+
+    def _restore_home(self):
+        os.environ["HOME"] = str(Path("~").expanduser())
+
+    def test_a_live_instances_key_is_not_an_orphan(self):
+        from holon.integrity import keys as ikeys
+        keys = self._sandbox_home()
+        os.environ.pop("HOLON_CHAIR_KEY_FILE", None)   # a scratch install has none: the shared dir
+        other = Kernel(self.home.__class__(self.tmp / "other"))
+        self.addCleanup(other.close)
+        self.addCleanup(self._restore_key_env)
+        other.auth.init_chair_key()
+        live = other.auth.chair_key_path().name
+        self.assertEqual(other.auth.chair_key_path().parent, keys,
+                         "the scratch key lands in the shared dir, which is the premise")
+        orphans = {r["file"] for r in ikeys.plan(self.k)["orphans"]}
+        self.assertNotIn(live, orphans,
+                         "a key whose own instance database exists and is running must not be an "
+                         "orphan: collecting it is how the live heartbeat lost its Chair key")
+
+    def test_the_same_key_reads_identically_from_every_home(self):
+        """The defect's asymmetry, pinned so it cannot come back: the key was kept when the sweep ran
+        from its own home and read as an orphan from a sibling home, so a live key's fate depended on
+        which home ran the gc. Both homes must classify a live instance's key identically."""
+        from holon.integrity import keys as ikeys
+        self._sandbox_home()
+        os.environ.pop("HOLON_CHAIR_KEY_FILE", None)   # a scratch install has none: the shared dir
+        other = Kernel(self.home.__class__(self.tmp / "other"))
+        self.addCleanup(other.close)
+        self.addCleanup(self._restore_key_env)
+        other.auth.init_chair_key()
+        live = other.auth.chair_key_path().name
+        from_own = {r["file"]: r["kept"] for r in ikeys.plan(other)["keys"]}
+        from_sibling = {r["file"]: r["kept"] for r in ikeys.plan(self.k)["keys"]}
+        self.assertTrue(from_own.get(live), "from its own home the key is kept")
+        self.assertTrue(from_sibling.get(live),
+                        "from a sibling home the same live key is kept too: the classification is a "
+                        "fact about the instance, not about which home runs the sweep")
+
+    def _restore_key_env(self):
+        """`KernelCase.setUp` pins the key file per test; a test that unsets it restores it, or the
+        next test's Kernel mints into the operator's real key dir."""
+        os.environ["HOLON_CHAIR_KEY_FILE"] = str(self.tmp / "chair.key")
+
+
 class KeyHygiene(unittest.TestCase):
     """The suite's own footprint (found by the 2026-10-16 red-team pass: 170+ orphan keys):
     no process running these tests may write a Chair key into the operator's real key dir.
