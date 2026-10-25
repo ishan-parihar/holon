@@ -168,7 +168,7 @@ is not in this file fails `holon lint` — so this file can never drift from the
 
 | Command | Actor | What it does |
 |---|---|---|
-| `holon lint` `--pack` `--strict` | any | check the distribution and instance artifacts: schema, references, bindings, depth, redundancy, agnosticism |
+| `holon lint` `--pack` `--strict` | any | check the distribution and instance artifacts: schema, references, bindings, depth, redundancy, agnosticism, tables |
 | `holon doctor` | any | check the instance's live state: integrity, invariants, audit chain, security |
 | `holon gc` `--apply` `--force` | chair | collect what [retention] says is expired: run directories of closed work (a gold standard's and a judged run's result.json and trajectory.json are kept) and old messages. Dry run by default; --apply refuses without a recent backup |
 | `holon backup` `--to` `--with-runs` | chair | a consistent copy of this instance (databases, config, skills, bylaws; never secrets) |

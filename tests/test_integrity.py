@@ -1040,3 +1040,47 @@ class ApiMemoryDrift(KernelCase):
             found = lint.run(self.k, ["genome"])
         self.assertEqual([f["rule"] for f in found], ["genome.E017"], found)
         self.assertEqual(found[0]["severity"], "error")
+
+
+class MarkdownTables(KernelCase):
+    """Measured 2026-10-25: the record's §1 table was silently broken for a full commit. A
+    `str.replace` wrote a new_string whose old_string ended in `.* |` and whose new_string ended in
+    `.*`, so the closing pipe left with the replaced text. The diff was a clean single-line change,
+    the row rendered as prose and the row below it read as a new one, and **every gate passed**:
+    `holon lint --strict` 0/0, genome's own checks clean, docs-check green. A document's table is
+    its claim structure — a row that no longer renders is a claim a reader cannot see."""
+
+    def test_an_unterminated_table_row_is_a_finding_not_a_silent_break(self):
+        doc = ROOT / "docs" / "COMMANDS.md"
+        original = doc.read_text()
+        try:
+            lines = original.splitlines(keepends=True)
+            row = next(i for i, l in enumerate(lines) if l.startswith("|") and l.rstrip().endswith("|"))
+            lines[row] = lines[row].rstrip()[:-1] + "\n"      # lose exactly the closing pipe
+            doc.write_text("".join(lines))
+            found = lint.run(self.k, ["tables"])
+            self.assertTrue(any(f["rule"] == "tables.unterminated" for f in found),
+                            f"a row that no longer renders is reported: {found}")
+        finally:
+            doc.write_text(original)
+
+    def test_a_ragged_table_is_a_finding(self):
+        """The other half of the same defect, and the one that actually hid it: the broken row's
+        column count no longer matched its neighbours, so the renderer split it into a different
+        number of cells. A table whose rows disagree about their shape is not one table."""
+        doc = ROOT / "docs" / "COMMANDS.md"
+        original = doc.read_text()
+        try:
+            lines = original.splitlines(keepends=True)
+            row = next(i for i, l in enumerate(lines) if l.startswith("| "))
+            lines[row] = lines[row].rstrip()[:-1] + " | extra |\n"   # one cell more than the header
+            doc.write_text("".join(lines))
+            found = lint.run(self.k, ["tables"])
+            self.assertTrue(any(f["rule"] == "tables.ragged" for f in found),
+                            f"a row whose shape disagrees with its table is reported: {found}")
+        finally:
+            doc.write_text(original)
+
+    def test_the_distributions_own_tables_pass(self):
+        self.assertEqual(lint.run(self.k, ["tables"]), [], "every shipped table is well formed")
+        self.assertIn("tables", lint.PACKS)

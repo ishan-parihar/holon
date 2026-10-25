@@ -41,7 +41,7 @@ from holon.core import contract, vocab
 from holon.core.db import checksum, migration_files
 
 PACKS = ("schema", "ref", "bind", "depth", "dry", "agnostic", "api", "bylaws", "drift", "extstore",
-         "boundary", "reference", "genome", "register", "scrub")
+         "boundary", "reference", "genome", "register", "scrub", "tables")
 PKG = Path(__file__).resolve().parents[1]
 DIST = PKG.parent          # the source checkout (docs/, schemas/, README.md) when present
 DOC_FILES = ("README.md", "AGENTS.md")
@@ -967,6 +967,64 @@ def pack_scrub(k, f: Findings) -> None:
                 f.add(severity, "scrub.chat_id", rel,
                       "names a chat id (line %d): the Chair's channel is instance state, not a "
                       "documented value" % i)
+
+
+# ── TABLES ──────────────────────────────────────────────────────────────────────────────────
+# Measured 2026-10-25: a record's §1 measurement table was silently broken for a whole commit. A
+# programmatic edit replaced a cell's trailing `* |` with `*`, so the row no longer closed, its
+# column count no longer matched its neighbours, and it rendered as prose while the row below it
+# read as a new one. Every gate passed: strict lint 0/0, genome clean, docs-check green. A table is
+# a document's claim structure, so a row that cannot render is a claim a reader cannot see — and a
+# ragged table is worse than a missing one, because it looks like more rows than it has.
+
+_TABLE_FILES = ("AGENTS.md", "README.md", "docs/COMMANDS.md", "TODO.md")
+
+
+def _broken_tables(text: str) -> list[tuple[int, str, str]]:
+    """Every row in every markdown table in `text` that cannot render as part of its table.
+
+    Returns (line number, rule, message). Two rules:
+      `tables.unterminated` — the row opens with `|` but does not close: it is not a row.
+      `tables.ragged` — the row's column count differs from its table's header, which decides the
+        shape. A separator row (`| --- |`) is skipped, and a table with no header row yet is not
+        judged, because the first row is its header.
+    """
+    out: list[tuple[int, str, str]] = []
+    lines = text.splitlines()
+    i = 0
+    while i < len(lines):
+        if not lines[i].lstrip().startswith("|"):
+            i += 1
+            continue
+        block = []
+        while i < len(lines) and lines[i].lstrip().startswith("|"):
+            block.append((i + 1, lines[i]))
+            i += 1
+        if len(block) < 2:
+            continue                      # one pipe line is not a table; nothing to compare it to
+        header_width = len(block[0][1].strip().strip("|").split("|"))
+        for n, l in block:
+            cells = len(l.strip().strip("|").split("|"))
+            if not l.rstrip().endswith("|"):
+                out.append((n, "tables.unterminated",
+                            "row opens with `|` but does not close: it renders as prose and the "
+                            "row below it reads as a new one (measured 2026-10-25, a record's "
+                            "whole §1 table broke this way and every gate passed)"))
+            elif cells != header_width and "---" not in l:
+                out.append((n, "tables.ragged",
+                            f"row has {cells} cells, its table's header has {header_width}: a "
+                            f"ragged table renders as more rows than it has"))
+    return out
+
+
+def pack_tables(k, f: Findings) -> None:
+    """The documents that carry the organization's claims render as tables."""
+    for rel in _TABLE_FILES:
+        p = DIST / rel
+        if not p.exists():
+            continue
+        for n, rule, msg in _broken_tables(p.read_text()):
+            f.add("error", rule, f"{rel}:{n}", msg)
 
 
 def run(k, packs: list[str] | None = None) -> list[dict]:

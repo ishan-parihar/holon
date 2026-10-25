@@ -1552,7 +1552,7 @@ def cmd_metrics(args, k):
 
 
 @command("lint", "any", "check the distribution and instance artifacts: schema, references, bindings, depth, "
-                        "redundancy, agnosticism", arg("--pack", action="append", help="only these packs"),
+                        "redundancy, agnosticism, tables", arg("--pack", action="append", help="only these packs"),
          arg("--strict", action="store_true",
              help="warnings fail too (an overlay's `scrub.*` findings are not: they are the "
                   "operator context AGENTS.md places here)"), mutates=False)
