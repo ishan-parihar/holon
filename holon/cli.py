@@ -1622,8 +1622,9 @@ def cmd_keys_list(args, k):
                                 for r in rows) or "no key files")
 
 
-@command("keys gc", "chair", "collect Chair key files no live instance claims (a scratch "
-         "instance's key outlives it): they move to keys.quarantine/, so a recovery is a mv",
+@command("keys gc", "chair", "collect Chair key files no live instance claims (a key whose own "
+         "instance database is still here is live, wherever the sweep runs from): they move to "
+         "keys.quarantine/, so a recovery is a mv",
          arg("--keep", action="append", default=[], help="a key file to keep, by name (repeat)"),
          arg("--apply", action="store_true"), arg("--force", action="store_true",
                                                       help="unlink rather than quarantine"))

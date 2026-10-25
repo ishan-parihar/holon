@@ -173,7 +173,7 @@ is not in this file fails `holon lint` — so this file can never drift from the
 | `holon gc` `--apply` `--force` | chair | collect what [retention] says is expired: run directories of closed work (a gold standard's and a judged run's result.json and trajectory.json are kept) and old messages. Dry run by default; --apply refuses without a recent backup |
 | `holon backup` `--to` `--with-runs` | chair | a consistent copy of this instance (databases, config, skills, bylaws; never secrets) |
 | `holon restore` `--force` `--verify-only` <path> | chair | restore a backup into this instance (verifies its checksums first) |
-| `holon keys gc` `--keep` `--apply` `--force` | chair | collect Chair key files no live instance claims (a scratch instance's key outlives it): they move to keys.quarantine/, so a recovery is a mv |
+| `holon keys gc` `--keep` `--apply` `--force` | chair | collect Chair key files no live instance claims (a key whose own instance database is still here is live, wherever the sweep runs from): they move to keys.quarantine/, so a recovery is a mv |
 | `holon keys list` `--orphans` | chair | the Chair key files in the default key dir, and which belong to this instance -- a scratch instance's key outlives it; deletion is yours, by hand |
 | `holon guards` | chair | the registered incident guards (K-2): what re-checks a fixed defect on every heartbeat, and the incident each came from |
 | `holon incident waive` `--note` <work_id> | chair | record why a closed incident's fix carries no guard (a deliberate decision, not an omission; `holon doctor` checks for it) |
