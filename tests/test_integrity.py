@@ -914,16 +914,15 @@ class KeysGcOrphans(KernelCase):
     def _sandbox_home(self) -> Path:
         """A private HOME whose `~/.config/holon/keys` is the shared key dir, so the unsets below
         reproduce a scratch install's real behaviour without writing into the operator's key dir
-        (which `KeyHygiene` holds as a floor)."""
+        (which `KeyHygiene` holds as a floor). The real HOME is captured first, because a restore
+        that expands `~` after HOME has been overwritten restores the sandbox."""
+        real_home = str(Path.home())
         home = self.tmp / "sandbox-home"
         keys = home / ".config" / "holon" / "keys"
         keys.mkdir(parents=True, exist_ok=True)
         os.environ["HOME"] = str(home)
-        self.addCleanup(self._restore_home)
+        self.addCleanup(os.environ.__setitem__, "HOME", real_home)
         return keys
-
-    def _restore_home(self):
-        os.environ["HOME"] = str(Path("~").expanduser())
 
     def test_a_live_instances_key_is_not_an_orphan(self):
         from holon.integrity import keys as ikeys
