@@ -84,7 +84,7 @@ is not in this file fails `holon lint` — so this file can never drift from the
 | `holon dept profiles` | any | available bylaws profiles |
 | `holon dept roles` <slug> | any | the department's role slots and who fills them |
 | `holon venture import` `--dept` `--apply` <path> | chair | read a venture's four artifacts (_org.yaml, cron-jobs/, smoke.yaml, scripts/) and make them a department. A dry run unless --apply; every routine lands unapproved, because an import is not an approval |
-| `holon bylaws draft` `--charter` `--service` `--command` `--accepts` `--returns` `--note` `--health` `--pool-of` `--owner` <slug> | employee | propose a unit manifest from a capability your department keeps running ad hoc (A10): it lands in bylaws/drafts/ and changes nothing until the Chair promotes it |
+| `holon bylaws draft` `--charter` `--service` `--command` `--accepts` `--returns` `--note` `--args` `--health` `--pool-of` `--owner` <slug> | employee | propose a unit manifest from a capability your department keeps running ad hoc (A10): it lands in bylaws/drafts/ and changes nothing until the Chair promotes it |
 | `holon bylaws emit` | chair | derive bylaws/registry.md from the synced units (U3): the unit tree, the services each offers, and the consumption graph |
 | `holon bylaws promote` <slug> | chair | move a draft unit into bylaws/units/ after validation (A10): the ruling that makes a proposed capability part of the organization |
 | `holon bylaws sync` | chair | regenerate the units tables from $HOLON_HOME/bylaws/units/*.toml (the only writer; refuses on a manifest that does not parse) |

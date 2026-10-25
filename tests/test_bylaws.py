@@ -499,6 +499,41 @@ class Bylaws(KernelCase):
         self.assertFalse(names["vault:kosmos"]["critical"],
                          "a dead capability must not be able to block an unrelated department")
 
+    def test_the_draft_command_can_declare_the_verb_set_the_rule_reads(self):
+        """The read-route rule reads `args` and its own error message says "or declare the verb set
+        in `args`". Until this validation the command that CREATES a manifest could not write that
+        field: `bylaws draft` carried --accepts and --returns but no --args, while
+        `units.draft()` has accepted one all along. So the remediation the kernel printed was
+        unreachable through its own drafting path, and a department pooling a command-group CLI
+        (sourcehound) had to hand-edit the manifest to get promoted at all.
+
+        Measured on a scratch instance, 2026-10-24T23:56Z, both halves:
+        `bylaws draft --command logger` with no args is refused at promote with
+        "declares effect=read but its command is the bare 'logger'"; with
+        `--args 'logger <tail|rotate|query>'` it promotes. That is the guard below.
+
+        The control keeps the rule: a draft with no args is still refused, because a flag is not
+        a fix and neither is a bracket of flags.
+        """
+        import io
+        import contextlib
+        import pathlib as _pl
+        from holon import cli
+        # the draft the theorem says should now work: a bare group entry point with its verb set
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["--home", str(self.home.root), "bylaws", "draft", "group-unit",
+                      "--charter", "a log", "--service", "log", "--command", "logger",
+                      "--args", "logger <tail|rotate|query>", "--health", "logger --version"])
+        drafted = (_pl.Path(self.home.root) / "bylaws" / "drafts" / "group-unit.toml").read_text()
+        self.assertIn('args = "logger <tail|rotate|query>"', drafted,
+                      "`bylaws draft --args` did not write the field the read-route rule reads")
+        # and it promotes, which is the half that was unreachable
+        with contextlib.redirect_stdout(io.StringIO()):
+            cli.main(["--home", str(self.home.root), "bylaws", "promote", "group-unit"])
+        self.assertTrue((_pl.Path(self.home.root) / "bylaws" / "units" / "group-unit.toml").exists(),
+                        "a draft that declared its verb set was still refused at promote: the "
+                        "remediation the kernel prints is still unreachable")
+
     def test_a_read_route_whose_args_name_its_verbs_is_not_refused_for_a_bare_command(self):
         """Gap 0 of the remaining-gaps outline-plan, which is the false positive Fix 5 shipped.
 

@@ -1680,7 +1680,7 @@ def cmd_bylaws_emit(args, k):
          "running ad hoc (A10): it lands in bylaws/drafts/ and changes nothing until the Chair promotes it",
          arg("slug"), arg("--charter", required=True), arg("--service", required=True),
          arg("--command", required=True), arg("--accepts"), arg("--returns"), arg("--note"),
-         arg("--health"), arg("--pool-of", action="append", default=[]),
+         arg("--args"), arg("--health"), arg("--pool-of", action="append", default=[]),
          arg("--owner"))
 def cmd_bylaws_draft(args, k):
     """The pooling workflow's proposal half: an employee names a script their department keeps
@@ -1688,7 +1688,8 @@ def cmd_bylaws_draft(args, k):
     from holon.bylaws import units
     p = units.draft(k, args.slug, args.charter, args.service, args.command,
                     accepts=args.accepts or "", returns=args.returns or "", note=args.note or "",
-                    health=args.health or "", pool_of=args.pool_of, owner=args.owner or "")
+                    health=args.health or "", pool_of=args.pool_of, owner=args.owner or "",
+                    args=getattr(args, "args", "") or "")
     _out(args, {"draft": str(p)},
          f"drafted {args.slug} -> {p}\n  it seeds nothing; the Chair promotes it: "
          f"holon bylaws promote {args.slug}")
