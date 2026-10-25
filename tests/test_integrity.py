@@ -444,6 +444,47 @@ class Lint(KernelCase):
         finally:
             probe.unlink(missing_ok=True)
 
+    def test_the_scrub_pack_catches_a_tracked_path_that_names_a_host(self):
+        """A leak can live in the path itself, not the content (2026-10-25).
+
+        Measured: a suite run planted `Home(root=PosixPath('/home/...'))` directories at the
+        repository root, a later `git add -A` tracked two of them, and a push published the
+        paths — with the operator's home directory and scratch instance ids in the file's own
+        name — to the public repo. The content rules fired on nothing: the files sat outside
+        the scrub paths with a `.sh` suffix, and the leak was in the one place no rule read:
+        the tracked path list. `scrub.path` walks every file in the tree the pack covers and
+        fires when the **path** carries a home directory or a repr-as-path shape, whatever
+        the suffix and wherever it sits.
+
+        The probe is planted (and removed) at run time: a test that carried the shape as a
+        literal path would itself be a file whose name... but paths cannot be literals in a
+        test, so the fixture is a file the guard creates under a probe name built from the
+        same placeholder home the content rules use. A `.sh` suffix, because the real leak
+        was a shell script the plan wrote — invisible to the content rules by suffix alone."""
+        home = "/home" + "/" + "oper" + "ator"
+        leaky = "Home(root=PosixPath('" + home + "/scratch/holon-test-ab12cd')/home"
+        leak = Path(holon_cli.__file__).parent.parent / leaky / "isolation" / "setup.sh"
+        try:
+            leak.parent.mkdir(parents=True, exist_ok=True)
+            leak.write_text("#!/bin/sh\n")
+            found = lint.run(self.k, ["scrub"])
+            fired = [f for f in found if f["rule"] == "scrub.path"]
+            self.assertTrue(fired, "a tracked path embedding a home directory fired nothing: "
+                            f"{found}. The path is the one surface no rule read — the shape that "
+                            "reached the public repo on 2026-10-25.")
+            self.assertIn("isolation/setup.sh", fired[0]["where"],
+                          "the finding must name the file whose path is the leak")
+        finally:
+            import shutil
+            shutil.rmtree(leak.parents[2], ignore_errors=True)
+
+    def test_a_legitimate_path_never_fires_scrub_path(self):
+        """The rule reads paths, so a false positive would rename half the repository. The
+        distribution's own tracked set — adapters, docs, tests, everything — must stay quiet,
+        and the guard that proves the pack reads the whole tree is the clean-tree guard below."""
+        self.assertEqual([f for f in lint.run(self.k, ["scrub"]) if f["rule"] == "scrub.path"], [],
+                         "a legitimate tracked path fired scrub.path: the rule is over-broad")
+
     def test_the_distribution_passes_its_own_scrub_gate(self):
         """The pack must agree with the repository: a clean tree passes, and every file the scrub
         law covers is actually read (a pack that skipped its own scope would report clean for

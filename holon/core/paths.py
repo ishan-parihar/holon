@@ -30,6 +30,15 @@ class Home:
         raw = explicit or os.environ.get("HOLON_HOME")
         if not raw:
             raise HomeNotSet("HOLON_HOME is not set (export it or pass --home)")
+        # A Home object stringified carries its repr ("Home(root=PosixPath('...')")
+        # -- a cwd-relative path that bootstraps a phantom instance wherever the
+        # caller happens to stand (measured 2026-10-25: a test passed
+        # `--home str(home)` and the suite planted whole instance trees in the
+        # repository root). A repr is never a home; refuse it by name.
+        if isinstance(raw, str) and raw.startswith("Home("):
+            raise HomeNotSet(
+                f"--home received a Home object's repr, not a path: {raw[:80]}... "
+                "stringify the root instead (str(home.root))")
         return cls(Path(raw).expanduser().resolve())
 
     @property

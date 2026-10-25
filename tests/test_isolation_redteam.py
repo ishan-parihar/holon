@@ -656,7 +656,7 @@ class Deployment(KernelCase):
         Two rules this holds, both about the document a person will type:
         the first numbered step is `1.`, and every integer level printed appears."""
         import subprocess
-        out = subprocess.run([sys.executable, "-m", "holon", "--home", str(self.home),
+        out = subprocess.run([sys.executable, "-m", "holon", "--home", str(self.home.root),
                               "isolation", "plan"],
                              capture_output=True, text=True).stdout
         numbers = re.findall(r"^(\d+(?:\.\d+)?)\.", out, re.MULTILINE)

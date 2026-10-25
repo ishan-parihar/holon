@@ -124,3 +124,61 @@ class NoFixtureInTheRepo(unittest.TestCase):
                          "a relative Path is built from a temp directory's name: "
                          + ", ".join(hits) + ". Build it from the directory itself (it is "
                          "already absolute), and remove the fixture in tearDown")
+
+
+class AReprIsNeverAHomePath(unittest.TestCase):
+    """A Home object stringified carries its repr, and the repr is a cwd-relative path.
+
+    Measured 2026-10-25, by running the suite and reading what it left behind: the
+    isolation module's `test_the_printed_sequence_numbers_every_step_it_prints` passed
+    `--home str(self.home)` to a subprocess, where `self.home` is a **Home object**.
+    The repr -- `Home(root=PosixPath('/home/...'))` -- resolves as a relative path
+    (slashes and all), and the kernel's bootstrap `ensure()` then built **whole
+    instance trees in the repository root**, one per run, tracked by a later `git add
+    -A` into an unpushed commit. The assertion passed throughout, because the CLI
+    built its phantom instance happily and the plan printed numbered steps either way.
+
+    Two guards, one per layer, both measured:
+
+    - the kernel refuses the shape by name: `Home.resolve` raises `HomeNotSet` for a
+      string that starts with `Home(`, naming the fix (`str(home.root)`). Fail-closed
+      at the boundary where the phantom tree is born.
+    - the suite scans its own AST for `str(X)` where `X` names a Home, so the next
+      test that passes a Home object where a path goes is caught before the directory
+      appears. (The bridge corpus scan is how this leak was told apart from a
+      directory-left-over: run alone, the bridge module planted nothing.)
+    """
+
+    def test_the_kernel_refuses_a_home_repr_as_a_home_path(self):
+        from holon.core.paths import Home, HomeNotSet
+        with self.assertRaises(HomeNotSet) as m:
+            Home.resolve("Home(root=PosixPath('/tmp/nowhere'))")
+        self.assertIn("str(home.root)", str(m.exception),
+                      "the refusal must name the fix, not just the shape")
+
+    def test_no_test_passes_a_home_object_where_a_path_goes(self):
+        """str(X.home) -- a Home object's attribute -- yields the repr when stringified, and
+        the repr bootstraps a phantom instance in the cwd. The guard reads the suite's AST for
+        that shape in a path argument position (`--home`, HOLON_HOME); a local `home` that is a
+        Path is fine (test_adapters.py:222, test_integrity.py:522 use the name legitimately)."""
+        import ast as _ast
+        hits = []
+        for path in sorted((REPO / "tests").glob("*.py")):
+            if path.name == Path(__file__).name:
+                continue
+            try:
+                tree = _ast.parse(path.read_text())
+            except SyntaxError:
+                continue
+            for node in _ast.walk(tree):
+                if not (isinstance(node, _ast.Call) and isinstance(node.func, _ast.Name)
+                        and node.func.id == "str" and node.args):
+                    continue
+                arg = node.args[0]
+                # only the attribute shape: str(X.home) where X is self/k/kernel -- a Home
+                # object's attribute. A bare name (str(home)) is a local Path, not the shape.
+                if (isinstance(arg, _ast.Attribute) and arg.attr == "home"):
+                    hits.append(f"{path.name}:{node.lineno}")
+        self.assertEqual([], hits,
+                         "str(X.home) on a Home object yields its repr: " + ", ".join(hits)
+                         + ". Pass the root instead: str(home.root)")

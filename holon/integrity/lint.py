@@ -938,9 +938,37 @@ def pack_scrub(k, f: Findings) -> None:
 
     So the pack detects the overlay (`OVERLAY_MARKERS`) and **downgrades** rather than skips: the
     findings still print, because the Chair should be able to see them, but they are warnings
-    rather than errors, so a push is not blocked by the tree the law points at."""
+    rather than errors, so a push is not blocked by the tree the law points at.
+
+    Measured 2026-10-25, the content rules are not the whole law: a suite run planted
+    `Home(root=PosixPath(...))` directories at the repository root, a later `git add -A` tracked
+    two of them, and a push published paths whose **names** carry a host's home directory and
+    scratch instance ids -- outside SCRUB_PATHS by location and `.sh` by suffix, invisible to
+    every content rule. A leak can live in the path itself, so `scrub.path` walks the whole
+    tree and reads file names for the same two shapes the content rules read text for: a home
+    directory, and the repr-as-path shape (`Home(root=PosixPath(...)`) that means some caller
+    stringified a Home object. The whole tree rather than the scrub paths, because a phantom
+    tree lands wherever a cwd-resolved mkdir happens to stand; skips `build/` and caches
+    (gitignored, not the distribution)."""
     overlay = is_overlay()
     severity = "warning" if overlay else "error"
+    for p in DIST.rglob("*"):
+        if not p.is_file():
+            continue
+        rel_path = p.relative_to(DIST)
+        if any(part in ("build", "__pycache__") for part in rel_path.parts[:-1]):
+            continue
+        name = str(rel_path)
+        if HOME_PATH.search(name):
+            f.add(severity, "scrub.path", name,
+                  "the file's own path names a host's home directory: a leak can live in the "
+                  "path, not just the content (measured 2026-10-25: phantom trees reached the "
+                  "public repo this way)")
+        if name.startswith("Home("):
+            f.add(severity, "scrub.path", name,
+                  "the file's own path is a Home repr: some caller passed a Home object where a "
+                  "path goes (str(home.root) is the fix), and the phantom tree it planted was "
+                  "tracked here")
     files: list[Path] = []
     for name in SCRUB_FILES:
         files.append(DIST / name)
