@@ -961,8 +961,40 @@ class KeysGcOrphans(KernelCase):
 
     def _restore_key_env(self):
         """`KernelCase.setUp` pins the key file per test; a test that unsets it restores it, or the
-        next test's Kernel mints into the operator's real key dir."""
-        os.environ["HOLON_CHAIR_KEY_FILE"] = str(self.tmp / "chair.key")
+        next test's Kernel mints into the operator's real key dir.
+
+        The restore must go back to the suite's **process floor** (`helpers.TEST_KEY_FILE`), not to
+        this test's own `self.tmp/chair.key`. Restoring the tmpdir leaked one test's scratch path
+        into every later test: `KeyHygiene` (a plain TestCase running after this class) asserts the
+        floor still holds, and it failed with `/…/holon-test-wadpyt1i/chair.key !=`
+        `/…/holon-test-keys-xjnpe06x/chair.key`. That assertion is the one that catches the 170-orphan
+        footprint, so the leak was shadowing the guard this class exists to pair with — measured
+        only as `KeysGcOrphans` then `KeyHygiene`, passing in any other order."""
+        from tests import helpers
+        os.environ["HOLON_CHAIR_KEY_FILE"] = str(helpers.TEST_KEY_FILE)
+
+    def test_the_restore_leaves_no_scratch_path_behind(self):
+        """The other half of the leak guard, and the reason the leak survived 728 green tests.
+
+        In the full suite `KeyHygiene` sorts **before** `KeysGcOrphans` (alphabetical: `H` < `s`), so
+        the assertion that catches a leaked key-file value always ran first and never saw one. The
+        only thing that exposes the order is a test running *after* this class, so this one asserts
+        what the next test will see — the process floor, not this test's tmpdir."""
+        from holon.integrity import keys as ikeys
+        from tests import helpers
+        self._sandbox_home()
+        os.environ.pop("HOLON_CHAIR_KEY_FILE", None)
+        other = Kernel(self.home.__class__(self.tmp / "other"))
+        self.addCleanup(other.close)
+        self.addCleanup(self._restore_key_env)
+        other.auth.init_chair_key()
+        self.assertEqual({r["file"] for r in ikeys.plan(self.k)["orphans"]}, set(),
+                         "the live scratch key is not an orphan from the running home either")
+        self._restore_key_env()
+        self.assertEqual(os.environ["HOLON_CHAIR_KEY_FILE"], str(helpers.TEST_KEY_FILE),
+                         "the restore must put the suite's floor back, not this test's tmpdir: a "
+                         "leaked scratch path is invisible to the guard that catches it, because "
+                         "full-suite ordering runs that guard first")
 
 
 class KeyHygiene(unittest.TestCase):
