@@ -198,6 +198,13 @@ backup), with a checksum manifest; `holon restore PATH --force` puts it back aft
 checksums. Neither touches secrets: the Chair key lives outside the instance. Take a backup before
 upgrading the kernel, since migrations are forward-only.
 
+**What a backup carries.** The instance's own trees (`config`, `skills`, `bylaws`, `adapters`,
+`kb`), plus every instance-relative path a work names as its `workdir`: a workdir the instance
+owns is instance state, so what the routine writes there rides the backup. A workdir *outside*
+the instance is another program's files and is deliberately not copied. The manifest records the
+trees it carried, and `holon doctor` reports `backup.uncovered` when the last backup did not
+carry a workdir a work names.
+
 ## 8. Scope: what a department may reach
 
 An employee works in its work's `workdir` and its run directory. `[scope]` widens that for

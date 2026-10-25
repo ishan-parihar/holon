@@ -30,6 +30,59 @@ def _sha(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
+def in_home_workdirs(k) -> list[str]:
+    """The instance-relative paths that a work names as its workdir, minus the ones a
+    fixed tree already carries.
+
+    Measured 2026-10-25 on the live instance: 19 tasks keep their workdir INSIDE
+    `$HOLON_HOME` -- the recurring routines' own trees (`notes-digest`,
+    `routine-disk-usage`, `routine-notes-digest`, `routines/disk-usage`,
+    `routines/notes-digest`, `kb`). The fixed tree set (`TREES`) did not name the
+    routine trees, so the bytes those routines wrote did not ride the backup, on the one
+    machine where the organization exists nowhere else.
+
+    The rule: the workdir's OWN relative path, not its top-level ancestor. A workdir at
+    `routines/disk-usage` carries that path, not the whole `routines` tree -- and a
+    workdir inside `execution/runtime/runs/` carries that one run directory, so the
+    `with_runs` switch still means what it says.
+
+    A workdir outside the instance is the department's own tree (a repository, a
+    workspace) and is deliberately NOT copied: it is another program's files, and a
+    restore would overwrite them."""
+    root = k.home.root.resolve()
+    out: set[str] = set()
+    for (wd,) in k.wconn.execute("SELECT DISTINCT workdir FROM tasks WHERE workdir IS NOT NULL AND workdir<>''"):
+        p = Path(wd).expanduser().resolve()
+        if not p.is_relative_to(root) or p == root:
+            continue
+        rel = p.relative_to(root)
+        if rel.parts[0] in TREES:
+            continue  # a fixed tree already carries it
+        out.add(str(rel))
+    return sorted(out)
+
+
+def _trees(k, with_runs: bool = False) -> list[str]:
+    """The trees a backup carries: the fixed set, plus every in-home workdir, plus the
+    run directories when asked. The in-home paths are added even when they are not in
+    `TREES`, because a work naming them makes them instance state.
+
+    A workdir already inside a carried tree is not carried twice: the tree already holds
+    it. That keeps `with_runs` meaningful -- a workdir inside `execution/runtime/runs/`
+    rides the runs tree, and does not add a second entry for the same bytes."""
+    trees = list(TREES)
+    if with_runs:
+        trees.append("execution/runtime/runs")
+    covered = [Path(t) for t in trees]
+    for t in in_home_workdirs(k):
+        p = Path(t)
+        if any(p.is_relative_to(c) for c in covered):
+            continue
+        covered.append(p)
+        trees.append(t)
+    return trees
+
+
 def backups(dest: str, keep: int | None = None) -> list[Path]:
     """The backup directories under `dest`, oldest first. `keep` returns only the newest `keep`."""
     found = sorted(d for d in Path(dest).expanduser().resolve().glob("holon-backup-*")
@@ -72,7 +125,7 @@ def backup(k, dest: str, with_runs: bool = False) -> dict:
         target.close()
     if k.home.config_file.exists():
         shutil.copy2(k.home.config_file, out / "holon.toml")
-    trees = list(TREES) + (["execution/runtime/runs"] if with_runs else [])
+    trees = _trees(k, with_runs)
     for t in trees:
         src = k.home.root / t
         if src.is_dir():
@@ -82,6 +135,7 @@ def backup(k, dest: str, with_runs: bool = False) -> dict:
         "instance_id": k.auth.instance_id, "created_at": now(), "with_runs": with_runs,
         "migrations": {db: [r[0] for r in conn.execute("SELECT name FROM schema_migrations ORDER BY name")]
                        for db, conn in (("work", k.wconn), ("memory", k.mconn))},
+        "trees": trees,
         "files": {str(p.relative_to(out)): _sha(p) for p in files},
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
@@ -107,7 +161,11 @@ def restore(k, src: str) -> dict:
         source.close()
     if (src_p / "holon.toml").exists():
         shutil.copy2(src_p / "holon.toml", k.home.config_file)
-    for t in TREES + ("execution/runtime/runs",):
+    # parents before children: a restore that handled `routines` before `routines/disk-usage`
+    # would wipe the child it had just restored.
+    trees = sorted(set((check["manifest"].get("trees") or list(TREES)) + ["execution/runtime/runs"]),
+                   key=lambda t: (t.count("/"), t))
+    for t in trees:
         if (src_p / t).is_dir():
             dst = k.home.root / t
             if dst.exists():

@@ -287,6 +287,35 @@ def run(k) -> list[dict]:
                 f"{r[1]} stage {r[0]} names workdir {r[2]!r}, which does not exist: the body will run in "
                 "its run directory instead, with none of the inputs the plan expects")
 
+    # A workdir INSIDE the instance that the LAST BACKUP does not carry (2026-10-25): the
+    # durable output of a running routine would not ride the backup, on the one machine where
+    # the organization exists nowhere else. Measured on the live instance: 19 tasks keep their
+    # workdir under `$HOLON_HOME`, and the backup's fixed tree set named none of the routine
+    # trees -- so what those routines wrote was left behind, silently, by a backup that
+    # reported success.
+    #
+    # The backup now derives its trees from the works' own workdirs, so a backup taken NOW
+    # carries them. The finding is therefore about the backup that exists, not about the rule:
+    # the most recent backup's manifest must cover every tree a work names. An instance with
+    # no backup at all is not this finding (the retention check owns that one).
+    from holon.integrity import backup as _backup
+    dest = (k.config.get("healing", {}) or {}).get("backup_to") or str(k.home.root / "backups")
+    latest = _backup.backups(dest)
+    if latest:
+        try:
+            manifest = json.loads((latest[-1] / "manifest.json").read_text())
+        except (OSError, ValueError):
+            manifest = None  # a corrupt manifest: the backup's own verify owns that finding
+        if manifest is not None:
+            carried = set(manifest.get("trees") or [])
+            wanted = set(_backup.in_home_workdirs(k))
+            for tree in sorted(wanted - carried):
+                add("warning", "backup.uncovered",
+                    f"{tree}/ is inside the instance and a work names it as its workdir, but the last "
+                    f"backup ({latest[-1].name}) does not carry it: what the routine writes there does "
+                    "not ride `holon backup` -- take a new backup, or move the workdir outside the "
+                    "instance")
+
     # The operationalization backstop (2026-10-25 red-team): an ENABLED recurring schedule whose
     # lane needs a body, in a department where no active employee performs the stages it needs,
     # fires into a void — every firing sits ready with nobody to claim it. Measured on a real
