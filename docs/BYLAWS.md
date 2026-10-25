@@ -283,6 +283,33 @@ reaches outside the organization) for the approver that grade names; on approval
 starts (`holon routine list`). With `--deliver`, each finished firing's result goes to the Chair
 through `[notify]` (a digest in the Chair's chat), retried by the heartbeat until it is sent.
 
+**A routine is staffed before it is lit (2026-10-25).** A schedule whose lane needs a body —
+`fast` needs an executor, `full` needs a planner, an executor and a verifier — will not be armed
+in a department where no active employee performs those stages; the `script` lane needs nobody
+(the kernel is its runner). The same staffing predicate (which mirrors the claim's reach exactly:
+an employee picks up work in their own department, an executive additionally reaches no-dept work
+and verify stages anywhere) is enforced at four seams, so a system cannot be built into a state
+that cannot operate without a surface naming what is missing:
+- **the proposal** (`routine add` / an import): the grade reasons carry an "unstaffed for its
+  lane" note naming the hire that fixes it — the proposal still lands, so architecture can be
+  staged ahead of staffing, but the approver decides knowing it cannot run yet;
+- **the approval** of a starts-on-approval routine: refuses inside the approval transaction
+  rather than arm a clock nothing can serve (an imported routine that parks OFF skips this —
+  its gate is the enable);
+- **`holon schedule enable`**: refuses an unstaffed lane, naming the hire; `--force` is the
+  Chair's explicit word and is recorded in the event log;
+- **doctor's backstop** (`schedule.unstaffed`, an error the heartbeat escalates): an enabled
+  schedule that became unstaffed — a fired employee, a transferred head — reaches the Chair
+  regardless of which door the state came through. `schedule.workdir` (warning) is the same
+  class one layer down: an enabled script routine whose workdir is gone runs in its run
+  directory instead, silently doing the wrong work in the right way.
+
+`--deliver` with no `[notify]` command configured is named in the proposal's grade reasons too:
+a delivery that cannot reach anyone is a promise the instance cannot keep, and the approver
+reads that before deciding. `holon hr hire` refuses a driver nothing configures (`holon drivers`
+lists them) — a hire that would strand on its first dispatch is not accepted; a department
+restore is exempt, because the archive's driver names are fidelity to the machine that had them.
+
 **Outside-reach has two witnesses.** The decision model judges it (the `external` question, held
 at G3 when `external_p ≥ [lanes] external_p_max`), and the **job's own words** name it: a title or
 intent that contains an outside-reach verb — *send, post, publish, apply, outreach, email, dm,

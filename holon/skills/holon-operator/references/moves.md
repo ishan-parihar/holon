@@ -9,6 +9,13 @@ be safe. A move performed without these is a preference with a command on it.
   naming problem; merge rather than split.
 - **Its reach before its staff.** `[scope.dept.<slug>]` roots, its checks, its secrets' **paths**
   (never values). A department hired before its reach is a person with no access.
+- **Its staff before its routines are lit.** A routine's lane names who it needs: `fast` needs an
+  executor, `full` needs a planner, an executor and a verifier, and `script` needs nobody (the
+  kernel runs it). The proposal, the approval, `$holon schedule enable` and `$holon doctor` all
+  enforce this (the enable refuses, `--force` is the Chair's word, doctor's `schedule.unstaffed`
+  is the backstop) — so an unstaffed enable is never an oversight the organization discovers
+  when a firing strands. Stage architecture ahead of staffing if the Chair asks; never *light*
+  it ahead of staffing. A driver nothing configures is refused at `$holon hr hire` itself.
 - **Its outcome measure.** What `$holon metrics --dept <slug>` shows when it is working. If that
   cannot be stated, the boundary is wrong.
 - **A candidate from outside lands unapproved.** An import is not an approval: `$holon venture

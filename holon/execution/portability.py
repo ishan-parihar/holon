@@ -147,7 +147,7 @@ def import_department(k, archive: str) -> dict:
             k.org.hire(name=e["name"], title=e.get("title") or "", dept=slug,
                        job_description=e.get("job_description") or "", driver=e.get("driver") or "fake",
                        reason=e.get("reason") or "imported", roles=list(e.get("roles") or []),
-                       status=e.get("status") or "active")
+                       status=e.get("status") or "active", restore=True)
             hired += 1
         except (LookupError, ValueError):
             continue  # a slot the profile has no room for is the Chair's to widen

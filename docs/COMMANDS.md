@@ -144,7 +144,7 @@ is not in this file fails `holon lint` — so this file can never drift from the
 |---|---|---|
 | `holon schedule add` `--as` `--kind` `--cron` `--stage` `--plan` | chair | when an employee wakes (wake) or a recurring plan fires (recurring) |
 | `holon schedule disable` <schedule_id> | chair | disable a schedule |
-| `holon schedule enable` <schedule_id> | chair | enable a schedule |
+| `holon schedule enable` `--force` <schedule_id> | chair | enable a schedule (refuses an unstaffed lane unless --force) |
 | `holon schedule list` | any | schedules |
 | `holon routine add` `--intent` `--dept` `--cron` `--on` `--lane` `--command` `--rubric` `--why` `--deliver` `--workdir` `--task-class` `--risk` `--project` <title> | chair | a recurring job, in the cheapest lane that does it reliably (script, fast, full); the classifier enforces the lane and the routine goes to its approver |
 | `holon routine fire` `--payload` `--payload-file` <schedule_id> | kernel | fire an event routine: the runtime that saw a matching event calls this (once per cooldown, with the payload on the work) |

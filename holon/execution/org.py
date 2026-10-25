@@ -127,7 +127,7 @@ class Org:
              roles: list[str] | None = None, slot: str | None = None,
              head: bool = False, reports_to: str | None = None, task_classes: list[str] | None = None,
              skills: list[str] | None = None, max_concurrency: int = 1, employee_id: str | None = None,
-             status: str = "probation") -> dict:
+             status: str = "probation", restore: bool = False) -> dict:
         """Hire into a slot of the department's profile (`slot`) or into explicit `roles`. The stages an
         employee may claim follow from its roles; a slot or role list containing 'head' makes the hire the head."""
         roles = sorted(set(roles or []) | set(self.slot_roles(dept, slot) if slot else []))
@@ -144,10 +144,12 @@ class Org:
             raise OrgError("an employee needs a job description")
         # The driver gate (2026-10-25 red-team): a hire with a driver nothing configures used to be
         # accepted and fail only at the first dispatch — after a schedule lit and a wake fired, the
-        # employee's whole first day stranded on a DriverError nobody had named at hire time. The
+        # the employee's whole first day stranded on a DriverError nobody had named at hire time. The
         # refusal is at the hire, where the act that fixes it (configure the driver, or name one that
-        # exists — `holon drivers` lists them) sits beside the mistake.
-        if self.home is not None:
+        # exists — `holon drivers` lists them) sits beside the mistake. A restore is exempt: the
+        # archive's driver names fidelity to a machine that had them, and dropping employees
+        # because this machine lacks one yet would silently lose the department's shape.
+        if self.home is not None and not restore:
             from holon.execution import drivers
             if driver not in drivers.available(self.home):
                 raise OrgError(f"no driver {driver!r} is configured (have: "
