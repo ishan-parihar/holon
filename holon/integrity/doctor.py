@@ -287,6 +287,37 @@ def run(k) -> list[dict]:
                 f"{r[1]} stage {r[0]} names workdir {r[2]!r}, which does not exist: the body will run in "
                 "its run directory instead, with none of the inputs the plan expects")
 
+    # The operationalization backstop (2026-10-25 red-team): an ENABLED recurring schedule whose
+    # lane needs a body, in a department where no active employee performs the stages it needs,
+    # fires into a void — every firing sits ready with nobody to claim it. Measured on a real
+    # imported instance: three departments, 26 pending approvals, zero employees, and an enabled
+    # schedule reported by NOTHING until its first firing stranded. doctor sees the state however
+    # the instance reached it (a forced enable, a fired employee, a transferred head), and the
+    # heartbeat turns the error into an incident. The same predicate as the enable gate and the
+    # proposal note (schedules.unstaffed_stages) — one rule, or the three would disagree. The
+    # script lane is exempt: the kernel is its runner. An enabled script schedule whose workdir is
+    # gone is the same seam one layer down (the kernel silently substitutes the run dir, F6).
+    from holon.execution.schedules import unstaffed_stages, staffing_note
+    for r in q("SELECT s.id, w.dept_id, o.body, w.title, w.workdir FROM schedules s "
+               "JOIN tasks p ON p.id = s.template_id JOIN tasks w ON w.id = p.parent_id "
+               "JOIN outputs o ON o.task_id = p.id WHERE s.kind='recurring' AND s.enabled=1"):
+        try:
+            body = json.loads(r[2]) or {}
+        except (json.JSONDecodeError, TypeError):
+            continue
+        lane = body.get("lane") or "full"
+        if unstaffed_stages(w, r[1], lane):
+            add("error", "schedule.unstaffed",
+                f"enabled schedule {r[0]} ({r[3].removeprefix('Routine: ')}, lane {lane}): "
+                + staffing_note(w, r[1], lane))
+        if lane == "script" and body.get("command"):
+            wd = r[4]
+            if wd and not Path(wd).is_dir():
+                add("warning", "schedule.workdir",
+                    f"enabled script schedule {r[0]} ({r[3].removeprefix('Routine: ')}) names workdir "
+                    f"{wd!r}, which does not exist: the kernel will run its command in the run "
+                    "directory instead (F6, 2026-10-25)")
+
     # A3 (2026-10-22 audit): a result's `artifacts` are the permanent record of what it left
     # behind, and until now nothing re-read them — two of six live pointers had already stopped
     # resolving, rotted in `outputs` where only a verifier's glance ever saw them. Re-resolve

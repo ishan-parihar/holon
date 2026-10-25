@@ -16,6 +16,47 @@ from holon.core.ids import new_id
 from holon.execution.cron import Cron
 from holon.execution.work import NotFound, TransitionError, Work
 
+# The stages each lane's firing needs an active employee (besides the kernel) to perform. The
+# script lane needs nobody: the kernel is its runner (2026-10-25 red-team).
+LANE_STAGES = {"script": (), "fast": ("execute",), "full": ("plan", "execute", "verify")}
+
+
+def unstaffed_stages(conn: sqlite3.Connection, dept_id: str | None, lane: str) -> set[str]:
+    """The stages a lane's firing needs that no active employee in reach performs. Mirrors the
+    claim's reach (`work.claim`'s pool branch) exactly: a claimant may pick up work in their OWN
+    department, and an executive claimant additionally reaches no-dept work (every stage) and
+    verify stages of any department — but NOT another department's plan or execute stages. One
+    predicate shared by the proposal note, the enable gate and doctor's backstop — three
+    consumers, or they would disagree."""
+    need = set(LANE_STAGES.get(lane, LANE_STAGES["full"]))
+    if not need:
+        return set()
+    exec_dept = conn.execute("SELECT id FROM departments WHERE slug=?", (vocab.EXECUTIVE,)).fetchone()
+    covered: set[str] = set()
+    for r in conn.execute("SELECT e.dept_id, e.roles FROM employees e WHERE e.status IN ('active','probation')"):
+        own = r[0] == dept_id
+        executive_reach = exec_dept and r[0] == exec_dept[0] and (dept_id is None or True)
+        if not own and not executive_reach:
+            continue
+        stages = {s for role in json.loads(r[1] or "[]") for s in vocab.ROLE_STAGES.get(role, ())}
+        if own:
+            covered |= need & stages
+        else:
+            # an executive claimant reaches another department's verify stages only, and every
+            # stage of no-dept work (the claim's pool branch, verbatim)
+            covered |= need & ({"verify"} if dept_id is not None else stages)
+    return need - covered
+
+
+def staffing_note(conn: sqlite3.Connection, dept_id: str | None, lane: str) -> str:
+    """The gate's one refusal message, shared by every consumer — a message that names the act
+    that fixes it (the remediation-class lesson: a refusal must name a command that works)."""
+    slug = conn.execute("SELECT slug FROM departments WHERE id=?", (dept_id,)).fetchone()
+    missing = ", ".join(sorted(unstaffed_stages(conn, dept_id, lane)))
+    return (f"no employee in {slug[0] if slug else dept_id} performs {missing}: the firing will wait with "
+            f"nobody to claim it (hire: `holon hr hire --dept {slug[0] if slug else dept_id} --slot maker "
+            "--driver <driver> …`, or --force for the Chair's explicit word)")
+
 KINDS = vocab.SCHEDULE_KINDS
 
 
@@ -76,14 +117,37 @@ class Schedules:
     def list(self) -> list[dict]:
         return [dict(r) for r in self.conn.execute("SELECT * FROM schedules ORDER BY kind, created_at")]
 
-    def set_enabled(self, sid: str, enabled: bool) -> dict:
+    def set_enabled(self, sid: str, enabled: bool, *, force: bool = False) -> dict:
         s = self.get(sid)
+        # The enable gate (2026-10-25 red-team): a recurring schedule whose lane needs a body,
+        # in a department where no active employee performs the stages it needs, does not light.
+        # Measured on a real imported instance: three departments, 26 pending routine approvals,
+        # zero employees — `schedule enable` set next_run_at with no resistance, and the first
+        # firing would have sat `ready` forever with nobody to claim it, invisible to every
+        # surface until then. The script lane is exempt (the kernel is its runner), and the
+        # Chair's --force is the escape, recorded in the event log.
+        if enabled and not force and s["kind"] == "recurring":
+            plan = self.work.get(s["template_id"])
+            work = self.work.get(plan["parent_id"])
+            body = (self.work.output(plan["id"]) or {"body": {}})["body"]
+            if unstaffed_stages(self.conn, work["dept_id"], body.get("lane") or "full"):
+                raise ValueError(staffing_note(self.conn, work["dept_id"], body.get("lane") or "full"))
         with write_txn(self.conn):
             nxt = (_iso(Cron(s["cron"]).next_after(datetime.now(timezone.utc)))
                    if enabled and s["cron"] else s["next_run_at"])
             self.conn.execute("UPDATE schedules SET enabled=?, next_run_at=? WHERE id=?", (1 if enabled else 0, nxt, sid))
-            self.work._event("schedule", sid, None, "enabled" if enabled else "disabled")
+            self.work._event("schedule", sid, None, "enabled" if enabled else "disabled",
+                             "unstaffed lane enabled by the Chair's --force" if enabled and force and s["kind"] == "recurring"
+                             and unstaffed_stages(self.conn, self._plan_dept(s), self._plan_lane(s)) else None)
         return self.get(sid)
+
+    def _plan_dept(self, s: dict) -> str | None:
+        return self.work.get(self.work.get(s["template_id"])["parent_id"])["dept_id"]
+
+    def _plan_lane(self, s: dict) -> str:
+        plan = self.work.get(s["template_id"])
+        body = (self.work.output(plan["id"]) or {"body": {}})["body"]
+        return body.get("lane") or "full"
 
     def arm_cooldown(self, sid: str, seconds: int) -> None:
         """An event trigger fired: it will not fire again until the cooldown passes (next_run_at is

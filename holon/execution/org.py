@@ -142,6 +142,17 @@ class Org:
             raise OrgError("an employee needs at least one role (give --slot or --roles)")
         if not job_description.strip():
             raise OrgError("an employee needs a job description")
+        # The driver gate (2026-10-25 red-team): a hire with a driver nothing configures used to be
+        # accepted and fail only at the first dispatch — after a schedule lit and a wake fired, the
+        # employee's whole first day stranded on a DriverError nobody had named at hire time. The
+        # refusal is at the hire, where the act that fixes it (configure the driver, or name one that
+        # exists — `holon drivers` lists them) sits beside the mistake.
+        if self.home is not None:
+            from holon.execution import drivers
+            if driver not in drivers.available(self.home):
+                raise OrgError(f"no driver {driver!r} is configured (have: "
+                               f"{', '.join(sorted(drivers.available(self.home))) or 'none'}; "
+                               "see `holon drivers`)")
         d = self.dept(dept)
         if task_classes:
             # A class nobody holds is a class the employee may never claim: a typo would create a

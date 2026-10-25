@@ -1067,9 +1067,12 @@ def cmd_schedule_list(args, k):
                                + (f" stage={r['stage']}" if r["stage"] else "") for r in rows) or "no schedules")
 
 
-@command("schedule enable", "chair", "enable a schedule", arg("schedule_id"))
+@command("schedule enable", "chair", "enable a schedule (refuses an unstaffed lane unless --force)",
+         arg("schedule_id"), arg("--force", action="store_true",
+                                   help="the Chair's explicit word: light it though its lane is unstaffed"))
 def cmd_schedule_enable(args, k):
-    _out(args, k.schedules.set_enabled(args.schedule_id, True), f"{args.schedule_id} enabled")
+    _out(args, k.schedules.set_enabled(args.schedule_id, True, force=args.force),
+         f"{args.schedule_id} enabled")
 
 
 @command("schedule disable", "chair", "disable a schedule", arg("schedule_id"))

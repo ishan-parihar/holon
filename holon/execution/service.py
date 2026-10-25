@@ -38,7 +38,7 @@ from holon.execution.briefs import kernel_env
 from holon.execution import policy as run_policy
 from holon.execution.org import Org, approver_ref
 from holon.execution.cron import Cron
-from holon.execution.schedules import Schedules
+from holon.execution.schedules import Schedules, unstaffed_stages, staffing_note
 from holon.execution import staleness
 from holon.execution.work import CHECKING, HELD, Claimant, Rules, TransitionError, Work
 
@@ -1438,6 +1438,17 @@ class Kernel:
         if grading.RISK_FLOOR.get(risk, 1) > 2:
             reasons.append(f"risk={risk}: floor G{grading.RISK_FLOOR[risk]}")
         dept_id = self.org.dept(dept)["id"]
+        # The operational note (2026-10-25 red-team): a routine is a promise that something will run
+        # on a schedule, and the approver must know whether the department can keep it. The staffing
+        # predicate mirrors the claim's reach — the proposal still lands (architecture ahead of
+        # staffing is legitimate: the ventures import parked 26 of them), but the Chair approves
+        # knowing exactly who is missing. The script lane needs nobody: the kernel is its runner.
+        if unstaffed_stages(self.wconn, dept_id, lane):
+            reasons.append("unstaffed for its lane: " + staffing_note(self.wconn, dept_id, lane)
+                           + " (the schedule will also refuse to enable until staffed)")
+        if deliver and not (self.config.get("notify") or {}).get("command"):
+            reasons.append("--deliver is set but no [notify] command is configured: finished results "
+                           "will reach nobody until one is (BYLAWS §6 [notify])")
         approver = self.org.resolve_approver({"dept_id": dept_id, "task_class": task_class}, floor, None)
         when = (f"on `{cron}`" if cron else
                 f"when a matching event fires it (`{event}`; the runtime that saw it calls `holon routine fire`, "
@@ -1463,8 +1474,18 @@ class Kernel:
 
     def _apply_routine(self, a: dict) -> None:
         """On approval: the plan becomes a standing (recurring) plan, its schedule starts, and its playbook
-        (protocol + rubric, version 1) is written into the department's skills, where refinement improves it."""
+        (protocol + rubric, version 1) is written into the department's skills, where refinement improves it.
+        The staffing gate (2026-10-25 red-team): a starts-on-approval routine (hand-written, or an
+        internal import) whose lane needs a body will not light in a department nobody staffs — the
+        approval refuses inside its transaction rather than arm a clock nothing can serve. An
+        imported routine that parks OFF (I1) skips the gate: the enable gate holds it instead."""
         self.wconn.execute("UPDATE tasks SET recurring=1 WHERE id=?", (a["_plan"],))
+        plan = self.work.get(a["_plan"])
+        src = self.work.get(plan["parent_id"])
+        body = self.work.output(a["_plan"])["body"]
+        if not a.get("starts_disabled") and unstaffed_stages(self.wconn, src["dept_id"], body.get("lane") or "full"):
+            raise ValueError("the approval would start an unstaffed schedule: "
+                             + staffing_note(self.wconn, src["dept_id"], body.get("lane") or "full"))
         sid = self.schedules.insert("recurring", a.get("cron") or "", template_id=a["_plan"], event=a.get("event"))
         if a.get("starts_disabled"):
             # I1: an outside-reach import (G3+) starts OFF; one bulk approval must never light an
@@ -1473,8 +1494,6 @@ class Kernel:
             self.wconn.execute("UPDATE schedules SET enabled=0, next_run_at=NULL WHERE id=?", (sid,))
             self.work._event("schedule", sid, None, "disabled",
                              "outside-reach import: starts off, enabled per job by the Chair")
-        plan = self.work.get(a["_plan"])
-        src, body = self.work.get(plan["parent_id"]), self.work.output(a["_plan"])["body"]
         slug, name = self._dept_slug(src["dept_id"]), body.get("playbook")
         if slug and name and not playbooks.read(self.skills, slug, name):
             title = src["title"].removeprefix("Routine: ")
