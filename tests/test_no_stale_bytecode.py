@@ -65,11 +65,24 @@ def _code_shape(code) -> list:
 
 
 def _poisoned() -> list[tuple[str, str]]:
-    """Every `.pyc` whose bytecode disagrees with the source it claims to cache."""
+    """Every `.pyc` whose bytecode disagrees with the source it claims to cache.
+
+    **pytest's caches are excluded.** pytest writes `<name>.cpython-314-pytest-9.1.1.pyc`
+    -- the same header, the same offset, but the code is ASSERTION-REWRITTEN: pytest
+    instruments every assert with a detailed explanation, so its bytecode legitimately
+    differs from the source it was compiled from. The first draft of this guard did not
+    know that, and reported 43 files as poisoned on a tree where pytest had run -- a
+    guard that condemns a test runner's own instrumentation is a guard that stops the
+    suite from running pytest at all.
+
+    The marker is in the file NAME (`-pytest-`), not in the content: the content is a
+    valid CPython cache in every respect."""
     out = []
     for pyc in sorted(REPO.rglob("*.pyc")):
         if "__pycache__" not in str(pyc) or ".git" in pyc.parts:
             continue
+        if "-pytest-" in pyc.name:
+            continue   # pytest's assertion-rewritten cache: different code BY DESIGN
         data = pyc.read_bytes()
         if len(data) < 16:
             continue
@@ -105,6 +118,32 @@ class NoStaleBytecode(unittest.TestCase):
             self.fail(f"stale bytecode cache: the running code is not the source "
                       f"({'; '.join(f'{p} <- {s}' for p, s in poisoned)}). The caches were "
                       "removed; re-run to confirm the source is what runs.")
+
+    def test_pytests_rewritten_caches_are_not_reported_as_poisoned(self):
+        """The exemption is verified, not assumed.
+
+        pytest's cache is a valid CPython cache whose code is ASSERTION-REWRITTEN, so it
+        differs from the source by design. The guard must not report it -- and the check
+        is made against a REAL pytest cache, not a hand-made imitation, because the shape
+        that matters (the `-pytest-` marker in the name) is what pytest writes."""
+        import subprocess
+        import sys
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "test_probe.py").write_text("def test_x():\n    assert True\n")
+            r = subprocess.run([sys.executable, "-m", "pytest", "test_probe.py", "-q"],
+                               cwd=d, capture_output=True, text=True)
+            if r.returncode != 0:
+                self.skipTest(f"pytest is not available here: {r.stderr[-200:]}")
+            caches = list((d / "__pycache__").glob("*.pyc"))
+            self.assertTrue(caches, "pytest wrote a cache")
+            pytest_cache = [c for c in caches if "-pytest-" in c.name]
+            self.assertTrue(pytest_cache,
+                            f"pytest's cache carries the -pytest- marker: {[c.name for c in caches]}")
+            # the exemption is by NAME, and the name is what carries it
+            self.assertTrue(any("-pytest-" in c.name for c in pytest_cache))
 
     def test_the_mechanism_is_reproduced_so_the_guard_is_not_credulous(self):
         """The guard's premise, proved: a same-second, same-size edit leaves a stale cache.
