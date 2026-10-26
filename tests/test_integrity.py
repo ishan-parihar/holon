@@ -1191,6 +1191,63 @@ class KeyHygiene(unittest.TestCase):
         self.assertEqual(os.environ.get("HOLON_CHAIR_KEY_FILE"), str(helpers.TEST_KEY_FILE),
                          "the process floor holds whenever no test has narrowed it")
 
+class ChecksumDriftRepair(KernelCase):
+    """Found on the live instance, 2026-10-25 (the successor outline's F1): `memory.db` carried
+    `0003_api_memory.sql` applied with a checksum that matches no version of the file that ever
+    existed in git — the instance applied a pre-commit draft at 14:29Z and the file was committed
+    52 minutes later. `migrate()` re-stamps only `checksum IS NULL` rows, so a drifted non-NULL
+    row made `holon lint --strict` fail on the live home forever, and no kernel path could repair
+    it. Migration `0006` repairs the class the way `0004` repaired the drifted view: a no-op on a
+    healthy instance, a one-row re-stamp on a drifted one. Ordering makes the re-stamp honest:
+    migrations apply in order, so any instance carrying 0006 has already had 0004 re-assert the
+    view from the shipped definition — the semantics provably match the shipped file."""
+
+    def test_a_drifted_non_null_checksum_is_repaired_by_migration(self):
+        from holon.core.db import migrate
+        # the live defect, reproduced: an applied non-NULL checksum that matches no shipped file
+        self.k.mconn.execute(
+            "UPDATE schema_migrations SET checksum='deadbeef' WHERE name='0003_api_memory.sql'")
+        found = lint.run(self.k, ["schema"])
+        self.assertTrue(any(f["rule"] == "schema.migration" for f in found),
+                        "the drift is an error before the repair: " + repr(found))
+        # un-apply the repair so a fresh migrate exercises it (0004's test uses this pattern)
+        self.k.mconn.execute("DELETE FROM schema_migrations WHERE name='0006_checksum_repair.py'")
+        applied = migrate(self.k.mconn, "memory")
+        self.assertIn("0006_checksum_repair.py", applied,
+                      "the repair migration runs on a drifted instance")
+        found = lint.run(self.k, ["schema"])
+        self.assertEqual([f for f in found if f["rule"] == "schema.migration"], [],
+                         "the drifted row is re-stamped from the shipped file: " + repr(found))
+
+    def test_a_healthy_instance_applies_the_repair_as_a_no_op(self):
+        from holon.core.db import migrate
+        # a fresh instance's rows already match their files: the repair must not churn them
+        before = {n: c for n, c in self.k.mconn.execute("SELECT name, checksum FROM schema_migrations")
+                  if n != "0006_checksum_repair.py"}
+        self.k.mconn.execute("DELETE FROM schema_migrations WHERE name='0006_checksum_repair.py'")
+        applied = migrate(self.k.mconn, "memory")
+        self.assertIn("0006_checksum_repair.py", applied,
+                      "a fresh instance still applies the migration (it is not conditional)")
+        after = {n: c for n, c in self.k.mconn.execute("SELECT name, checksum FROM schema_migrations")
+                 if n != "0006_checksum_repair.py"}
+        self.assertEqual(before, after,
+                         "no checksum changes on a healthy instance: the repair is a no-op there")
+
+    def test_the_repair_never_masks_a_genuinely_edited_migration(self):
+        """The danger of any re-stamp: it could launder an edit. This migration cannot: it
+        re-stamps only rows whose migration is *older than itself* and whose semantics were
+        re-asserted by `0004` (the view it drifts under). A migration edited after application
+        in the *future* (a file whose checksum changes under a live instance) is still caught,
+        because 0006 has already been applied and never runs again."""
+        from holon.core.db import migrate
+        migrate(self.k.mconn, "memory")  # 0006 is now applied and will not run again
+        self.k.mconn.execute(
+            "UPDATE schema_migrations SET checksum='0badf00d' WHERE name='0005_recall_log.sql'")
+        found = lint.run(self.k, ["schema"])
+        self.assertTrue(any(f["rule"] == "schema.migration" for f in found),
+                        "an edit after 0006's application is still an error: " + repr(found))
+
+
 class ApiMemoryDrift(KernelCase):
     """Found on the live instance, 2026-10-17: `api_memory` had been created out-of-tree
     selecting `created_at`, a column no migration defines, so `holon lint --strict` died with
