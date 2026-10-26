@@ -522,7 +522,9 @@ def setup_plan(k) -> dict:
         # [isolation] agent_user first", so BYLAWS §11's activation sequence (`plan` → `sudo sh`
         # → `apply --force` → broker → doctor) was broken at its first step — and the live
         # instance's boundary stayed absent for a week behind it. The name is proposed here,
-        # the script writes it into holon.toml for you, and everything downstream
+        # the root script ECHOES the block for the Chair to copy, and the Chair writes it
+        # into holon.toml (the script runs as root; this config is the kernel user's file) —
+        # and everything downstream
         proposed = f"holon-agent-{k.auth.instance_id}"
         # `holon-agent-<instance>`: `holon-agent` is the name every record uses, and the id
         # keeps several instances on one host unambiguous. A suggestion printed for the
