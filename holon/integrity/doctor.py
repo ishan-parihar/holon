@@ -333,7 +333,15 @@ def run(k) -> list[dict]:
             manifest = None  # a corrupt manifest: the backup's own verify owns that finding
         if manifest is not None:
             carried = set(manifest.get("trees") or [])
-            wanted = set(_backup.in_home_workdirs(k))
+            wanted = {t for t in _backup.in_home_workdirs(k)
+                      if (k.home.root / t).is_dir()}
+            # **A workdir that is not on disk has nothing to carry** (2026-10-26): the live
+            # instance names two routine workdirs that never ran, and the honest manifest
+            # (fixed the same day) no longer lists them -- so this check fired with the
+            # advice "take a new backup", which would never clear, because the backup
+            # cannot copy a directory that does not exist. That case is `workdir.missing`'s
+            # to name, not this one's: a work that points at a ghost directory is a work
+            # whose inputs are gone, and the backup has nothing to do with it.
             for tree in sorted(wanted - carried):
                 add("warning", "backup.uncovered",
                     f"{tree}/ is inside the instance and a work names it as its workdir, but the last "

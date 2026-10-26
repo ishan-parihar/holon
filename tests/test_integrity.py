@@ -722,6 +722,24 @@ class Operations(KernelCase):
         findings = [f for f in doctor.run(self.k) if f["check"] == "backup.uncovered"]
         self.assertEqual([], findings, "a fresh backup carries the tree: no finding")
 
+    def test_doctor_does_not_advise_a_backup_for_a_workdir_that_is_not_on_disk(self):
+        """A workdir the DB names but the disk does not hold has nothing to carry.
+
+        Measured on the live instance 2026-10-26, after the honest-manifest fix: two
+        routine workdirs never ran, the manifest (correctly) no longer promises them,
+        and this check fired with the advice "take a new backup" -- advice that could
+        never clear, because the backup cannot copy a directory that does not exist.
+        That case is `workdir.missing`'s to name, not this one's."""
+        from holon.integrity import backup
+        # a work whose workdir is a ghost: no mkdir
+        self.add("ghost routine", dept="eng", workdir=str(self.home.root / "routines" / "ghost"))
+        backup.backup(self.k, str(self.tmp / "bk"))
+        self.k.config["healing"]["backup_to"] = str(self.tmp / "bk")
+        findings = [f for f in doctor.run(self.k) if f["check"] == "backup.uncovered"]
+        self.assertEqual([], findings,
+                         "a workdir that is not on disk has nothing to carry: no backup advice "
+                         "can clear it (workdir.missing owns the finding)")
+
     def test_doctor_is_quiet_when_every_in_home_workdir_is_covered(self):
         """The other side of the backstop: a covered workdir is not a finding."""
         from holon.integrity import backup
