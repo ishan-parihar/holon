@@ -591,6 +591,56 @@ class Deployment(KernelCase):
     and write work.db as the kernel's own user — signals nobody. The kernel's own
     doctor page names the exact exposure in the same breath."""
 
+    def test_a_dead_runner_is_a_finding_not_a_crash(self):
+        """Found by the Chair's live activation, 2026-10-26: the boundary was configured
+        (the root script had created the agent user) but the runner unit was crash-looping
+        on its own defect — and `holon doctor` exited 1 with a raw IsolationError instead
+        of reporting anything, because `smoke_results()` runs the smoke checks through
+        `isolation.run` (every kernel `_exec` goes through the runner once the boundary is
+        configured) and the call at doctor.py's smoke loop is unguarded. The doctor is the
+        one instrument that must survive every deployment state — an unconfigured runner
+        is exactly the state it exists to name, and the heartbeat's doctor phase would have
+        crashed with nothing about the cause on any surface.
+
+        The probe half is already guarded (`isolation.runner`); this guards the other
+        caller. A dead runner must produce findings — `isolation.runner` for the probe and
+        a smoke warning, each in its own row — and doctor must exit 0, not die on the
+        first unreachable socket."""
+        from holon.integrity import doctor
+        if not self.k.auth.configured:
+            self.k.auth.init_chair_key()
+        # a smoke check exists, so doctor crosses the crashing seam: smoke_results() runs every
+        # check through isolation.run once the boundary is configured, and the unguarded call
+        # is the one the live activation hit (doctor.py's smoke loop)
+        self.home.config_file.write_text(self.pipeline
+                                         + '\n[[smoke.checks]]\nname = "live"\ncmd = "true"\ncritical = true\n'
+                                         + '\n[isolation]\nagent_user = "agent"\n')
+        self.k.close()
+        self.k = Kernel(self.home)
+        self.assertEqual(self.k.isolation.get("agent_user"), "agent")
+        # the user exists (the root step ran) but the runner does not serve: the live state
+        import pwd as _pwd
+        real = _pwd.getpwnam
+        def _fake(name):
+            try:
+                return real(name)
+            except KeyError:
+                if name == "agent":
+                    import types
+                    return types.SimpleNamespace(pw_name="agent", pw_uid=65534, pw_gid=65534,
+                                                  pw_dir="/var/lib/agent", pw_shell="/usr/sbin/nologin")
+                raise
+        from unittest import mock
+        with mock.patch("pwd.getpwnam", _fake):
+            findings = doctor.run(self.k)
+        checks = {f["check"] for f in findings}
+        self.assertIn("isolation.runner", checks,
+                      "a configured-but-dead runner is a named finding, not a crash: "
+                      + ", ".join(sorted(checks)))
+        # doctor survives to report the rest of the instance
+        self.assertTrue(any(c.startswith("smoke") for c in checks) or len(checks) > 1,
+                        f"doctor stopped early: {sorted(checks)}")
+
     def test_an_absent_boundary_is_an_error_not_a_warning(self):
         """With no `[isolation] agent_user`, agents run as the kernel's user: one of
         them with a shell can read the Chair key and write work.db directly. That is

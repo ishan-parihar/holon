@@ -80,6 +80,30 @@ def _isolation(k, add) -> None:
             "holon-broker)")
 
 
+def _smoke_findings(k, add):
+    """The smoke loop, guarded against the boundary's own dead runner (found on the live
+    activation, 2026-10-26: with the boundary configured and the runner not serving, every
+    kernel `_exec` goes through `isolation.run`, the call raised and `holon doctor` exited 1
+    with a raw IsolationError — the one instrument that must survive every deployment state,
+    dying on exactly the state it exists to name, and the heartbeat's doctor phase would have
+    crashed with nothing about the cause on any surface). A dead runner is `isolation.runner`'s
+    finding, reported by the probe half; the smoke half reports that the checks could not run
+    rather than taking the whole doctor down with them."""
+    try:
+        results = k.smoke_results()
+    except RuntimeError as e:   # IsolationError extends RuntimeError; OSError rides inside it
+        add("warning", "smoke.unreachable",
+            f"the smoke checks could not run — the isolated runner does not answer ({e}). "
+            "The boundary is half-built: `holon isolation plan` names the root step that starts it.")
+        return
+    for r in results:
+        if not r["ok"]:
+            add("error" if r["critical"] else "warning", "smoke.critical" if r["critical"] else "smoke.check",
+                f"{r['dept'] or 'org'}: {r['name']} failed (exit {r['exit_code']})"
+                + (f" — {r['reason']}" if r["reason"] else "") + (f": {r['tail'][-200:]}" if r["tail"] else "")
+                + (" — its agents wait until it passes" if r["critical"] else ""))
+
+
 def run(k) -> list[dict]:
     out: list[dict] = []
 
@@ -124,12 +148,7 @@ def run(k) -> list[dict]:
             add("warning", "code.root",
                 f"this instance was last migrated from {recorded[0]}, but is running from {running} — "
                 "one of them is stale (install.py --repoint, or merge that checkout)")
-    for r in k.smoke_results():
-        if not r["ok"]:
-            add("error" if r["critical"] else "warning", "smoke.critical" if r["critical"] else "smoke.check",
-                f"{r['dept'] or 'org'}: {r['name']} failed (exit {r['exit_code']})"
-                + (f" — {r['reason']}" if r["reason"] else "") + (f": {r['tail'][-200:]}" if r["tail"] else "")
-                + (" — its agents wait until it passes" if r["critical"] else ""))
+    _smoke_findings(k, add)
 
     # K-2: a closed incident with neither a registered guard nor a waiver
     for t in q("SELECT id, title FROM tasks WHERE status='done' AND task_class='incident' AND stage IS NULL"):
@@ -194,7 +213,12 @@ def run(k) -> list[dict]:
     # only in that field: the surface clone warned, the `service` original said nothing, same
     # exit-127 command. A surface keeps its historical `surface.down` key (operator tooling
     # matches it); every other category reports `unit.down`.
-    failed = {r["name"]: r for r in k.smoke_results() if not r["ok"]}
+    try:
+        failed = {r["name"]: r for r in k.smoke_results() if not r["ok"]}
+    except RuntimeError as e:   # the same dead-runner guard as the smoke loop: one finding, not a crash
+        add("warning", "smoke.unreachable",
+            f"the unit health probes could not run — the isolated runner does not answer ({e})")
+        failed = {}
     for slug, u in units_mod.load(k.home)[0].items():
         for s in u["services"]:
             r = failed.get(f"{slug}:{s['id']}")
