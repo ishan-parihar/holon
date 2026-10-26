@@ -104,6 +104,51 @@ class StrayRootDirectories(KernelCase):
         self.assertIn("stray/", msgs, findings)
         self.assertNotIn("declared/", msgs, "a [scope]-covered directory is declared, not stray")
 
+    def test_the_ad_capabilitys_own_store_is_not_stray(self):
+        """`holon/capabilities/ad.py` derives its index at `$HOLON_HOME/ad/index.db` (its own
+        module docstring, law 3's one-writer rule) — so `ad/` is kernel-owned placement.
+        Measured on the live instance 2026-10-26: the capability built its index and
+        doctor's `scope.stray` immediately called the kernel's own store a stray — the
+        same false-positive class as `.clock/`, one layer over: a directory the KERNEL
+        creates being reported by a check the KERNEL runs. Flagging it cries wolf and
+        hides the real strays. (Superseded by
+        `test_the_kernel_owned_dirs_the_plan_writes_are_not_stray`, which covers both
+        `ad/` and `isolation/` — kept because it names the capability's own store.)"""
+        ad = self.home.root / "ad"
+        ad.mkdir()
+        (ad / "index.db").write_bytes(b"")   # the capability's documented store
+        findings = [f for f in doctor.run(self.k) if f["check"] == "scope.stray"]
+        self.assertEqual([f["message"] for f in findings if "ad/" in f["message"]], [],
+                         "the ad capability's own store is kernel-owned placement, not a stray")
+
+    def test_the_kernel_owned_dirs_the_plan_writes_are_not_stray(self):
+        """The kernel writes three directories the vocabulary missed, and the stray check
+        flagged each of them on the live instance 2026-10-26:
+
+        - `ad/` — the ad capability's own store (`$HOLON_HOME/ad/index.db`, its module
+          docstring, law 3's one-writer rule).
+        - `isolation/` — `holon isolation plan`'s setup script
+          (`$HOLON_HOME/isolation/setup.sh`, moved out of /tmp by 5b5b367 because the
+          script the sequence told root to run was the one file guaranteed to be missing
+          on the day it was needed).
+
+        Same false-positive class as `.clock/`, one layer over: a directory the KERNEL
+        creates being reported by a check the KERNEL runs. Each one cried wolf on the
+        live instance and hid the real strays. The fix is the vocabulary, not an
+        exemption: these are kernel-owned placements, and the stray check's own rule
+        says kernel vocabulary is what makes a root directory legitimate."""
+        ad = self.home.root / "ad"
+        ad.mkdir()
+        (ad / "index.db").write_bytes(b"")
+        iso = self.home.root / "isolation"
+        iso.mkdir()
+        (iso / "setup.sh").write_text("#!/bin/sh\n")
+        findings = [f for f in doctor.run(self.k) if f["check"] == "scope.stray"]
+        self.assertEqual([f["message"] for f in findings if "ad/" in f["message"]], [],
+                         "the ad capability's store is kernel-owned placement, not a stray")
+        self.assertEqual([f["message"] for f in findings if "isolation/" in f["message"]], [],
+                         "the isolation plan's script is kernel-owned placement, not a stray")
+
     def test_the_heartbeat_liveness_dir_is_not_stray(self):
         """The heartbeat stamps its liveness at .clock/ (the operant gateway's clock organ
         runs `holon tick` and reads that stamp; the kernel's own timer does the same). That

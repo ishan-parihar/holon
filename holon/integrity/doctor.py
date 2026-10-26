@@ -412,7 +412,7 @@ def run(k) -> list[dict]:
     # declared [scope] root covers it; anything else is a stray, and the fix is to declare
     # it or remove it — never to let it keep growing unnamed.
     _vocab = {"config", "execution", "capabilities", "bylaws", "skills", "kb", "genome",
-              "adapters", "backups", "ventures", "governance", ".clock"}
+              "adapters", "backups", "ventures", "governance", ".clock", "ad", "isolation"}
     # A work's workdir may sit *inside* a root directory no work names directly — the recurring
     # plans point at `<root>/routines/<plan>`, and `routines/` is declared by that use. So every
     # ancestor from the workdir up to the instance root is declared, not only the leaf.
