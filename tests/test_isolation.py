@@ -477,55 +477,149 @@ class Setup(KernelCase):
         """Measured live 2026-10-26: the isolated _exec branch passed `env` alone, so a spawned
         check saw only the shell's built-in PATH (/usr/local/sbin:/usr/local/bin:/usr/bin) —
         every granted harness in ~/.local/bin was unreachable by bare name, and a smoke check
-        failed with 127 on a binary the plan had just granted. The isolated branch now merges the
-        same safe base the non-isolated branch gets (_check_env: no credentials, HOLON_HOME, PATH)."""
-        from holon.execution.service import Kernel as K
-        # the merge happens at the call: assert the isolated branch is not the bare env
-        import inspect
-        from holon.execution import service
-        src = inspect.getsource(service.Kernel._exec)
-        self.assertIn("isolation.run(iso[\"runner\"], cmd, cwd, {**self._check_env(), **env}",
-                      src, "the isolated branch must merge the safe base env, not pass env alone")
+        failed with 127 on a binary the plan had just granted. The isolated branch must merge
+        the same safe base the non-isolated branch gets (_check_env: no credentials, HOLON_HOME,
+        PATH). Asserted through the behaviour: _check_env must actually be called on the isolated
+        path before the spawn — a source-string assert passes on dead code, which is how this
+        guard's first draft held while the defect shipped (it also passed with the fix deleted)."""
+        import tempfile
+        from holon.execution import isolation as iso_mod
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            (tdp / "bin").mkdir()
+            (tdp / "bin" / "probe").write_text("#!/bin/sh\necho ran\n")
+            (tdp / "bin" / "probe").chmod(0o755)
+            self.home.config_file.write_text(self.pipeline + '\n[isolation]\nagent_user = "agent"\n'
+                                             'runner = "/tmp/holon-runner-dead"\n')
+            self.k.close()
+            self.k = Kernel(self.home)
+            called = {}
+            real = Kernel._check_env
+            def spy():
+                called["yes"] = True
+                return real(self.k)
+            self.k._check_env = spy
+            try:
+                self.k._exec("probe", str(tdp), {"PATH": str(tdp / "bin")}, 10)
+            except Exception:
+                pass  # the runner is dead: unreachable is fine; NOT calling _check_env is the defect
+            self.assertTrue(called.get("yes"),
+                            "the isolated branch must call _check_env before spawning — passing "
+                            "`env` alone drops PATH/HOLON_HOME and a granted bare-name harness "
+                            "dies with 127")
 
     def test_a_native_launchers_runpath_joins_the_read_reach(self):
         """Measured live 2026-10-26: operant's binary carries RUNPATH ~/.local/lib/operant while
         living in ~/.local/bin — the agent user could execute the binary but not load its .so,
         so every body died at exit 127 (libonnxruntime.so.1) and the department's smoke gate
         failed. The reach must grant the loader path the way the loader reads it. A hand-rolled
-        ELF parser missed the vaddr mapping the same day; `readelf` is the parser."""
-        import subprocess, tempfile
+        ELF parser missed the vaddr mapping the same day; `readelf` is the parser. Asserted
+        through reach() on a real kernel whose driver resolves to a real RUNPATH-carrying ELF —
+        the fixture binary is FOUND by scanning readelf output, because /usr/bin/true carries
+        no RUNPATH on this host and the guard's first draft silently skipped every run (a null
+        test: it passed with the fix deleted)."""
+        import shutil as _sh, subprocess, tempfile
+        from holon.execution import isolation as iso
+        elf = None
+        for cand in sorted(Path("/usr/bin").iterdir()):
+            try:
+                out = subprocess.run(["readelf", "-d", str(cand)], capture_output=True,
+                                     text=True, timeout=10).stdout
+                if "RUNPATH" in out or "RPATH" in out:
+                    elf = cand
+                    break
+            except (OSError, subprocess.SubprocessError):
+                continue
+        if elf is None:
+            self.skipTest("no RUNPATH-carrying ELF available for a live grant")
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            harness_dir = tdp / "bin"
+            harness_dir.mkdir()
+            _sh.copy(elf, harness_dir / elf.name)
+            # the chosen ELF's runpath may be $ORIGIN-relative (`$ORIGIN/../lib` is a real
+            # layout): create the dir it names so the loader path exists to be granted
+            probe = subprocess.run(["readelf", "-d", str(harness_dir / elf.name)],
+                                   capture_output=True, text=True).stdout
+            for line in probe.splitlines():
+                if "RPATH" in line or "RUNPATH" in line:
+                    for part in line.split("[", 1)[1].rsplit("]", 1)[0].split(":"):
+                        rp = part.replace("$ORIGIN", str(harness_dir)).strip()
+                        if rp.startswith("/") and Path(rp).name not in ("", ".."):
+                            Path(rp).mkdir(parents=True, exist_ok=True)
+                        elif rp.startswith("/") and "/../" in rp:
+                            Path(rp).resolve().mkdir(parents=True, exist_ok=True)
+            self.home.drivers_dir.mkdir(parents=True, exist_ok=True)
+            (self.home.drivers_dir / "elf.toml").write_text(
+                f'name = "elf"\ncommand = "{elf.name}"\ntimeout_s = 60\n')
+            self.home.config_file.write_text(self.pipeline + '\n[isolation]\nagent_user = "agent"\n')
+            self.k.close()
+            self.k = Kernel(self.home)
+            os.environ["PATH"] = str(harness_dir) + os.pathsep + os.environ.get("PATH", "")
+            try:
+                reach = iso.reach(self.k)
+            finally:
+                os.environ["PATH"] = os.environ["PATH"].replace(str(harness_dir) + os.pathsep, "", 1)
+            expected = set()
+            for line in subprocess.run(["readelf", "-d", str(harness_dir / elf.name)],
+                                       capture_output=True, text=True).stdout.splitlines():
+                if "RPATH" in line or "RUNPATH" in line:
+                    raw = line.split("[", 1)[1].rsplit("]", 1)[0]
+                    for part in raw.split(":"):
+                        rp = part.replace("$ORIGIN", str(harness_dir)).strip()
+                        if rp.startswith("/") and Path(rp).is_dir():
+                            expected.add(Path(rp).resolve())
+            self.assertTrue(expected, "the fixture must plant at least one runpath dir")
+            missing = [p for p in expected if p not in set(reach["reads"])]
+            self.assertEqual(missing, [],
+                             "reach() must grant the loader's runpath dirs; a guard that copies "
+                             "the parser inline passes here while the real reach grants nothing")
+
+    def test_a_symlinked_harness_target_is_traversable(self):
+        """Measured live 2026-10-26: `which jcode` is ~/.local/bin/jcode, a symlink into
+        ~/.jcode/builds/current/jcode. The plan resolved the chain before granting, so the
+        REAL directory on the pre-resolved way was in no chain and no target set — and the
+        deny sweep fenced it by name (`setfacl -m u:agent:--- …/lib`, reproduced on this
+        guard's own fixture): the kernel cannot path-walk through it, and the agent gets
+        EACCES on a binary whose final target is fully granted. The plan must grant `x` on
+        every dir the chain traverses, and the sweep must not deny it. Asserted against the
+        plan's own ACL list — `reach()["reads"]` cannot express this (it resolves), and this
+        guard's first draft asserted reads and passed with the fix deleted (a null test)."""
+        import tempfile
         from holon.execution import isolation as iso
         with tempfile.TemporaryDirectory() as td:
             tdp = Path(td)
-            # a real ELF with a RUNPATH: use /usr/bin/true if readelf is present
-            elf = Path("/usr/bin/true")
-            r = subprocess.run(["readelf", "-d", str(elf)], capture_output=True, text=True)
-            has_runpath = "RUNPATH" in r.stdout or "RPATH" in r.stdout
-            if not has_runpath:
-                self.skipTest("no RUNPATH on /usr/bin/true on this machine")
-            class FakeDriver:
-                name = "elf"
-                command = f"{elf} --help"
-                env = {}
-                source = "builtin:x.toml"
-            class FakeAvail(dict):
-                pass
-            fake = {elf.parent, elf}
-            reads = set()
-            # call the same code path reach() uses, on the real binary
-            found = str(elf)
+            (tdp / "real" / "v1").mkdir(parents=True)
+            tool = tdp / "real" / "v1" / "tool"
+            tool.write_text("#!/bin/sh\nexit 0\n")
+            tool.chmod(0o755)
+            (tdp / "bin").mkdir()
+            (tdp / "lib").mkdir()
+            (tdp / "lib" / "cur").symlink_to(tdp / "real" / "v1")
+            (tdp / "bin" / "tool").symlink_to(tdp / "lib" / "cur" / "tool")
+            self.home.drivers_dir.mkdir(parents=True, exist_ok=True)
+            (self.home.drivers_dir / "walk.toml").write_text(
+                'name = "walk"\ncommand = "tool"\ntimeout_s = 60\n')
+            self.home.config_file.write_text(self.pipeline + '\n[isolation]\nagent_user = "agent"\n')
+            self.k.close()
+            self.k = Kernel(self.home)
+            os.environ["PATH"] = str(tdp / "bin") + os.pathsep + os.environ.get("PATH", "")
             try:
-                for line in subprocess.run(["readelf", "-d", found], capture_output=True,
-                                           text=True, timeout=10).stdout.splitlines():
-                    if "RPATH" in line or "RUNPATH" in line:
-                        raw = line.split("[", 1)[1].rsplit("]", 1)[0]
-                        for part in raw.split(":"):
-                            rp = part.replace("$ORIGIN", str(Path(found).parent)).strip()
-                            if rp.startswith("/") and Path(rp).is_dir():
-                                reads.add(Path(rp))
-            except (OSError, subprocess.SubprocessError):
-                pass
-            self.assertTrue(reads, "the RUNPATH dir of a real ELF must join the reach")
+                plan = iso.setup_plan(self.k)
+            finally:
+                os.environ["PATH"] = os.environ["PATH"].replace(str(tdp / "bin") + os.pathsep, "", 1)
+            acl_text = [" ".join(c) for c in plan["acl"]]
+            lib = str(tdp / "lib")
+            # a `-d` (default) ACL speaks to FUTURE children of a dir, not to the dir
+            # itself: only a bare `-m u:<agent>:---` on the exact path fences the traversal
+            # dir by name (a substring match also catches `lib/cur/tool`, a different entry)
+            denied = [c for c in acl_text if c.split()[-1] == lib and ":---" in c and " -d " not in c]
+            self.assertEqual(denied, [],
+                             f"the deny sweep fenced {lib}, a dir the symlink chain walks through: {denied}")
+            granted_x = [c for c in acl_text if lib in c and f"u:agent:x" in c and "-R" not in c]
+            self.assertTrue(granted_x,
+                            f"no traversal grant on {lib}: the kernel cannot path-walk the chain "
+                            "to a fully granted target")
 
     def test_no_acl_command_exceeds_the_execve_argument_limit(self):
         """A plan the kernel prints as "run these 30 setfacl commands" must be runnable.

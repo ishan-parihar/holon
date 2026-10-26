@@ -372,6 +372,7 @@ def reach(k) -> dict:
     from holon.execution import drivers
     c = k.config["isolation"]
     writes = {Path(r).expanduser() for r in c.get("grants") or []}
+    hops: set[Path] = set()
     reads = {Path(r).expanduser() for r in c.get("reads") or []} | {Path(__file__).resolve().parents[2]}
     # The knowledge bases are read-only to an agent: the kernel is their writer (one verb, one
     # commit, one seat), so the tree is granted as a read, never as a grant. Without this the
@@ -439,11 +440,41 @@ def reach(k) -> dict:
             bin_path = Path(found).resolve()
             reads.add(bin_path.parent)
             reads.add(bin_path)
+            # Traversal through a symlink's target chain. resolve() collapses the whole chain
+            # to the final target, but the agent walks it hop by hop, and every REAL directory
+            # on the way must be in the reach or the deny walk fences it. A local
+            # coding-agent launcher is a ~/.local/bin symlink into a version store's
+            # `current` directory: the dir the chain WALKS THROUGH (the one holding the
+            # symlinked `current`) is named by no other line, so it joins the hop set and
+            # setup_plan grants it traversal (measured live 2026-10-26: by-version-path
+            # ran, by-symlink-path denied).
+            # Pre-resolved dirs a symlink chain WALKS THROUGH. `reach()` resolves its
+            # return values (the loader and the grants want real paths), but the kernel
+            # path-walks the chain hop by hop, and every REAL directory on the way needs
+            # `x` or the agent gets EACCES on a fully granted target (measured live
+            # 2026-10-26: by-version-path ran, by-symlink-path denied). The hop dirs are
+            # collected UNRESOLVED in `hops`; setup_plan grants them traversal and keeps
+            # them out of the deny sweep — resolve() here would collapse them away.
+            cur = Path(found)
+            hops.add(cur.parent)
+            n = 0
+            while cur.is_symlink() and n < 8:
+                raw = Path(os.readlink(cur))
+                tgt = raw if raw.is_absolute() else cur.parent / raw
+                partial = None
+                for comp in tgt.parts[1:]:
+                    partial = Path(tgt.parts[0] if partial is None else partial / comp)
+                    if partial != tgt and partial.is_symlink():
+                        hops.add(partial.parent)
+                hops.add(tgt.parent)
+                cur = tgt
+                n += 1
+
             # A native launcher's loader path sits OUTSIDE its bin dir (RUNPATH): measured live
-            # 2026-10-26, operant's ELF carries `RUNPATH /home/ishanp/.local/lib/operant` while
-            # the binary lives in ~/.local/bin — the granted dir does not contain the .so, the
-            # agent user gets exit 127 (libonnxruntime.so.1), and the department's smoke gate
-            # fails. `readelf` is the parser (a hand-rolled one missed the vaddr mapping the
+            # 2026-10-26, a native harness's ELF carried `RUNPATH ~/.local/lib/<vendor>` while
+            # the binary lived in ~/.local/bin — the granted dir did not contain the .so, the
+            # agent user got exit 127 (libonnxruntime.so.1), and the department's smoke gate
+            # failed. `readelf` is the parser (a hand-rolled one missed the vaddr mapping the
             # same day); the runpath is a fact about the binary, read the way the loader reads it.
             try:
                 import subprocess as _sp
@@ -457,44 +488,10 @@ def reach(k) -> dict:
                                 reads.add(Path(rp))
             except (OSError, _sp.SubprocessError):
                 pass  # no readelf: the reach keeps the bin dir alone
-    for d in drivers.available(k.home).values():
-        writes |= {Path(v) for v in d.env.values() if v.startswith("/") and Path(v).is_dir()}
-        exe = d.command.split()[0] if d.command.split() else ""
-        found = shutil.which(exe) if exe else None
-        if found:
-            # The harness's reach is the tree its command resolves into, not the one path
-            # `shutil.which` returns. A launcher is a file that execs siblings from its own
-            # directory and often sets LD_LIBRARY_PATH to it first (measured 2026-10-23 on the
-            # live harness: a 505-byte launcher beside a 171 MB payload), so granting the
-            # launcher alone denies the payload and the department cannot start its body.
-            # The whole directory is granted as a read: a harness install is not a place to
-            # be selective, and everything in it is executable code the agent is about to
-            # run anyway. Its home (`[env]`, the writes above) stays the only writable part.
-            bin_path = Path(found).resolve()
-            reads.add(bin_path.parent)
-            reads.add(bin_path)
-            # A native launcher's loader path sits OUTSIDE its bin dir (RUNPATH): measured live
-            # 2026-10-26, operant's ELF carries `RUNPATH /home/ishanp/.local/lib/operant` while the
-            # binary lives in ~/.local/bin — the granted dir does not contain the .so, the agent
-            # user gets exit 127 (libonnxruntime.so.1), and the department's smoke gate fails. The
-            # runpath is a fact about the binary, read the same way the loader reads it.
-            import struct
-            with open(bin_path, "rb") as fh:
-                if fh.read(4) == b"\x7fELF":
-                    fh.seek(28)
-                    if struct.unpack("<H", fh.read(2))[0] == 0x3e:  # x86-64
-                        fh.seek(0x20)
-                        phoff, phentsize, phnum = struct.unpack("<QQH", fh.read(18))
-                        dyn = None
-                        for i in range(phnum):
-                            fh.seek(phoff + i * phentsize)
-                            p_type = struct.unpack("<I", fh.read(4))[0]
-                            if p_type == 2:  # PT_DYNAMIC
-                                dyn = struct.unpack("<QQ", fh.read(16))
-                        if dyn:
-                            _add_runpath_reads(bin_path, fh, dyn, reads)
     return {"writes": sorted(p.resolve() for p in writes if p.exists()),
-            "reads": sorted(p.resolve() for p in reads if p.exists()), "runs": k.home.runs_dir.resolve()}
+            "reads": sorted(p.resolve() for p in reads if p.exists()),
+            "hops": sorted(h for h in hops if h.exists()),
+            "runs": k.home.runs_dir.resolve()}
 
 
 def setup_plan(k) -> dict:
@@ -539,6 +536,15 @@ def setup_plan(k) -> dict:
     for p, _ in targets:
         if p.is_relative_to(top):
             chains |= set(_chain(p, top))
+    # A target reached through a symlink chain is WALKED through every REAL directory on
+    # the pre-resolved way, and the kernel path-walk needs `x` on each one. `reach()` returns
+    # resolved paths, so the dir holding a symlinked hop is in no chain and no target set —
+    # and the deny sweep then fences it by name (measured on the guard's fixture:
+    # `setfacl -m u:<agent>:--- …/lib` beside a fully granted `real/v1`). reach() collects
+    # the hop dirs un-resolved; they join the chains (an `x` grant, no sweep denial).
+    for h in r["hops"]:
+        if h.is_relative_to(top):
+            chains |= set(_chain(h, top)) | {h}
     keep = chains | {p for p, _ in targets}
     acl: list[list[str]] = []
     for d in sorted(chains):
