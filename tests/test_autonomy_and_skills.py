@@ -2,6 +2,7 @@
 
 import io
 import json
+import re
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -166,6 +167,29 @@ class Bylaws(KernelCase):
         with self.assertRaises(bylaws.BylawsError):
             bylaws.validate({**g, "pipeline": {"research": "sometimes"}})
         self.assertEqual(self.k.org.dept("executive")["profile"], "executive")
+
+
+class Vocabulary(unittest.TestCase):
+    """The system-design skill's pointer index resolves to real files (measured 2026-10-26: the
+    audit's "eight missing reference topics" were covered elsewhere in the library and unlinked,
+    so the fix is a pointer index — and a pointer that does not resolve is worse than no
+    pointer, because it sends a designer to a file that does not exist)."""
+    def test_every_path_the_vocabulary_index_names_resolves(self):
+        lib = Path(__file__).resolve().parents[1] / "holon" / "skills"
+        index = lib / "holon-system-design" / "references" / "vocabulary.md"
+        self.assertTrue(index.exists(), "the vocabulary index must exist")
+        named = {m.group(1) for m in re.finditer(r"`([a-z][a-z0-9_./-]+\.md)`", index.read_text())}
+        self.assertTrue(named, "the index names reference files")
+        for rel in sorted(named):
+            target = lib / rel if rel.startswith("holon-") else lib / "holon-system-design" / rel
+            self.assertTrue(target.exists(), f"{index.name} names {rel}, which does not resolve")
+
+    def test_a_design_skill_cites_only_references_it_carries(self):
+        lib = Path(__file__).resolve().parents[1] / "holon" / "skills"
+        skill = lib / "holon-system-design"
+        for m in re.finditer(r"`references/([a-z][a-z0-9_.-]+\.md)`", (skill / "SKILL.md").read_text()):
+            self.assertTrue((skill / "references" / m.group(1)).exists(),
+                            f"the skill cites references/{m.group(1)}, which it does not carry")
 
 
 class Skills(KernelCase):

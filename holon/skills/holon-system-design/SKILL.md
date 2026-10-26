@@ -14,7 +14,8 @@ the profile is the skeleton, the job descriptions and tailored skills are the mu
 
 This designs one system. The `holon-operator` skill manages the organization of them: when the
 question is which departments should exist, or how one that outgrew its profile is reshaped,
-that skill is the seam.
+that skill is the seam. `references/vocabulary.md` indexes every mechanism a design touches and
+names the skill or doc that owns it — read the authority, not a summary of it.
 
 ## Protocol
 
