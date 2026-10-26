@@ -439,6 +439,60 @@ def reach(k) -> dict:
             bin_path = Path(found).resolve()
             reads.add(bin_path.parent)
             reads.add(bin_path)
+            # A native launcher's loader path sits OUTSIDE its bin dir (RUNPATH): measured live
+            # 2026-10-26, operant's ELF carries `RUNPATH /home/ishanp/.local/lib/operant` while
+            # the binary lives in ~/.local/bin — the granted dir does not contain the .so, the
+            # agent user gets exit 127 (libonnxruntime.so.1), and the department's smoke gate
+            # fails. `readelf` is the parser (a hand-rolled one missed the vaddr mapping the
+            # same day); the runpath is a fact about the binary, read the way the loader reads it.
+            try:
+                import subprocess as _sp
+                for line in _sp.run(["readelf", "-d", str(bin_path)], capture_output=True,
+                                    text=True, timeout=10).stdout.splitlines():
+                    if "RPATH" in line or "RUNPATH" in line:
+                        raw = line.split("[", 1)[1].rsplit("]", 1)[0]
+                        for part in raw.split(":"):
+                            rp = part.replace("$ORIGIN", str(bin_path.parent)).strip()
+                            if rp.startswith("/") and Path(rp).is_dir():
+                                reads.add(Path(rp))
+            except (OSError, _sp.SubprocessError):
+                pass  # no readelf: the reach keeps the bin dir alone
+    for d in drivers.available(k.home).values():
+        writes |= {Path(v) for v in d.env.values() if v.startswith("/") and Path(v).is_dir()}
+        exe = d.command.split()[0] if d.command.split() else ""
+        found = shutil.which(exe) if exe else None
+        if found:
+            # The harness's reach is the tree its command resolves into, not the one path
+            # `shutil.which` returns. A launcher is a file that execs siblings from its own
+            # directory and often sets LD_LIBRARY_PATH to it first (measured 2026-10-23 on the
+            # live harness: a 505-byte launcher beside a 171 MB payload), so granting the
+            # launcher alone denies the payload and the department cannot start its body.
+            # The whole directory is granted as a read: a harness install is not a place to
+            # be selective, and everything in it is executable code the agent is about to
+            # run anyway. Its home (`[env]`, the writes above) stays the only writable part.
+            bin_path = Path(found).resolve()
+            reads.add(bin_path.parent)
+            reads.add(bin_path)
+            # A native launcher's loader path sits OUTSIDE its bin dir (RUNPATH): measured live
+            # 2026-10-26, operant's ELF carries `RUNPATH /home/ishanp/.local/lib/operant` while the
+            # binary lives in ~/.local/bin — the granted dir does not contain the .so, the agent
+            # user gets exit 127 (libonnxruntime.so.1), and the department's smoke gate fails. The
+            # runpath is a fact about the binary, read the same way the loader reads it.
+            import struct
+            with open(bin_path, "rb") as fh:
+                if fh.read(4) == b"\x7fELF":
+                    fh.seek(28)
+                    if struct.unpack("<H", fh.read(2))[0] == 0x3e:  # x86-64
+                        fh.seek(0x20)
+                        phoff, phentsize, phnum = struct.unpack("<QQH", fh.read(18))
+                        dyn = None
+                        for i in range(phnum):
+                            fh.seek(phoff + i * phentsize)
+                            p_type = struct.unpack("<I", fh.read(4))[0]
+                            if p_type == 2:  # PT_DYNAMIC
+                                dyn = struct.unpack("<QQ", fh.read(16))
+                        if dyn:
+                            _add_runpath_reads(bin_path, fh, dyn, reads)
     return {"writes": sorted(p.resolve() for p in writes if p.exists()),
             "reads": sorted(p.resolve() for p in reads if p.exists()), "runs": k.home.runs_dir.resolve()}
 

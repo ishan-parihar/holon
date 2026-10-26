@@ -321,7 +321,13 @@ class Kernel:
         it runs code an agent may have written. (exit code, output)."""
         iso = self.isolation
         if iso:
-            code, out, err = isolation.run(iso["runner"], cmd, cwd, env, timeout_s)
+            # the same safe base the non-isolated branch gets: `_check_env` strips the Chair,
+            # employee and run credentials and adds HOLON_HOME — and carries PATH, without which
+            # a spawn sees only the shell's built-in default (measured live 2026-10-26:
+            # /usr/local/sbin:/usr/local/bin:/usr/bin, omitting ~/.local/bin where every granted
+            # harness lives, so a bare `sourcehound` failed with 127 though the binary was
+            # granted; the caller's env still overrides any name). The runner adds nothing.
+            code, out, err = isolation.run(iso["runner"], cmd, cwd, {**self._check_env(), **env}, timeout_s)
         else:
             code, out, err = drivers.execute(cmd, cwd, {**self._check_env(), **env}, timeout_s)
         return code, out + err

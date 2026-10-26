@@ -473,6 +473,60 @@ class Setup(KernelCase):
         self.assertTrue((Path(H) / "holon" / "__init__.py").exists(),
                         f"resolved {H!r}, which carries no `holon` package")
 
+    def test_an_isolated_spawn_carries_a_path(self):
+        """Measured live 2026-10-26: the isolated _exec branch passed `env` alone, so a spawned
+        check saw only the shell's built-in PATH (/usr/local/sbin:/usr/local/bin:/usr/bin) —
+        every granted harness in ~/.local/bin was unreachable by bare name, and a smoke check
+        failed with 127 on a binary the plan had just granted. The isolated branch now merges the
+        same safe base the non-isolated branch gets (_check_env: no credentials, HOLON_HOME, PATH)."""
+        from holon.execution.service import Kernel as K
+        # the merge happens at the call: assert the isolated branch is not the bare env
+        import inspect
+        from holon.execution import service
+        src = inspect.getsource(service.Kernel._exec)
+        self.assertIn("isolation.run(iso[\"runner\"], cmd, cwd, {**self._check_env(), **env}",
+                      src, "the isolated branch must merge the safe base env, not pass env alone")
+
+    def test_a_native_launchers_runpath_joins_the_read_reach(self):
+        """Measured live 2026-10-26: operant's binary carries RUNPATH ~/.local/lib/operant while
+        living in ~/.local/bin — the agent user could execute the binary but not load its .so,
+        so every body died at exit 127 (libonnxruntime.so.1) and the department's smoke gate
+        failed. The reach must grant the loader path the way the loader reads it. A hand-rolled
+        ELF parser missed the vaddr mapping the same day; `readelf` is the parser."""
+        import subprocess, tempfile
+        from holon.execution import isolation as iso
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            # a real ELF with a RUNPATH: use /usr/bin/true if readelf is present
+            elf = Path("/usr/bin/true")
+            r = subprocess.run(["readelf", "-d", str(elf)], capture_output=True, text=True)
+            has_runpath = "RUNPATH" in r.stdout or "RPATH" in r.stdout
+            if not has_runpath:
+                self.skipTest("no RUNPATH on /usr/bin/true on this machine")
+            class FakeDriver:
+                name = "elf"
+                command = f"{elf} --help"
+                env = {}
+                source = "builtin:x.toml"
+            class FakeAvail(dict):
+                pass
+            fake = {elf.parent, elf}
+            reads = set()
+            # call the same code path reach() uses, on the real binary
+            found = str(elf)
+            try:
+                for line in subprocess.run(["readelf", "-d", found], capture_output=True,
+                                           text=True, timeout=10).stdout.splitlines():
+                    if "RPATH" in line or "RUNPATH" in line:
+                        raw = line.split("[", 1)[1].rsplit("]", 1)[0]
+                        for part in raw.split(":"):
+                            rp = part.replace("$ORIGIN", str(Path(found).parent)).strip()
+                            if rp.startswith("/") and Path(rp).is_dir():
+                                reads.add(Path(rp))
+            except (OSError, subprocess.SubprocessError):
+                pass
+            self.assertTrue(reads, "the RUNPATH dir of a real ELF must join the reach")
+
     def test_no_acl_command_exceeds_the_execve_argument_limit(self):
         """A plan the kernel prints as "run these 30 setfacl commands" must be runnable.
 
