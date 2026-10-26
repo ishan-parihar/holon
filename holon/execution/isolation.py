@@ -536,12 +536,13 @@ WorkingDirectory=/var/lib/{agent}
 # No PYTHONPATH pinned to the planning checkout: the 2026-10-21 rule, applied here. The unit names
 # no tree, so a moved or deleted worktree does not kill every agent process with nothing in the
 # journal naming the cause.
-# systemd's service PATH omits per-user bin dirs, where the `holon` launcher lives (the tick unit
-# carries the same line for the same reason). Without it, `command -v holon` finds nothing below and
-# the start shell prints `readlink: missing operand` -- and exits 0, so systemd records a healthy
-# unit that never started a runner. Measured on 2026-10-23 under
-# `env -i PATH=/usr/local/bin:/usr/bin:/bin`.
-Environment=PATH=%h/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+# systemd's service PATH omits per-user bin dirs, where the `holon` launcher lives. In a USER
+# unit (the tick unit) %h is the kernel user's home, but this is a SYSTEM unit: %h expands to
+# User='s home — the agent user's /var/lib home, where no launcher lives — so the start shell
+# finds no `holon`, prints `readlink: missing operand` and systemd crash-loops the runner while
+# recording a unit that looks enabled. Measured live 2026-10-26 on the Chair's activation.
+# The kernel user's home is named explicitly (the `me` this plan was generated for).
+Environment=PATH={me.pw_dir}/bin:{me.pw_dir}/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/bin/sh -c 'H=$(dirname $(dirname $(readlink -f $(command -v holon)))) && PYTHONPATH="$H" exec {sys.executable} -m holon.execution.isolation runner --address {runner_addr} --allow-uid {me.pw_uid}'
 Restart=always
 RestartSec=10

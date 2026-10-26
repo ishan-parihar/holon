@@ -327,6 +327,32 @@ class Setup(KernelCase):
         self.assertIn("useradd --system", plan["root_script"])
         self.assertIn(f"--allow-uid {os.getuid()}", plan["root_script"])
 
+    def test_the_runner_units_path_names_the_kernel_users_home_not_the_agents(self):
+        """The live activation failure, 2026-10-26: the Chair ran the root script and the runner
+        crash-looped (`readlink: missing operand`, exit 1, restart counter climbing) because
+        `Environment=PATH=%h/bin:...` is a SYSTEM unit's line: systemd expands %h to the home of
+        `User=`, which is the AGENT user (/var/lib/holon-agent-...), not the kernel user whose
+        ~/bin holds the launcher. The tick unit carries the same line safely because it is a USER
+        unit, where %h is the kernel user; the runner unit inherited the pattern without the
+        semantics. The 2026-10-23 guard below asserted `%h` verbatim, so the suite was green while
+        the runner could not start on the only machine that had one.
+
+        The unit must name the kernel user's home explicitly (the generator's `me`), and must
+        not use %h for PATH at all in a unit whose User= is somebody else."""
+        import pwd
+        self.home.config_file.write_text(self.pipeline + '\n[isolation]\nagent_user = "agent"\n')
+        self.k.close()
+        self.k = Kernel(self.home)
+        script = isolation.setup_plan(self.k)["root_script"]
+        env_line = next((l for l in script.splitlines() if l.startswith("Environment=PATH=")), None)
+        self.assertIsNotNone(env_line, "the unit must declare the PATH systemd omits")
+        self.assertNotIn("%h", env_line,
+                         "a system unit's %h is User='s home (the agent's /var/lib home), "
+                         "where no launcher lives -- measured live 2026-10-26: crash-loop")
+        me = pwd.getpwuid(os.getuid())
+        self.assertIn(f"Environment=PATH={me.pw_dir}/bin", env_line,
+                      "the unit names the kernel user's own bin dir, where the launcher is")
+
     def test_the_runner_unit_survives_the_checkout_it_was_planned_from_moving(self):
         """The root script's `PYTHONPATH` was the checkout the plan was generated from, which is the
         defect `2026-10-21` fixed for the heartbeat and broker units and missed here.
@@ -359,12 +385,16 @@ class Setup(KernelCase):
         self.assertRegex(script,
                          r"exec\s+\S*(python|\{\})\S*\s+-m holon\.execution\.isolation runner",
                          "the runner is exec'd by an interpreter, not a bare module path")
-        # the unit must name the per-user bin dirs itself: systemd's service PATH omits them, so
-        # without this line the start shell's `command -v holon` finds nothing, prints
-        # `readlink: missing operand` and exits 0 -- systemd records a healthy unit that never
-        # started a runner. Measured: `env -i PATH=/usr/local/bin:/usr/bin:/bin sh -c <the line>`.
-        self.assertIn("Environment=PATH=%h/bin", script,
+        # the unit must name the kernel user's bin dirs itself: systemd's service PATH omits
+        # them, and in a SYSTEM unit %h is the agent's home (User=), not the kernel user's --
+        # the live activation of 2026-10-26 measured exactly that crash-loop. The unit names the
+        # kernel user's home explicitly; the guard below proves it is the launcher's real home.
+        import pwd
+        me = pwd.getpwuid(os.getuid())
+        self.assertIn(f"Environment=PATH={me.pw_dir}/bin", script,
                       "the unit sets the PATH systemd omits, or the resolution below cannot run")
+        self.assertNotIn("Environment=PATH=%h", script,
+                         "a system unit's %h is User='s home, where no launcher lives")
 
     def test_the_runner_units_start_command_resolves_a_real_launcher(self):
         """The portability fix is only as good as the shell inside `ExecStart`. `command -v holon`
