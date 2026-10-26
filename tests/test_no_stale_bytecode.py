@@ -33,6 +33,7 @@ the cache is derived from the source, and Python rebuilds it. That is why this g
 what it finds, and reports what it cleaned.
 """
 
+import importlib.util
 import marshal
 import struct
 import sys
@@ -64,7 +65,7 @@ def _code_shape(code) -> list:
     return out
 
 
-def _poisoned() -> list[tuple[str, str]]:
+def _poisoned(root: Path = None) -> list[tuple[str, str]]:
     """Every `.pyc` whose bytecode disagrees with the source it claims to cache.
 
     **pytest's caches are excluded.** pytest writes `<name>.cpython-314-pytest-9.1.1.pyc`
@@ -76,15 +77,28 @@ def _poisoned() -> list[tuple[str, str]]:
     suite from running pytest at all.
 
     The marker is in the file NAME (`-pytest-`), not in the content: the content is a
-    valid CPython cache in every respect."""
+    valid CPython cache in every respect.
+
+    **A wrong-MAGIC cache is excluded.** See the comment at the check."""
+    root = root or REPO
     out = []
-    for pyc in sorted(REPO.rglob("*.pyc")):
+    for pyc in sorted(root.rglob("*.pyc")):
         if "__pycache__" not in str(pyc) or ".git" in pyc.parts:
             continue
         if "-pytest-" in pyc.name:
             continue   # pytest's assertion-rewritten cache: different code BY DESIGN
         data = pyc.read_bytes()
         if len(data) < 16:
+            continue
+        # **THE MAGIC NUMBER IS A SAFETY GATE, NOT A DETAIL.** A `.pyc` written by another
+        # CPython version (a `.venv` on Python 3.13, read from a 3.14 suite) carries marshal
+        # data this interpreter MUST NOT deserialize: `marshal.loads()` on foreign data is
+        # memory-unsafe and this exact omission crashed the suite with SIGSEGV on the
+        # operator's overlay, whose tree carries a 3.13 virtualenv. CPython's own import
+        # system refuses a wrong-magic cache before reading a byte of it; a guard that
+        # walks the same files must apply the same refusal. A wrong-magic cache is not
+        # stale -- it is another interpreter's, and this one ignores it by design.
+        if data[:4] != importlib.util.MAGIC_NUMBER:
             continue
         flags = struct.unpack("<I", data[4:8])[0]
         if flags & 0x1:      # hash-based: invalidated by content, cannot go stale this way
@@ -101,8 +115,14 @@ def _poisoned() -> list[tuple[str, str]]:
         except SyntaxError:
             continue
         if _code_shape(cached) != _code_shape(fresh):
-            out.append((str(pyc.relative_to(REPO)), str(src.relative_to(REPO))))
+            out.append((str(pyc.relative_to(root)), str(src.relative_to(root))))
     return out
+
+
+def _poisoned_under(root: Path) -> list[tuple[str, str]]:
+    """The same scan, rooted elsewhere -- the foreign-magic guard plants its cache in a
+    temporary directory, and the main scan is rooted at the repository."""
+    return _poisoned(root)
 
 
 class NoStaleBytecode(unittest.TestCase):
@@ -144,6 +164,38 @@ class NoStaleBytecode(unittest.TestCase):
                             f"pytest's cache carries the -pytest- marker: {[c.name for c in caches]}")
             # the exemption is by NAME, and the name is what carries it
             self.assertTrue(any("-pytest-" in c.name for c in pytest_cache))
+
+    def test_a_foreign_interpreters_cache_is_ignored_not_parsed(self):
+        """A cache from another CPython version must not be deserialized.
+
+        Measured 2026-10-25 on the operator's overlay: its tree carries a `.venv` built on
+        Python 3.13, and running this suite under 3.14 hit `marshal.loads()` on the 3.13
+        caches -- **SIGSEGV**, twice: once in the suite, once in the diagnostic script written
+        to find it. Marshal data is version-specific and `loads()` on foreign data is
+        memory-unsafe; CPython's own import system refuses a wrong-magic cache before
+        reading a byte, and a guard that walks the same files must apply the same refusal.
+
+        This test builds a real foreign cache by writing a plausible header with a wrong
+        magic number, plants it where the guard walks, and asserts the guard neither reports
+        it nor crashes. A plausible header, because the crash is in the PARSING: the guard
+        must refuse before it reads a byte of the body."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            src = d / "foreign_mod.py"
+            src.write_text("x = 1\n")
+            cache_dir = d / "__pycache__"
+            cache_dir.mkdir()
+            # a wrong-magic cache with the body this interpreter would try to parse
+            foreign = cache_dir / "foreign_mod.cpython-999.pyc"
+            body = b"\x00" * 40
+            foreign.write_bytes(b"\x99\x99\x99\x99" + struct.pack("<III", 0, 0, len(body)) + body)
+            # the guard's own scan, run against the planted tree
+            import tests.test_no_stale_bytecode as self_mod
+            findings = self_mod._poisoned_under(d)
+            self.assertEqual([], [f for f in findings if "foreign_mod" in f[0]],
+                             "a foreign interpreter's cache is ignored, not judged")
 
     def test_the_mechanism_is_reproduced_so_the_guard_is_not_credulous(self):
         """The guard's premise, proved: a same-second, same-size edit leaves a stale cache.
