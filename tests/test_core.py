@@ -479,31 +479,33 @@ class ChairChannels(KernelCase):
         self.assertEqual(rc, 0)  # the text arm prints; the exit is the contract
 
     def test_an_inbound_channel_identity_can_be_authorized_as_the_chair(self):
-        """H8's promise, read as a red-team requirement.
+        """H8's promise, built (D1 of the 2026-10-25 successor outline).
 
-        This class's own docstring states the mechanism: "a runtime that fronts a channel (a
+        The class's own docstring states the mechanism: "a runtime that fronts a channel (a
         gateway) may run Chair commands only for one of these [identities]". Measured 2026-10-24,
-        `chair_channels()` is read by nothing but the display command, and
-        `security.Auth.principal()` resolves a principal from a run token, an employee key, or
-        the Chair key — so a message that arrives *from* `telegram:123456` cannot become a chair
-        principal at all. A button surface whose presses have no principal is a button surface
-        that cannot act, which is the gap this guard names rather than papers over.
+        `chair_channels()` was read by nothing but the display command, and a message that
+        arrived *from* `telegram:123456` could not become a chair principal at all. A button
+        surface whose presses have no principal is a button surface that cannot act.
 
-        The contract to satisfy: a channel identity in `[chair] channels` resolves to the chair
-        actor, and one outside it resolves to anonymous (never to a chair by default). The guard
-        **skips today** rather than failing, because a defect a person cannot fix in the same
-        commit as its audit should stay a named gap rather than a red suite; the skip message is
-        the finding, and the guard itself is step 0 of the Chair interaction audit's work list."""
+        The contract, now implemented as `Auth.channel_principal`: a channel identity in
+        `[chair] channels` resolves to the chair actor, and one outside it resolves to
+        anonymous (never to a chair by default). The guard once skipped (the skip was the
+        finding, step 0 of the Chair interaction audit); the seam is built now, so the
+        guard asserts directly — it can no longer re-skip, and removing the method fails it."""
         from holon.execution.security import Auth
         auth = Auth(self.k.wconn, self.home)
         # the mechanism a channel front-end needs: given the identity a message came from, who is this?
-        if getattr(auth, "channel_principal", None) is None:
-            raise unittest.SkipTest("H8's promise is unimplemented: no channel_principal() on Auth, "
-                                    "so an inbound Chair identity cannot be authorized and no button "
-                                    "press can act. Step 0 of the Chair interaction audit; this skip "
-                                    "names a real gap and disappears when the seam is built")
         self.assertEqual(auth.channel_principal("telegram:123456").actor, "chair")
+        self.assertEqual(auth.channel_principal("notion:user-7").actor, "chair")
+        # fail-closed, every arm: unlisted, empty, malformed, and a config that will not parse
         self.assertNotEqual(auth.channel_principal("telegram:999999").actor, "chair")
+        self.assertEqual(auth.channel_principal("telegram:999999").kind, "anonymous")
+        self.assertEqual(auth.channel_principal("").kind, "anonymous")
+        self.assertEqual(auth.channel_principal(None).kind, "anonymous")
+        self.assertEqual(auth.channel_principal("not-a-ref").kind, "anonymous")
+        self.home.config_file.write_text(self.pipeline + "\n[chair]\nchannels = [\"")  # unparsable
+        self.assertEqual(auth.channel_principal("telegram:123456").kind, "anonymous",
+                         "an unreadable config is nobody, not everyone")
 
 
 class DatabaseVersion(KernelCase):

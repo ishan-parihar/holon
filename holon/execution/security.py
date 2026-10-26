@@ -206,6 +206,28 @@ class Auth:
         raise AuthError("intake key is unknown or revoked")
 
     # ── resolution ────────────────────────────────────────────────────────
+    def channel_principal(self, identity: str | None) -> Principal:
+        """Who a channel message is: the Chair only when the sender is one of the identities the
+        Chair configured in `[chair] channels`, and nobody otherwise (H8).
+
+        This is the seam a channel front-end (a gateway, a webhook receiver) resolves an
+        inbound identity through — never the broker, whose `agent_principal` path cannot
+        reach it and whose fence forbids every Chair command to agents regardless. The
+        fail-closed property is the one the MCP seam's false diagnosis taught: an identity
+        that is absent, malformed or unlisted is anonymous — never the Chair by default.
+        """
+        if not identity:
+            return Principal("anonymous")
+        import tomllib
+        try:
+            cfg = tomllib.loads(self.home.config_file.read_text()) if self.home.config_file.exists() else {}
+        except (OSError, tomllib.TOMLDecodeError):
+            return Principal("anonymous")  # an unreadable config is nobody, not everyone
+        channels = cfg.get("chair", {}).get("channels") or []
+        if identity in channels:
+            return Principal("chair")
+        return Principal("anonymous")
+
     def agent_principal(self, token: str | None, key: str | None) -> Principal:
         """Who an agent is, from what it sent the broker: a run token or an employee key, else nobody.
         Never the Chair: the broker runs as the kernel's user, where the Chair key file is readable."""
