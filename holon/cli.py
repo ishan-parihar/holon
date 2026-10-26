@@ -1793,9 +1793,12 @@ def cmd_isolation_plan(args, k):
              f"1. as root, once: review this script and run it with sudo (also written to {target}; `holon isolation plan` regenerates it)\n{plan['root_script']}\n")
     steps = [first]
     if plan.get("proposed"):
-        steps.append(f"1.5. write into holon.toml:\n"
-                     f"     [isolation]\n     agent_user = \"{plan['agent_user']}\"\n"
-                     f"     runner = \"{plan['runner']}\"\n")
+        steps.append(f"1.5. done for you: the script above records {plan['agent_user']} in "
+                     f"{k.home.root / 'isolation' / 'agent-user'}, which the kernel reads when "
+                     "holon.toml is silent (an [isolation] block you write always wins). "
+                     "To see it, or to override it: cat that file\n"
+                     f"\x20\x20\x20\x20 [isolation]\n\x20\x20\x20\x20 agent_user = \"{plan['agent_user']}\"\n"
+                     f"\x20\x20\x20\x20 runner = \"{plan['runner']}\"\n")
     steps.append(f"2. as you: holon isolation apply --force   ({len(plan['acl'])} setfacl commands)\n"
                  "3. python3 install.py --systemd   (writes holon-broker, now that agent_user is set)\n"
                  f"4. holon doctor: the isolation checks probe what {plan['agent_user']} can reach\n\n"

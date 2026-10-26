@@ -473,6 +473,52 @@ class Setup(KernelCase):
         self.assertTrue((Path(H) / "holon" / "__init__.py").exists(),
                         f"resolved {H!r}, which carries no `holon` package")
 
+    def test_the_root_script_records_the_user_it_creates(self):
+        """Measured 2026-10-26: the activation's ONE manual step was copying the `[isolation]`
+        block into holon.toml by hand — the root script `echo`ed it and could not write it,
+        because it runs as root and the config is the kernel user's file. The Chair ruled the
+        step automatable, so the script now records the account it creates into a file the
+        kernel user owns (`$HOLON_HOME/isolation/agent-user`), and `Kernel.isolation` adopts
+        that record when the config is silent. Asserted through the script's own text and
+        through the accessor: config wins always (an operator who wrote a name keeps it), and
+        a record naming no account on this host is REFUSED rather than fenced to a user that
+        does not exist."""
+        import getpass
+        me = getpass.getuser()
+        # (a) the root script writes the record, and chowns it to the kernel user who reads it
+        plan = isolation.setup_plan(self.k)
+        script = plan["root_script"]
+        self.assertIn("isolation/agent-user", script,
+                      "the root script must record the account it creates, or the operator's "
+                      "copy-paste stays the only bridge between root and the kernel")
+        self.assertIn(f"chown {me}:{me}", script,
+                      "the record must end up owned by the kernel user, who is the one that reads it")
+        # (b) a record naming a real account is adopted when the config is silent
+        rec = self.home.root / "isolation" / "agent-user"
+        rec.parent.mkdir(parents=True, exist_ok=True)
+        rec.write_text(me + "\n")
+        self.home.config_file.write_text(self.pipeline)   # no [isolation] at all
+        self.k.close()
+        self.k = Kernel(self.home)
+        iso = self.k.isolation
+        self.assertIsNotNone(iso, "a root script's record must stand in for the missing config")
+        self.assertEqual(iso["agent_user"], me)
+        # (c) a record naming no account is refused, not fenced to a ghost
+        rec.write_text("holon-agent-does-not-exist\n")
+        self.k.close()
+        self.k = Kernel(self.home)
+        self.assertIsNone(self.k.isolation,
+                          "a record naming no account on this host must be refused: fencing an "
+                          "agent user that does not exist would break every dispatch")
+        # (d) the config always wins over a record
+        rec.write_text(me + "\n")
+        self.home.config_file.write_text(self.pipeline +
+                                         '\n[isolation]\nagent_user = "someone-else"\n')
+        self.k.close()
+        self.k = Kernel(self.home)
+        self.assertEqual(self.k.isolation["agent_user"], "someone-else",
+                         "the operator's config outranks the script's record")
+
     def test_every_distribution_checkout_reaches_the_agent(self):
         """Measured live 2026-10-26: doctor reported `isolation.reach` — the agent user cannot
         read the operator's overlay checkout — while the kernel's own reach named only the

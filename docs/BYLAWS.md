@@ -388,11 +388,18 @@ Both services listen on abstract Unix sockets and check the caller's uid. Set up
 
 ```sh
 holon isolation plan          # writes the root script to $HOLON_HOME/isolation/setup.sh, durably
-sudo sh $HOLON_HOME/isolation/setup.sh     # root: the agent user and its runner service
+sudo sh $HOLON_HOME/isolation/setup.sh     # root: the agent user, its runner service, and the
+#                                            record the kernel reads (no config to copy by hand)
 holon isolation apply --force                          # you: the ACLs (--force: it rewrites every one)
 python3 install.py --systemd                           # writes and starts holon-broker
 holon doctor                                           # the isolation checks
 ```
+
+The root script records the account it creates in `$HOLON_HOME/isolation/agent-user`, so the
+kernel adopts it when `holon.toml` is silent — an `[isolation]` block you write always wins, and
+a record naming no account on this host is refused rather than fenced to a user that does not
+exist. Measured 2026-10-26 end to end on a fresh instance: the whole sequence above runs with no
+manual config step, the runner serves as the agent user, and doctor's isolation checks pass.
 
 `holon doctor` checks the boundary from the agent's side: it asks the runner, as the agent user, who
 it is, whether it can read any secret (the Chair key and the files beside it, the databases,

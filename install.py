@@ -216,8 +216,14 @@ def main(argv: list[str] | None = None) -> int:
         print("6. systemd user units")
         dest = Path(a.systemd_dir).expanduser()
         dest.mkdir(parents=True, exist_ok=True)
-        isolated = bool(tomllib.loads((home / "holon.toml").read_text()).get("isolation", {}).get("agent_user")) \
-            if (home / "holon.toml").exists() else False
+        # `isolated` is the kernel's own answer, not a second read of the config: the agent
+        # user can come from the root script's record when holon.toml is silent (measured
+        # 2026-10-26 on a fresh instance: this line read the TOML directly, saw no
+        # `[isolation] agent_user`, and wrote no broker unit — so the activation sequence broke
+        # at step 3 for exactly the instances the record was built for).
+        from holon.core.paths import Home as _Home
+        from holon.execution.service import Kernel as _Kernel
+        isolated = bool(_Kernel(_Home(home)).isolation)
         names = ["holon-tick.service", "holon-tick.timer"] + (["holon-notion.service"] if notion_cfg.exists() else []) \
             + (["holon-broker.service"] if isolated else [])
         for name in names:

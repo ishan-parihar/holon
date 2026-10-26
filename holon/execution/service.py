@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import pwd
 import re
 import shlex
 import subprocess
@@ -310,10 +311,31 @@ class Kernel:
     def isolation(self) -> dict | None:
         """{"agent_user", "broker", "runner"} when agents run as their own user, else None."""
         c = self.config["isolation"]
-        if not c["agent_user"]:
-            return None
         iid = self.auth.instance_id
-        return {"agent_user": c["agent_user"], "broker": c["broker"] or f"@holon-broker-{iid}",
+        # The account the root script records when it creates the agent user. The activation's
+        # one manual step (measured 2026-10-26) was copying the `[isolation]` block into
+        # holon.toml by hand: the script runs as root, the config is this user's file, so it
+        # could only `echo` the block. The Chair ruled the step automatable, so the script now
+        # writes the name it creates into `$HOLON_HOME/isolation/agent-user` (chowned here) and
+        # this accessor adopts it when the config is silent. The config always wins — an
+        # operator who wrote a name keeps it — and a record naming no account on this host is
+        # refused, because fencing a user that does not exist would break every dispatch.
+        agent_user = c["agent_user"]
+        if not agent_user:
+            record = self.home.root / "isolation" / "agent-user"
+            try:
+                named = record.read_text().strip()
+            except OSError:
+                named = ""
+            if named:
+                try:
+                    pwd.getpwnam(named)
+                except KeyError:
+                    return None
+                agent_user = named
+        if not agent_user:
+            return None
+        return {"agent_user": agent_user, "broker": c["broker"] or f"@holon-broker-{iid}",
                 "runner": c["runner"] or f"@holon-runner-{iid}"}
 
     def _exec(self, cmd: str, cwd: str, env: dict, timeout_s: float) -> tuple[int, str]:

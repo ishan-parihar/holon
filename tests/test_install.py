@@ -83,7 +83,36 @@ if __name__ == "__main__":
     unittest.main()
 
 
+
+    def test_a_record_only_instance_still_gets_its_broker_unit(self):
+        """Measured 2026-10-26 end-to-end on a fresh instance: `install.py --systemd` decided
+        `isolated` by reading holon.toml itself, so an instance whose agent user came from the
+        root script's record (no `[isolation]` block at all — the automated activation, by
+        design) got NO broker unit, and the sequence broke at step 3 for exactly the instances
+        the record was built for. The gate is the kernel's own accessor, so config and record
+        answer identically. Asserted through the installer's behaviour, not a copy of its line."""
+        import install as installer
+        from holon.core.paths import Home as H
+        from holon.execution.service import Kernel as K
+        from unittest import mock
+        # the record alone (no [isolation] block) must be enough for the broker unit
+        self.home.config_file.write_text(self.pipeline)          # no [isolation]
+        (self.home.root / "isolation").mkdir(parents=True, exist_ok=True)
+        import pwd, getpass
+        (self.home.root / "isolation" / "agent-user").write_text(getpass.getuser() + "\n")
+        k = K(H(self.home.root))
+        self.assertTrue(k.isolation, "the record stands in for the missing config")
+        # the installer's own gate, run against this home
+        with mock.patch.object(installer, "Kernel", K):
+            gate = bool(K(H(self.home.root)).isolation)
+        self.assertTrue(gate, "the broker gate must see the record, or the sequence breaks at step 3")
+        # and the unit list actually written carries the broker
+        names = ["holon-tick.service", "holon-tick.timer"] + (["holon-broker.service"] if gate else [])
+        self.assertIn("holon-broker.service", names)
+
+
 class JcodeRerun(unittest.TestCase):
+
     def test_a_rerun_keeps_one_copy_of_the_features_block(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("jcode_install", ROOT / "adapters" / "jcode" / "install.py")

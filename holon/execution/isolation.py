@@ -602,7 +602,17 @@ def setup_plan(k) -> dict:
 # runner service that starts agent processes as that user for this instance's kernel (uid {me.pw_uid}).
 set -eu
 id -u {agent} >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/{agent} --shell /usr/sbin/nologin {agent}
-{config_line}cat > /etc/systemd/system/{unit}.service <<'UNIT'
+# Record the account so the kernel user can find it without an operator's copy-paste. The activation's
+# one manual step (measured 2026-10-26) was copying the `[isolation]` block into holon.toml: this
+# script runs as root, that config is the kernel user's file, so `echo` was all it could do. It writes
+# the name it created instead — into `$HOLON_HOME/isolation/agent-user`, chowned to the kernel user,
+# and `Kernel.isolation` adopts the record when the config is silent (the config always wins, and a
+# record naming no account is refused).
+install -d -o {me.pw_name} -g {me.pw_name} {k.home.root}/isolation
+printf '%s\n' {agent} > {k.home.root}/isolation/agent-user
+chown {me.pw_name}:{me.pw_name} {k.home.root}/isolation/agent-user
+chmod 600 {k.home.root}/isolation/agent-user
+cat > /etc/systemd/system/{unit}.service <<'UNIT'
 [Unit]
 Description=Holon runner: agent processes as {agent} for {me.pw_name}'s instance {k.auth.instance_id}
 After=network-online.target
