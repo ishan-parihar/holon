@@ -373,7 +373,22 @@ def reach(k) -> dict:
     c = k.config["isolation"]
     writes = {Path(r).expanduser() for r in c.get("grants") or []}
     hops: set[Path] = set()
-    reads = {Path(r).expanduser() for r in c.get("reads") or []} | {Path(__file__).resolve().parents[2]}
+    # The distribution trees, not just the one this module was imported from. Measured
+    # 2026-10-26 on the live instance: the kernel user's PATH carries a launcher into one
+    # checkout (`~/.local/bin/holon` → the universal repo), while the doctor that day ran
+    # from the operator's overlay checkout — so `parents[2]` named one tree and the runner's
+    # own `command -v holon` named the other, and the agent user got EACCES on the
+    # distribution's own skills and law files depending on which directory the tick started
+    # in. Two trees, one running kernel: both belong in the reach. `__file__`'s parent is
+    # the imported copy; PATH's is the copy the runner resolves at dispatch; they differ by
+    # a checkout, and a body reading `holon law show` must not depend on the dispatcher's cwd.
+    distro = {Path(__file__).resolve().parents[2]}
+    launcher = shutil.which("holon")
+    if launcher:
+        tree = Path(launcher).resolve().parent.parent
+        if (tree / "holon" / "__init__.py").exists():
+            distro.add(tree)
+    reads = {Path(r).expanduser() for r in c.get("reads") or []} | distro
     # The knowledge bases are read-only to an agent: the kernel is their writer (one verb, one
     # commit, one seat), so the tree is granted as a read, never as a grant. Without this the
     # agent user cannot read the KB it is bound to — `holon kb run` still works, because the

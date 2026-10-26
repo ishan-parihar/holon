@@ -473,6 +473,42 @@ class Setup(KernelCase):
         self.assertTrue((Path(H) / "holon" / "__init__.py").exists(),
                         f"resolved {H!r}, which carries no `holon` package")
 
+    def test_every_distribution_checkout_reaches_the_agent(self):
+        """Measured live 2026-10-26: doctor reported `isolation.reach` — the agent user cannot
+        read the operator's overlay checkout — while the kernel's own reach named only the
+        checkout this module was imported from (`Path(__file__).resolve().parents[2]`). The
+        kernel user's PATH carries a launcher into a DIFFERENT checkout (`~/.local/bin/holon` →
+        the universal repo), and the runner resolves `command -v holon` at dispatch, so which
+        tree the agent could read depended on which directory the tick happened to start in:
+        `holon law show` and the skills library are the distribution's own files, and a body
+        must not depend on its dispatcher's cwd to open them. Both trees belong in the reach."""
+        import tempfile
+        from holon.execution import isolation as iso
+        with tempfile.TemporaryDirectory() as td:
+            tdp = Path(td)
+            # a second checkout with a real launcher, on a PATH the reach will resolve
+            other = tdp / "other"
+            (other / "bin").mkdir(parents=True)
+            (other / "holon").mkdir()
+            (other / "holon" / "__init__.py").write_text("")
+            (other / "bin" / "holon").write_text("#!/bin/sh\nexec true\n")
+            (other / "bin" / "holon").chmod(0o755)
+            self.home.config_file.write_text(self.pipeline + '\n[isolation]\nagent_user = "agent"\n')
+            self.k.close()
+            self.k = Kernel(self.home)
+            os.environ["PATH"] = str(other / "bin") + os.pathsep + os.environ.get("PATH", "")
+            try:
+                r = iso.reach(self.k)
+            finally:
+                os.environ["PATH"] = os.environ["PATH"].replace(str(other / "bin") + os.pathsep, "", 1)
+            reads = set(r["reads"])
+            imported = Path(iso.__file__).resolve().parents[2]
+            self.assertIn(imported, reads, "the imported checkout stays in the reach")
+            self.assertIn(other, reads,
+                          "the checkout the kernel user's PATH resolves `holon` into must be in "
+                          "the reach: the runner resolves it at dispatch, so a body reading the "
+                          "distribution's own skills/law must not depend on the dispatcher's cwd")
+
     def test_an_isolated_spawn_carries_a_path(self):
         """Measured live 2026-10-26: the isolated _exec branch passed `env` alone, so a spawned
         check saw only the shell's built-in PATH (/usr/local/sbin:/usr/local/bin:/usr/bin) —
