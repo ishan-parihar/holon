@@ -126,16 +126,24 @@ def backup(k, dest: str, with_runs: bool = False) -> dict:
     if k.home.config_file.exists():
         shutil.copy2(k.home.config_file, out / "holon.toml")
     trees = _trees(k, with_runs)
+    carried = []
     for t in trees:
         src = k.home.root / t
         if src.is_dir():
             shutil.copytree(src, out / t, ignore=shutil.ignore_patterns(*SKIP_FILES))
+            carried.append(t)
+        # a tree that is not on disk is NOT carried and NOT promised: a workdir the DB
+        # names but the disk does not hold has nothing to carry (measured on the live
+        # instance, 2026-10-26: two routine workdirs that never ran), and a manifest
+        # that promises them makes a restore report success while the tree never comes
+        # back -- and silences doctor's `backup.uncovered`, which reads the manifest.
+        # The missing-workdir case is doctor's own finding, not the backup's.
     files = sorted(p for p in out.rglob("*") if p.is_file())
     manifest = {
         "instance_id": k.auth.instance_id, "created_at": now(), "with_runs": with_runs,
         "migrations": {db: [r[0] for r in conn.execute("SELECT name FROM schema_migrations ORDER BY name")]
                        for db, conn in (("work", k.wconn), ("memory", k.mconn))},
-        "trees": trees,
+        "trees": carried,
         "files": {str(p.relative_to(out)): _sha(p) for p in files},
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))

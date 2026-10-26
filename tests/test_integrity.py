@@ -794,6 +794,38 @@ class Operations(KernelCase):
         findings = [f for f in doctor.run(self.k) if f["check"] == "backup.same_device"]
         self.assertEqual([], findings, "a backup on another device is not a finding")
 
+    def test_the_manifest_does_not_promise_a_tree_it_did_not_copy(self):
+        """A manifest that names a tree the backup does not hold is a false promise.
+
+        Measured on the live instance 2026-10-26: `routines/disk-usage` is named as a
+        workdir by 19 tasks but does not exist on disk (the routines never ran or wrote
+        there), so `backup()` skipped it -- and the manifest still listed it, because the
+        tree list was derived from the DB rather than from what was copied. A restore
+        then reports success while the tree it promised never comes back, and doctor's
+        `backup.uncovered` stays silent because the manifest *claims* the coverage.
+
+        The rule: the manifest records the trees it COPIED. A workdir that no longer
+        exists is not carried -- and that is honest, because there is nothing to carry.
+        The workdir-missing case is doctor's own finding, not the backup's."""
+        from holon.integrity import backup
+        # a workdir the DB names but the disk does not hold
+        wd = self.home.root / "routines" / "ghost"
+        self.add("ghost routine", dept="eng", workdir=str(wd))   # no mkdir: it does not exist
+        out = backup.backup(self.k, str(self.tmp / "bk"))
+        bk = Path(out["path"])
+        manifest = json.loads((bk / "manifest.json").read_text())
+        self.assertNotIn("routines/ghost", manifest["trees"],
+                         "the manifest must not promise a tree it did not copy")
+        # and a tree that DOES exist is still carried
+        wd2 = self.home.root / "routines" / "live"
+        wd2.mkdir(parents=True)
+        (wd2 / "out.md").write_text("x\n")
+        self.add("live routine", dept="eng", workdir=str(wd2))
+        out = backup.backup(self.k, str(self.tmp / "bk"))
+        manifest = json.loads((Path(out["path"]) / "manifest.json").read_text())
+        self.assertIn("routines/live", manifest["trees"],
+                      "a tree that exists on disk is carried and promised")
+
     def test_backup_and_restore_round_trip(self):
         from holon.integrity import backup
         keep = self.add("keep me", dept="eng")
