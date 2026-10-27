@@ -404,6 +404,74 @@ def run(k) -> list[dict]:
                     f"{wd!r}, which does not exist: the kernel will run its command in the run "
                     "directory instead (F6, 2026-10-25)")
 
+    # The wake hole (2026-10-26 audit, G2): an employee nothing wakes cannot work, and
+    # the check above filters `kind='recurring'` -- so the condition that backstop exists to
+    # surface was invisible to it. Measured on the live instance: 7 active employees and 0 wake
+    # schedules, and nothing said so.
+    #
+    # Two provable states, two findings, and the boundary between them is not a guess:
+    #   * **dead wake** (an error naming the employee): the employee HAS wake schedules and
+    #     every one is dead -- either disabled, or naming a stage its roles no longer perform
+    #     (`hr reassign` changes roles without revalidating schedules, so a wake schedule can
+    #     die after the fact). The drift is local and provable, and nothing else surfaces it.
+    #   * **no wake anywhere** (one error naming the instance): no active employee has a live
+    #     wake schedule. The kernel does claim ready work itself (`holon tick` dispatches a
+    #     stage for an employee), so a body with no clock is not by itself unfireable -- but an
+    #     instance where NO body has one is an instance where no clock can wake anyone, which is
+    #     the state the live instance was in and nothing reported.
+    # Both name the command that fixes them. An employee with a live wake schedule is silent
+    # (not folded into the instance-level finding): a check that cried wolf on a healthy
+    # instance would be ignored (the failure mode the ledger records most often). The systemic
+    # branch also requires that the instance has ANY clock at all (a wake or recurring
+    # schedule): an instance with no schedules is pre-clock, and arming its first one is the
+    # Chair's act, not a defect for the heartbeat to escalate.
+    from holon.core import vocab as _vocab
+    _employees = q("SELECT id, name, roles FROM employees WHERE status IN ('active','probation')")
+    _any_clock = q("SELECT 1 FROM schedules WHERE kind IN ('wake','recurring') LIMIT 1")
+    _unwoken = []
+    for emp in _employees:
+        try:
+            roles = json.loads(emp[2] or "[]")
+        except (json.JSONDecodeError, TypeError):
+            roles = []
+        stages = {s for r in roles for s in _vocab.ROLE_STAGES.get(r, ())}
+        wakes = [w for w in q("SELECT id, stage, cron, enabled FROM schedules WHERE kind='wake' "
+                              "AND employee_id=?", emp[0])]
+        # a wake schedule with no stage wakes the employee for any stage its roles allow; one
+        # with a stage is live only while the employee still performs that stage.
+        live = [w for w in wakes if w[3] and (not w[1] or w[1] in stages)]
+        if live:
+            continue
+        _unwoken.append((emp, roles, stages, wakes))
+    if _any_clock and _employees and len(_unwoken) == len(_employees):
+        add("error", "schedule.nowake",
+            f"{len(_unwoken)} active employee(s) and no employee has a live wake schedule: no "
+            f"clock can wake any of them, so nothing schedules work into this organization "
+            f"(the kernel still claims ready stages by hand: `holon dispatch --as <id> "
+            f"--stage <stage>`). Fix with `holon schedule add --as <id> --kind wake --cron "
+            f"\"*/15 * * * *\" --stage <stage>` per employee, where <stage> is one each "
+            f"performs")
+    else:
+        for emp, roles, stages, wakes in _unwoken:
+            # reaches here only because SOME employee is woken, so the instance has a live
+            # path: this body's finding is local and must name a schedule. A body with no
+            # schedule at all in this branch is NOT reported -- the kernel claims ready
+            # stages itself, so a clock-less body is not by itself unfireable, and crying
+            # wolf on it is exactly the failure mode the ledger records most often.
+            if not wakes:
+                continue
+            dead = wakes[0]
+            why = (f"its wake schedule {dead[0]} names the {dead[1]} stage, which its current "
+                   f"roles ({', '.join(roles) or 'none'}) no longer perform" if dead[1] else
+                   f"its wake schedule {dead[0]} is disabled")
+            add("error", "schedule.nowake",
+                f"employee {emp[0]} ({emp[1]}, {', '.join(roles) or 'no roles'}) cannot be "
+                f"dispatched by its clock: {why}: the schedule cannot wake it (fix: "
+                f"`holon schedule enable {dead[0]}` -- named with `--force`, which it takes only "
+                f"if the lane is unstaffed -- or `holon schedule add --as {emp[0]} "
+                f"--kind wake --cron \"*/15 * * * *\" --stage <stage>`, where <stage> is "
+                f"one it performs: {', '.join(sorted(stages)) or 'none'})")
+
     # A3 (2026-10-22 audit): a result's `artifacts` are the permanent record of what it left
     # behind, and until now nothing re-read them — two of six live pointers had already stopped
     # resolving, rotted in `outputs` where only a verifier's glance ever saw them. Re-resolve

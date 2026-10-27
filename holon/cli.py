@@ -755,7 +755,7 @@ def cmd_tick(args, k):
                     f"fired {len(out['fired'])} schedules")
 
 
-@command("schedule add", "chair", "when an employee wakes (wake) or a recurring plan fires (recurring)",
+@command("schedule add", "chair", "when an employee wakes (wake) or a recurring plan fires (recurring): a wake schedule is what dispatches a body at all",
          AS, arg("--kind", required=True, choices=list(vocab.SCHEDULE_KINDS)), arg("--cron", required=True,
                                                                                  help="5-field cron, UTC"),
          arg("--stage", choices=list(vocab.STAGES), help="wake: only this stage"),
@@ -1068,7 +1068,7 @@ def cmd_schedule_list(args, k):
                                + (f" stage={r['stage']}" if r["stage"] else "") for r in rows) or "no schedules")
 
 
-@command("schedule enable", "chair", "enable a schedule (refuses an unstaffed lane unless --force)",
+@command("schedule enable", "chair", "enable a schedule (refuses an unstaffed lane unless --force; the refusal names the hire that works in that department's charter)",
          arg("schedule_id"), arg("--force", action="store_true",
                                    help="the Chair's explicit word: light it though its lane is unstaffed"))
 def cmd_schedule_enable(args, k):
@@ -1571,7 +1571,7 @@ def cmd_lint(args, k):
     return 1 if errors or (args.strict and lint.strict_fails(warns)) else 0
 
 
-@command("doctor", "any", "check the instance's live state: integrity, invariants, audit chain, security",
+@command("doctor", "any", "check the instance's live state: integrity, invariants, audit chain, security, and the operationalization backstops (schedule.unstaffed, schedule.workdir, schedule.nowake, artifacts.dangling)",
          mutates=False)
 def cmd_doctor(args, k):
     from holon.integrity import doctor

@@ -231,5 +231,242 @@ class StaffingReach(KernelCase):
                         f"a maker in the dept covers fast: {reasons}")
 
 
+class TheNamedRemediationWorks(OperationalGates):
+    """The gate's refusal must name a hire command that **runs** (2026-10-26 audit, G1).
+
+    Measured 2026-10-26: the shared refusal message ended with
+    `holon hr hire --dept <slug> --slot maker --driver <driver> …`, and `maker` is a slot of
+    the **light** profile only. The live Executive Office is on the **executive** profile
+    (slots ceo/strategy/audit/charter), so there the gate refused a schedule and then named
+    a hire command that refused too:
+
+        OrgError: department execdept (profile executive) has no slot 'maker';
+        slots: ['ceo', 'strategy', 'audit', 'charter']
+
+    This is the ledger's own class -- *a message that names the fix must name the fix that
+    works* -- and the guard is written to the class, not to the wording: it **runs** the
+    command the note names, on a scratch instance of each profile, and asserts the hire
+    succeeds. A guard that asserted the note contains the word `executor` would pass while
+    the command still refused, which is the failure being fixed.
+    """
+
+    def _note_for(self, profile_name: str, slug: str = "dept", lane: str = "full") -> str:
+        """The refusal message for an unstaffed department on the given profile."""
+        from holon.execution import bylaws as B
+        from holon.execution import schedules as S
+        d = self.k.org.create_dept(slug, "Dept", "A department", profile=B.load_profile(profile_name))
+        return S.staffing_note(self.k.wconn, d["id"], lane)
+
+    def _run_named_hire(self, note: str, slug: str) -> dict:
+        """Run the hire command the note names, with its placeholders filled.
+
+        The command is parsed out of the message rather than rebuilt from the code, so the
+        guard measures what a reader of the message would actually type.
+        """
+        import re
+        import shlex
+        m = re.search(r"holon hr hire ([^\n`]+)", note)
+        self.assertIsNotNone(m, f"the note names no hire command: {note!r}")
+        argv = shlex.split(m.group(1).replace("…", "").replace("<driver>", "fake")
+                           .replace("<slug>", slug).replace("--dept " + slug, "--dept " + slug))
+        # every placeholder filled; a leftover angle bracket means the note named something
+        # the guard cannot run, which is itself a defect.
+        self.assertNotIn("<", " ".join(argv), f"the note names an unfillable placeholder: {argv}")
+        dept = argv[argv.index("--dept") + 1]
+        kwargs = {}
+        if "--slot" in argv:
+            kwargs["slot"] = argv[argv.index("--slot") + 1]
+        if "--roles" in argv:
+            kwargs["roles"] = argv[argv.index("--roles") + 1].split(",")
+        driver = argv[argv.index("--driver") + 1]
+        return self.k.org.hire(name="Rex", title="Hire", dept=dept, job_description=JD,
+                               driver=driver, reason="the gate named this hire", **kwargs)
+
+    def test_the_named_hire_works_on_every_profile(self):
+        """One guard per profile AND lane: the command the refusal names must hire, and it
+        must leave **nothing** the note complained about unstaffed.
+
+        The "nothing left" half matters: a command that hires an employee covering only part of
+        the missing stages would pass a guard that checks one stage, and the firing would still
+        wait with nobody to claim it -- the exact condition the gate exists to prevent.
+        """
+        for profile, slug in (("light", "lprof"), ("standard", "sprof"), ("executive", "eprof")):
+            for lane in ("fast", "full"):
+                with self.subTest(profile=profile, lane=lane):
+                    note = self._note_for(profile, f"{slug}-{lane}", lane)
+                    e = self._run_named_hire(note, f"{slug}-{lane}")
+                    self.assertIn("executor", e["roles"],
+                                  f"the hire the note names must cover the execute stage: {e}")
+                    from holon.execution import schedules as S
+                    d = self.k.org.dept(f"{slug}-{lane}")
+                    self.assertEqual(set(), S.unstaffed_stages(self.k.wconn, d["id"], lane),
+                                     f"after the hire the note names, {lane} is still unstaffed in {slug}")
+
+    def test_the_note_does_not_name_a_slot_the_department_does_not_have(self):
+        """The narrow half of the same defect: the note's slot must exist in the charter."""
+        from holon.execution import bylaws as B
+        from holon.execution import schedules as S
+        d = self.k.org.create_dept("eprof", "Dept", "A department", profile=B.load_profile("executive"))
+        note = S.staffing_note(self.k.wconn, d["id"], "full")
+        slots = {s["name"] for s in B.load_profile("executive")["slots"]}
+        tokens = note.split()
+        for i, token in enumerate(tokens):
+            if token == "--slot":
+                named = tokens[i + 1]
+                self.assertIn(named, slots,
+                              f"the note names slot {named!r}, which the executive profile does not "
+                              f"have (slots: {sorted(slots)}): {note!r}")
+
+
+class TheWakeHole(OperationalGates):
+    """An employee nothing wakes is an employee who cannot work (2026-10-26 audit, G2).
+
+    Measured 2026-10-26 on the live instance: **7 active employees and 0 wake schedules**.
+    A wake schedule is the mechanism that makes an employee run at all (`vocab.SCHEDULE_KINDS`
+    carries `wake` beside `recurring`), and the staffing backstop built on 2026-10-25 filters
+    `kind='recurring'` -- so the condition the backstop exists to surface ("a system that
+    cannot operate, with no surface naming it") was itself invisible to it. The word `wake`
+    appeared in no file under `holon/integrity/`.
+
+    Three guards, because "no wake schedule" and "a wake schedule that cannot fire" are
+    different states and only the first is obvious:
+
+    - an instance where **no active employee** has a live wake schedule is an **error**
+      (no clock can wake anyone: nothing schedules work into the organization), and the
+      message names the fix;
+    - an employee with a **dead** wake schedule is an **error naming that employee** while a
+      colleague who IS woken stays silent -- the drift case (`hr reassign` changes roles
+      without revalidating schedules, so a wake schedule becomes dead after the fact);
+    - an employee with a live wake schedule is **silent** (a healthy instance must not cry
+      wolf -- the failure mode the ledger records most often).
+
+    Why the predicate is narrower than "no wake schedule": the kernel claims ready stages
+    itself (`holon tick` dispatches a stage for an employee), so a body with no clock is not
+    by itself unfireable -- the whole test suite is that pattern. An instance where NO body has
+    a clock is the state that cannot operate without a surface naming it, and it is provable
+    without guessing what other dispatch paths exist.
+    """
+
+    def _employee(self, name="Waker", roles=None):
+        e = self.k.org.hire(name=name, title="Worker", dept="eng", job_description=JD,
+                            roles=roles or ["executor"], driver="fake", reason="test", status="active")
+        return e
+
+    def _wake(self, emp_id, stage=None, cron="*/15 * * * *"):
+        return self.k.schedules.add("wake", cron, employee_id=emp_id, stage=stage)
+
+    def test_an_employee_no_wake_schedule_can_reach_is_an_error(self):
+        """The systemic hole: no active employee has a live wake schedule.
+
+        The instance carries a recurring schedule (so it is clocked, not pre-clock: an instance
+        with no schedules at all is the Chair's act to arm, not the heartbeat's to escalate),
+        and no employee has a wake schedule -- so nothing wakes anyone. The finding names the
+        instance, and the message names the command that fixes it.
+        """
+        from holon.integrity import doctor
+        # an instance that IS clocked: a disabled wake schedule proves the clock mechanism was
+        # armed. (A recurring schedule needs an approved recurring plan, which is not what this
+        # guard is about.) Its employee is retired, so no ACTIVE body carries a dead schedule
+        # -- which is what keeps this the instance-level finding rather than a drift finding.
+        gone = self._employee("Retired")
+        w = self._wake(gone["id"])
+        self.k.wconn.execute("UPDATE schedules SET enabled=0 WHERE id=?", (w["id"],))
+        self.k.org.fire(gone["id"], "test: retire so no active body carries a dead schedule")
+        self._employee("Wanderer")
+        found = {f["check"]: f for f in doctor.run(self.k)}
+        self.assertIn("schedule.nowake", found,
+                      f"an instance where no employee can be woken must be reported: {sorted(found)}")
+        self.assertEqual(found["schedule.nowake"]["severity"], "error",
+                         "the heartbeat turns an error into an incident; a warning would be a "
+                         "note nobody reads")
+        self.assertIn("no employee has a live wake schedule", found["schedule.nowake"]["message"],
+                      "the finding must name the systemic condition, not one unlucky body")
+        self.assertIn("schedule add", found["schedule.nowake"]["message"],
+                      "the message must name the command that fixes it")
+
+    def test_a_pre_clock_instance_is_not_the_systemic_hole(self):
+        """The other side of the same boundary: an instance with no schedules at all.
+
+        Arming the first schedule is the Chair's act; the heartbeat escalating it as an error
+        on every fresh instance (init creates employees and no clocks) would cry wolf on the
+        state the distribution ships in. Pre-clock is not broken-clock.
+        """
+        from holon.integrity import doctor
+        self._employee("Wanderer")
+        self.assertNotIn("schedule.nowake",
+                         [f["check"] for f in doctor.run(self.k)],
+                         "an instance that has never armed a clock is pre-clock, not defective")
+
+    def test_one_woken_employee_is_not_folded_into_the_instance_finding(self):
+        """The predicate's boundary: a colleague with a live wake schedule is not named.
+
+        Without this, the systemic finding would over-report every employee on an instance
+        where one body is woken and the rest are not -- which is the healthy pull-mode shape
+        the whole suite runs on (the kernel claims ready stages by hand).
+        """
+        from holon.integrity import doctor
+        woken = self._employee("Woken")
+        self._wake(woken["id"])
+        found = {f["check"]: f for f in doctor.run(self.k)}
+        if "schedule.nowake" in found:
+            self.assertNotIn(woken["id"], found["schedule.nowake"]["message"],
+                             f"a woken employee must not be named by the finding: {found}")
+
+    def test_an_employee_with_a_live_wake_schedule_is_not_reported(self):
+        """The scheduled employee is not named -- which is the check's promise.
+
+        The promise is per-employee, not per-instance: an instance has other bodies (the
+        fixture's own staff), and each of *those* without a wake path is correctly reported.
+        Asserting "no findings at all" would pass only on an instance where every employee
+        happens to be scheduled, and would fail for the wrong reason on any other -- so the
+        guard names the employee it scheduled and asserts the finding does not carry its id.
+        """
+        from holon.integrity import doctor
+        e = self._employee("Waker")
+        self._wake(e["id"])
+        found = doctor.run(self.k)
+        mine = [f for f in found if f["check"] == "schedule.nowake" and e["id"] in f["message"]]
+        self.assertEqual([], mine,
+                         f"an employee with a live wake schedule must not be named: {mine}")
+
+    def test_a_pull_mode_instance_with_one_woken_employee_is_silent(self):
+        """The case the first draft of this check failed (the suite's own healthy fixture).
+
+        A healthy instance whose employees are dispatched by claim (the kernel claims ready
+        stages itself) has employees with no wake schedule and is NOT defective -- reporting it
+        would cry wolf on every healthy suite run, and a check nobody trusts is a check nobody
+        reads. The guard is that one live wake path silences the instance-level finding even
+        though the instance's other bodies have no clock of their own.
+        """
+        from holon.integrity import doctor
+        e = self._employee("Waker")
+        self._wake(e["id"])
+        self.assertNotIn("schedule.nowake",
+                         [f["check"] for f in doctor.run(self.k)],
+                         "a healthy instance with at least one live wake schedule is silent")
+
+    def test_a_wake_schedule_the_employee_can_no_longer_perform_is_an_error(self):
+        """The drift case, end to end through the real `hr reassign` that causes it.
+
+        `hr reassign` changes roles without revalidating schedules, so a wake schedule can name
+        a stage the employee no longer performs. A woken colleague is present because the
+        per-employee branch is only reached when SOME employee is woken -- without one, the
+        same state is the systemic hole (reported, but at the instance, not by name).
+        """
+        from holon.integrity import doctor
+        colleague = self._employee("Woken", roles=["executor"])
+        self._wake(colleague["id"])
+        e = self._employee("Drifter", roles=["planner", "executor"])
+        self._wake(e["id"], stage="plan")
+        self.k.org.reassign(e["id"], "narrowed", roles=["executor"])
+        found = {f["check"]: f for f in doctor.run(self.k)}
+        self.assertIn("schedule.nowake", found,
+                      "a wake schedule for a stage the employee can no longer perform is dead: "
+                      f"{sorted(found)}")
+        self.assertIn(e["id"], found["schedule.nowake"]["message"])
+        self.assertNotIn(colleague["id"], found["schedule.nowake"]["message"],
+                         "the woken colleague must not be named by the drifted finding")
+
+
 if __name__ == "__main__":
     unittest.main()

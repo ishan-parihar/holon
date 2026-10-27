@@ -48,14 +48,67 @@ def unstaffed_stages(conn: sqlite3.Connection, dept_id: str | None, lane: str) -
     return need - covered
 
 
+def hire_command(conn: sqlite3.Connection, dept_id: str | None, missing: list[str]) -> str:
+    """The hire that would cover the missing stages, in the department's own vocabulary.
+
+    Measured 2026-10-26: the refusal message named `holon hr hire --slot maker` for every
+    department, and `maker` is a slot of the **light** profile only. The live Executive
+    Office is on the **executive** profile (slots ceo/strategy/audit/charter), so there the
+    gate refused a schedule and then named a hire command that refused too:
+
+        OrgError: department execdept (profile executive) has no slot 'maker';
+        slots: ['ceo', 'strategy', 'audit', 'charter']
+
+    This is the ledger's own class -- a message that names the fix must name the fix that
+    works -- and it is the gate's only remediation, so a reader who runs it meets a second
+    refusal with nothing to act on.
+
+    The rule, from the department's own charter: for each missing stage, a slot whose roles
+    cover it (light: `maker` = planner+executor; standard: `planner`/`executor`); and where
+    the profile has **no** slot for a stage (the executive profile covers no execute stage),
+    the honest answer is the **role** (`--roles executor`), which `hr hire` accepts. The
+    command is therefore derived, never assumed.
+    """
+    from holon.execution import bylaws as B
+    row = conn.execute("SELECT slug, bylaws FROM departments WHERE id=?", (dept_id,)).fetchone() \
+        if dept_id else None
+    slug = row[0] if row else (dept_id or "org")
+    profile = json.loads(row[1]) if row and row[1] else B.load_profile("light")
+    slots = profile.get("slots") or []
+    # the role that performs each missing stage
+    stage_roles: list[str] = []
+    for stage in missing:
+        role = next((r for r, stages in vocab.ROLE_STAGES.items() if stage in stages), None)
+        if role and role not in stage_roles:
+            stage_roles.append(role)
+    parts = [f"--dept {slug}"]
+    # Prefer the charter's own slot, when ONE slot covers EVERY missing stage (the profile-shaped
+    # hire: fill the slot, and the department gains exactly what it lacks). A slot that covers
+    # only part of the need would leave the firing still unstaffed, so it does not qualify.
+    covering = [s["name"] for s in slots
+                if stage_roles and all(r in (s.get("roles") or []) for r in stage_roles)]
+    if len(covering) == 1:
+        parts.append("--slot " + covering[0])
+    elif stage_roles:
+        # Otherwise one hire with the roles that cover the missing stages: `hr hire` accepts a
+        # role list, so this always works and always covers everything the note complained about
+        # (a slot that covers only part of it would leave the firing still unstaffed).
+        parts.append("--roles " + ",".join(stage_roles))
+    else:
+        # no vocabulary mapping: name the stage-free form and let the reader decide
+        parts.append("--roles " + ",".join(missing))
+    parts.append("--driver <driver>")
+    return "holon hr hire " + " ".join(parts)
+
+
 def staffing_note(conn: sqlite3.Connection, dept_id: str | None, lane: str) -> str:
     """The gate's one refusal message, shared by every consumer — a message that names the act
     that fixes it (the remediation-class lesson: a refusal must name a command that works)."""
     slug = conn.execute("SELECT slug FROM departments WHERE id=?", (dept_id,)).fetchone()
     missing = ", ".join(sorted(unstaffed_stages(conn, dept_id, lane)))
     return (f"no employee in {slug[0] if slug else dept_id} performs {missing}: the firing will wait with "
-            f"nobody to claim it (hire: `holon hr hire --dept {slug[0] if slug else dept_id} --slot maker "
-            "--driver <driver> …`, or --force for the Chair's explicit word)")
+            f"nobody to claim it (hire: `{hire_command(conn, dept_id, sorted(unstaffed_stages(conn, dept_id, lane)))}`, "
+            "or --force for the Chair's explicit word)")
 
 KINDS = vocab.SCHEDULE_KINDS
 

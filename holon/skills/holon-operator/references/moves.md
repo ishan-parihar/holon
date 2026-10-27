@@ -16,6 +16,19 @@ be safe. A move performed without these is a preference with a command on it.
   is the backstop) — so an unstaffed enable is never an oversight the organization discovers
   when a firing strands. Stage architecture ahead of staffing if the Chair asks; never *light*
   it ahead of staffing. A driver nothing configures is refused at `$holon hr hire` itself.
+- **A wake path before its staff sit idle.** A `wake` schedule is what dispatches a body at all:
+  an employee with no enabled wake schedule is an employee who cannot work, and doctor's
+  `schedule.nowake` (an error) names the two states it can prove — **no employee on the
+  instance** has a live wake schedule (nothing wakes anyone), and an employee whose wake
+  schedule is **dead** (disabled, or naming a stage `$holon hr reassign` dropped out from under
+  it). A lone clock-less body is not by itself defective: the kernel claims ready stages
+  itself, so an instance where one body is woken is healthy. An instance with no schedules at
+  all is **pre-clock**, not broken-clock — arming the first one is the Chair's act, and a
+  routine's staffing and an employee's wake path are two halves of the same question.
+- **A refusal that names the fix must name a fix that works.** The staffing refusal names a hire
+  drawn from the department's own charter (its profile's slots, or the roles it lacks), never a
+  slot name that exists in one profile and not in the department's. Read the command that comes
+  back at you before you paste it; if it would refuse, the refusal was wrong.
 - **Its outcome measure.** What `$holon metrics --dept <slug>` shows when it is working. If that
   cannot be stated, the boundary is wrong.
 - **A candidate from outside lands unapproved.** An import is not an approval: `$holon venture

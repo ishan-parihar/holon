@@ -317,6 +317,36 @@ reads that before deciding. `holon hr hire` refuses a driver nothing configures 
 lists them) — a hire that would strand on its first dispatch is not accepted; a department
 restore is exempt, because the archive's driver names are fidelity to the machine that had them.
 
+**A refusal that names the fix must name the fix that works (2026-10-26).** The staffing refusal
+named one hire command (`--slot maker`) for every department, and `maker` is a slot of the
+**light** profile only. The live Executive Office is on the **executive** profile
+(`ceo`/`strategy`/`audit`/`charter`), so the gate was refusing a schedule and then naming a command
+that refused too. The hire it names is derived from the department's own charter — the charter's
+bylaws blob, never a constant — and the rule is one: prefer the department's own slot when **one**
+slot covers **every** missing stage, otherwise name the roles that cover them (which `hr hire`
+accepts, and which always cover everything the note complained about). The guard that holds it
+does not check the wording; it runs the command the message names, per profile and per lane, and
+asserts the hire succeeds and nothing the note complained about remains unstaffed.
+
+**An employee nothing wakes is an employee who cannot work (2026-10-26).** A `wake` schedule is
+the other schedule kind — the one that dispatches a body at all — and `schedule.unstaffed` above
+reads recurring schedules only, so an instance whose employees have no wake schedules could run
+nothing while every surface read quiet (measured: 7 active employees, 0 wake schedules).
+doctor's `schedule.nowake` (an error the heartbeat escalates) reports the two states the
+kernel can prove: an instance where **no active employee** has a live wake schedule (no clock
+can wake anyone — one finding naming the instance), and an employee whose **every** wake
+schedule is dead — disabled, or naming a stage `hr reassign` dropped out from under it, since
+that operation changes roles without revalidating schedules (a finding naming that employee,
+reached only while another employee IS woken). The predicate is deliberately narrower than
+"no wake schedule": the kernel claims ready stages itself, so a clock-less body is not by
+itself unfireable, and an instance where one body is woken and the rest are not is healthy,
+not defective. Narrower again at the other edge: an instance with **no schedules at all** is
+**pre-clock** — arming its first schedule is the Chair's act, so the systemic branch also
+requires that the instance has a clock. With a live wake schedule the body is silent: a check
+that cried wolf on a healthy instance would be ignored (the failure mode the ledger records
+most often). Its message names the fix with the flag a gated command takes and when: `holon
+schedule enable` carries `--force` only for an unstaffed lane, and doctor says so.
+
 **Outside-reach has two witnesses.** The decision model judges it (the `external` question, held
 at G3 when `external_p ≥ [lanes] external_p_max`), and the **job's own words** name it: a title or
 intent that contains an outside-reach verb — *send, post, publish, apply, outreach, email, dm,

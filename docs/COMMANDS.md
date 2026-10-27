@@ -142,9 +142,9 @@ is not in this file fails `holon lint` — so this file can never drift from the
 
 | Command | Actor | What it does |
 |---|---|---|
-| `holon schedule add` `--as` `--kind` `--cron` `--stage` `--plan` | chair | when an employee wakes (wake) or a recurring plan fires (recurring) |
+| `holon schedule add` `--as` `--kind` `--cron` `--stage` `--plan` | chair | when an employee wakes (wake) or a recurring plan fires (recurring): a wake schedule is what dispatches a body at all |
 | `holon schedule disable` <schedule_id> | chair | disable a schedule |
-| `holon schedule enable` `--force` <schedule_id> | chair | enable a schedule (refuses an unstaffed lane unless --force) |
+| `holon schedule enable` `--force` <schedule_id> | chair | enable a schedule (refuses an unstaffed lane unless --force; the refusal names the hire that works in that department's charter) |
 | `holon schedule list` | any | schedules |
 | `holon routine add` `--intent` `--dept` `--cron` `--on` `--lane` `--command` `--rubric` `--why` `--deliver` `--workdir` `--task-class` `--risk` `--project` <title> | chair | a recurring job, in the cheapest lane that does it reliably (script, fast, full); the classifier enforces the lane and the routine goes to its approver |
 | `holon routine fire` `--payload` `--payload-file` <schedule_id> | kernel | fire an event routine: the runtime that saw a matching event calls this (once per cooldown, with the payload on the work) |
@@ -172,7 +172,7 @@ is not in this file fails `holon lint` — so this file can never drift from the
 | Command | Actor | What it does |
 |---|---|---|
 | `holon lint` `--pack` `--strict` | any | check the distribution and instance artifacts: schema, references, bindings, depth, redundancy, agnosticism, tables |
-| `holon doctor` | any | check the instance's live state: integrity, invariants, audit chain, security |
+| `holon doctor` | any | check the instance's live state: integrity, invariants, audit chain, security, and the operationalization backstops (schedule.unstaffed, schedule.workdir, schedule.nowake, artifacts.dangling) |
 | `holon gc` `--apply` `--force` | chair | collect what [retention] says is expired: run directories of closed work (a gold standard's and a judged run's result.json and trajectory.json are kept) and old messages. Dry run by default; --apply refuses without a recent backup |
 | `holon backup` `--to` `--with-runs` | chair | a consistent copy of this instance (databases, config, skills, bylaws; never secrets) |
 | `holon restore` `--force` `--verify-only` <path> | chair | restore a backup into this instance (verifies its checksums first) |
