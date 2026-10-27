@@ -499,11 +499,13 @@ class TheNamedRemediationWorks(OperationalGates):
                                 f": {argv}")
 
     def _run_named_hire(self, note: str, slug: str) -> dict:
-        """Run the hire command the note names, with its placeholders filled.
+        """Run the hire command the note names, with ONLY the operator's placeholders filled.
 
         The command is parsed out of the message rather than rebuilt from the code, so the
-        guard measures what a reader of the message would actually type.
-        """
+        guard measures what a reader of the message would actually type. The values filled
+        are the ones the message itself marks as the operator's to set (`--name`, `--title`,
+        `--jd`); everything else -- the department, the slot or roles, the driver -- is
+        whatever the message printed, because that is what a reader types."""
         import re
         import shlex
         m = re.search(r"holon hr hire ([^\n`]+)", note)
