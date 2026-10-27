@@ -25,10 +25,13 @@ be safe. A move performed without these is a preference with a command on it.
   itself, so an instance where one body is woken is healthy. An instance with no schedules at
   all is **pre-clock**, not broken-clock — arming the first one is the Chair's act, and a
   routine's staffing and an employee's wake path are two halves of the same question.
-- **A refusal that names the fix must name a fix that works.** The staffing refusal names a hire
-  drawn from the department's own charter (its profile's slots, or the roles it lacks), never a
-  slot name that exists in one profile and not in the department's. Read the command that comes
-  back at you before you paste it; if it would refuse, the refusal was wrong.
+- **A refusal that names the fix must name a fix that runs.** The staffing refusal names a hire
+  drawn from the department's own charter (its profile's slots, or the roles it lacks), the driver
+  from the drivers the instance configures (`$holon drivers`), and never a placeholder for you to
+  fill — a required flag with `<value>` printed is a second refusal waiting. A *force* escape is
+  named only by the surface that has one: the enable gate's `--force`, not the approval's. Read
+  the command that comes back at you before you paste it; if it would refuse, the refusal was
+  wrong.
 - **Its outcome measure.** What `$holon metrics --dept <slug>` shows when it is working. If that
   cannot be stated, the boundary is wrong.
 - **A candidate from outside lands unapproved.** An import is not an approval: `$holon venture

@@ -297,7 +297,7 @@ class Kernel:
         self.decider = Decider(self.config["classifier"])
         self._build_cache: dict[str, str | None] = {}   # driver → harness build (H10), one probe per process
         self.skills = Library(home)
-        self.schedules = Schedules(self.wconn, actor)
+        self.schedules = Schedules(self.wconn, actor, self.home)
         if not readonly:
             self.org.bootstrap()
         self.auth = security.Auth(self.wconn, home)
@@ -1472,7 +1472,8 @@ class Kernel:
         # staffing is legitimate: the ventures import parked 26 of them), but the Chair approves
         # knowing exactly who is missing. The script lane needs nobody: the kernel is its runner.
         if unstaffed_stages(self.wconn, dept_id, lane):
-            reasons.append("unstaffed for its lane: " + staffing_note(self.wconn, dept_id, lane)
+            reasons.append("unstaffed for its lane: " + staffing_note(self.wconn, dept_id, lane,
+                                                                    self.home)
                            + " (the schedule will also refuse to enable until staffed)")
         if deliver and not (self.config.get("notify") or {}).get("command"):
             reasons.append("--deliver is set but no [notify] command is configured: finished results "
@@ -1513,7 +1514,11 @@ class Kernel:
         body = self.work.output(a["_plan"])["body"]
         if not a.get("starts_disabled") and unstaffed_stages(self.wconn, src["dept_id"], body.get("lane") or "full"):
             raise ValueError("the approval would start an unstaffed schedule: "
-                             + staffing_note(self.wconn, src["dept_id"], body.get("lane") or "full"))
+                             + staffing_note(self.wconn, src["dept_id"], body.get("lane") or "full",
+                                              self.home,
+                                              escape="or approve it disabled, then light it with "
+                                                     "`holon schedule enable --force` when the Chair "
+                                                     "decides the department can serve it"))
         sid = self.schedules.insert("recurring", a.get("cron") or "", template_id=a["_plan"], event=a.get("event"))
         if a.get("starts_disabled"):
             # I1: an outside-reach import (G3+) starts OFF; one bulk approval must never light an

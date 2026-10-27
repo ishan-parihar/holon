@@ -328,6 +328,27 @@ accepts, and which always cover everything the note complained about). The guard
 does not check the wording; it runs the command the message names, per profile and per lane, and
 asserts the hire succeeds and nothing the note complained about remains unstaffed.
 
+**The command must run as printed, with no placeholder for the reader to fill (2026-10-27).**
+The first guard for the law above filled the placeholders it found before running the command,
+so it proved the command would work *if* the reader guessed the values. Running the printed
+command instead found the last half of the class: the note named `--driver <driver>`, and
+`--driver` is required — so the operator met a second refusal, a usage dump, and no way to
+know what to put there. Every value the command carries is therefore **derived**: the slot
+(or roles) from the department's charter, the driver from the drivers the instance configures
+(`holon drivers`, whose builtin is always present, so the name is always valid). The rule
+outlives this message: **a guard that substitutes the value it is testing for proves nothing
+about the value** — measure what the reader would type.
+
+**An escape is named by the surface that owns it, never by the string it shares (2026-10-27).**
+The staffing note is one string printed by four consumers, and only the enable gate offers
+`--force` — `plan approve` carries no such flag, so the approval's refusal told the Chair to
+run a flag that does not exist, which is the remediation class one layer deeper (the gate
+refuses, names the fix, and the fix's escape does not exist). The clause therefore belongs to
+the surface: the shared note names none, the enable gate states its own `--force` (recorded
+in the event log), and the approval names the escape that genuinely exists there — approve it
+disabled, then light it with the enable gate when the Chair decides. A shared message may
+carry the *condition* and the *fix*; a flag is a fact about one door.
+
 **An employee nothing wakes is an employee who cannot work (2026-10-26).** A `wake` schedule is
 the other schedule kind — the one that dispatches a body at all — and `schedule.unstaffed` above
 reads recurring schedules only, so an instance whose employees have no wake schedules could run

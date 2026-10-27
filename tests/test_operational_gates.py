@@ -95,6 +95,52 @@ class OperationalGates(LaneCase):
         s = self.k.schedules.set_enabled(sid, True)   # and re-enable is fine too
         self.assertTrue(s["enabled"])
 
+    def test_no_consumer_names_an_escape_it_does_not_offer(self):
+        """The note's `--force` clause must be true of the surface printing it.
+
+        Found 2026-10-27 by validating the shared message against each of its four consumers.
+        The clause is true at the enable gate (where `--force` exists and is recorded in the
+        event log) and FALSE where the note appears as a proposal's grade reason, an
+        approval's refusal and doctor's backstop -- `plan approve` carries no `--force` at
+        all, so the approval's refusal told the Chair to run a flag that does not exist.
+        That is the remediation class again, one layer deeper: the gate refuses, names the
+        fix, and the fix's escape does not exist.
+
+        The rule the guard holds: a note's escape clause is named by the SURFACE that prints
+        it, not by the shared string.
+        """
+        from holon import cli
+        from holon.execution.schedules import staffing_note
+        forces = {' '.join(c.path) for c in cli.REGISTRY
+                  if "--force" in [a[0] for a, _ in (c.args or [])]}
+        # the enable gate offers it; the approval command does not
+        self.assertIn("schedule enable", forces, "the Chair's escape at the enable gate")
+        self.assertNotIn("plan approve", forces,
+                         "the approval transaction carries no --force: any note naming one there "
+                         "sends the Chair to a flag that does not exist")
+        # and the note, printed by each consumer, must not promise a flag that consumer lacks
+        note = staffing_note(self.k.wconn, None, "fast", self.k.home)
+        self.assertNotIn("--force", note,
+                         "the shared note names no flag: the escape belongs to the surface that "
+                         f"owns it (the enable gate), and each surface states its own: {note}")
+
+    def test_the_grade_reason_does_not_promise_the_chair_a_flag_that_does_not_exist(self):
+        """The proposal's reason is read BEFORE the enable gate exists as a decision.
+
+        A grade reason is informational: the approver reads it, then decides. It must not tell
+        them a flag they can pass on a command that has none. Where the note names a force
+        escape at all, it names the gate that owns it -- the enable -- and says so.
+        """
+        a = self._unstaffed_routine("fast")
+        plan = self.k.work.plan_for_approval(a["id"])
+        reasons = json.loads(self.k.work.get(plan["id"])["grade_reasons"] or "[]")
+        for r in reasons:
+            if "no employee in ghost performs" not in r:
+                continue
+            self.assertNotRegex(r, r"--force\b(?!.*schedule enable)",
+                                 "a proposal's reason must not name --force without naming the "
+                                 f"gate that owns it: {r}")
+
     def test_the_chair_may_force_an_unstaffed_enable(self):
         """The gate's escape: the Chair's explicit word, recorded in the event log."""
         sid = self._parked_import()
@@ -256,6 +302,65 @@ class TheNamedRemediationWorks(OperationalGates):
         from holon.execution import schedules as S
         d = self.k.org.create_dept(slug, "Dept", "A department", profile=B.load_profile(profile_name))
         return S.staffing_note(self.k.wconn, d["id"], lane)
+
+    def test_the_named_hire_runs_as_printed_with_no_placeholder_filled(self):
+        """The command in the note must run EXACTLY as printed -- found by running it.
+
+        The first draft of this guard parsed the command and SUBSTITUTED the placeholders it
+        found (`<driver>` -> `fake`, `<slug>` -> the real slug), so it measured the command's
+        skeleton and never noticed that the printed command is unrunnable: `--driver` is
+        `required=True`, and `holon drivers` names the drivers the instance actually has. A
+        guard that fills the placeholder proves the command would work IF the reader guessed
+        the right value -- which is the remediation class again (the operator's command
+        refuses with a usage dump, and nothing tells them what to put there).
+
+        This guard therefore only substitutes what is a VALUE of the instance (the department
+        slug) and refuses any remaining `<placeholder>` the note left for the reader to guess.
+        """
+        for profile, slug in (("light", "pprof"), ("standard", "ssprof"), ("executive", "eprof")):
+            with self.subTest(profile=profile):
+                note = self._note_for(profile, slug, "fast")
+                import re, shlex
+                m = re.search(r"holon hr hire ([^\n`]+)", note)
+                self.assertIsNotNone(m, f"the note names no hire command: {note!r}")
+                # the command as printed, its subcommand words included: a guard that drops
+                # `hr hire` measures a different command from the one the reader would type.
+                argv = ["hr", "hire"] + shlex.split(m.group(1))
+                left = [a for a in argv if "<" in a or "..." in a or a == "..."]
+                self.assertEqual([], left,
+                                 f"{profile}: the note leaves a placeholder the operator must "
+                                 f"guess: {left} in {note!r}")
+                self.assertTrue(any(a.startswith("--driver=") or a for a in argv),
+                                "the note must name a driver")
+                # and the named driver is one the instance actually configures
+                from holon.execution import drivers as D
+                self.assertIn(argv[argv.index("--driver") + 1], D.available(self.k.home),
+                              f"the driver the note names is not one this instance has")
+
+    def test_the_named_hire_runs_unchanged_on_the_real_cli(self):
+        """The strongest half: the printed command, character for character, on the CLI.
+
+        Runs it as a subprocess exactly as printed (only the values a reader can read from the
+        note's own context are already concrete), and asserts it hires. The previous guard
+        substituted placeholders, so it could pass on a command the CLI refuses -- which is
+        what it found on 2026-10-27 when it was tightened.
+        """
+        for profile, slug in (("light", "rprof"), ("standard", "rsprof"), ("executive", "reprof")):
+            with self.subTest(profile=profile):
+                note = self._note_for(profile, slug, "fast")
+                import re, shlex, subprocess, sys, os
+                m = re.search(r"holon hr hire ([^\n`]+)", note)
+                argv = ["hr", "hire"] + shlex.split(m.group(1))
+                env = dict(os.environ)
+                env["HOME"] = str(Path(self.k.home.root).parent)
+                r = subprocess.run([sys.executable, "-m", "holon", "--home", str(self.k.home.root)]
+                                   + argv + ["--name", "Probe", "--title", "Worker",
+                                             "--jd", "validate the named command",
+                                             "--reason", "validate the named command"],
+                                   capture_output=True, text=True, env=env)
+                self.assertEqual(0, r.returncode,
+                                 f"the printed command must run as-is: {note!r}\n"
+                                 f"stderr: {r.stderr.strip()[:300]}")
 
     def _run_named_hire(self, note: str, slug: str) -> dict:
         """Run the hire command the note names, with its placeholders filled.

@@ -395,7 +395,7 @@ def run(k) -> list[dict]:
         if unstaffed_stages(w, r[1], lane):
             add("error", "schedule.unstaffed",
                 f"enabled schedule {r[0]} ({r[3].removeprefix('Routine: ')}, lane {lane}): "
-                + staffing_note(w, r[1], lane))
+                + staffing_note(w, r[1], lane, k.home))
         if lane == "script" and body.get("command"):
             wd = r[4]
             if wd and not Path(wd).is_dir():

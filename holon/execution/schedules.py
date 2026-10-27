@@ -51,7 +51,8 @@ def unstaffed_stages(conn: sqlite3.Connection, dept_id: str | None, lane: str) -
     return need - covered
 
 
-def hire_command(conn: sqlite3.Connection, dept_id: str | None, missing: list[str]) -> str:
+def hire_command(conn: sqlite3.Connection, dept_id: str | None, missing: list[str],
+                  home=None) -> str:
     """The hire that would cover the missing stages, in the department's own vocabulary.
 
     Measured 2026-10-26: the refusal message named `holon hr hire --slot maker` for every
@@ -100,18 +101,47 @@ def hire_command(conn: sqlite3.Connection, dept_id: str | None, missing: list[st
     else:
         # no vocabulary mapping: name the stage-free form and let the reader decide
         parts.append("--roles " + ",".join(missing))
-    parts.append("--driver <driver>")
+    parts.append("--driver " + _a_configured_driver(home))
     return "holon hr hire " + " ".join(parts)
 
 
-def staffing_note(conn: sqlite3.Connection, dept_id: str | None, lane: str) -> str:
+def _a_configured_driver(home=None) -> str:
+    """A driver the instance actually configures, for a command the operator will run.
+
+    Found 2026-10-27 by validating the claim "the command the note names runs": the note
+    printed `--driver <driver>`, and `--driver` is **required** -- so the printed command was
+    refused with a usage dump and nothing named what to put there. That is the remediation
+    class the gate exists to close, one layer up: the operator's command refuses, so the fix
+    is named, and the fix refuses too. `holon drivers` enumerates what the instance has, so
+    the note names one of those. The first in name order is deterministic, and the guard
+    asserts the named one is in `drivers.available(home)`."""
+    try:
+        from holon.execution import drivers as D
+        if home is not None:
+            names = sorted(D.available(home))
+            if names:
+                return names[0]
+    except Exception:
+        pass
+    return "generic-shell"  # the distribution's own builtin: always safe to name
+
+
+def staffing_note(conn: sqlite3.Connection, dept_id: str | None, lane: str, home=None,
+                  escape: str = "") -> str:
     """The gate's one refusal message, shared by every consumer — a message that names the act
-    that fixes it (the remediation-class lesson: a refusal must name a command that works)."""
+    that fixes it (the remediation-class lesson: a refusal must name a command that runs).
+
+    `escape` is the one clause the shared note may not carry on its own: measured 2026-10-27,
+    four consumers print this string and only the enable gate offers `--force`. `plan approve`
+    has no such flag, so the approval's refusal told the Chair to run a flag that does not
+    exist -- the remediation class one layer deeper. Each surface therefore names its own
+    escape, and the shared string names none."""
     slug = conn.execute("SELECT slug FROM departments WHERE id=?", (dept_id,)).fetchone()
+    who = slug[0] if slug else (dept_id or "the organization")
     missing = ", ".join(sorted(unstaffed_stages(conn, dept_id, lane)))
-    return (f"no employee in {slug[0] if slug else dept_id} performs {missing}: the firing will wait with "
-            f"nobody to claim it (hire: `{hire_command(conn, dept_id, sorted(unstaffed_stages(conn, dept_id, lane)))}`, "
-            "or --force for the Chair's explicit word)")
+    tail = f" ({escape})" if escape else ""
+    return (f"no employee in {who} performs {missing}: the firing will wait with "
+            f"nobody to claim it (hire: `{hire_command(conn, dept_id, sorted(unstaffed_stages(conn, dept_id, lane)), home)}`){tail}")
 
 KINDS = vocab.SCHEDULE_KINDS
 
@@ -121,8 +151,9 @@ def _iso(dt: datetime) -> str:
 
 
 class Schedules:
-    def __init__(self, conn: sqlite3.Connection, actor: str = "chair"):
+    def __init__(self, conn: sqlite3.Connection, actor: str = "chair", home=None):
         self.conn = conn
+        self.home = home
         self.work = Work(conn, actor)
 
     def add(self, kind: str, cron: str, *, employee_id: str | None = None, stage: str | None = None,
@@ -187,7 +218,12 @@ class Schedules:
             work = self.work.get(plan["parent_id"])
             body = (self.work.output(plan["id"]) or {"body": {}})["body"]
             if unstaffed_stages(self.conn, work["dept_id"], body.get("lane") or "full"):
-                raise ValueError(staffing_note(self.conn, work["dept_id"], body.get("lane") or "full"))
+                # the escape is THIS surface's, and it is stated here rather than in the shared
+                # note (measured 2026-10-27: `plan approve` prints the same note and offers no
+                # --force, so a clause carried by the string promised a flag that does not exist).
+                raise ValueError(staffing_note(self.conn, work["dept_id"], body.get("lane") or "full",
+                                            self.home,
+                                            escape="or --force for the Chair's explicit word"))
         with write_txn(self.conn):
             nxt = (_iso(Cron(s["cron"]).next_after(datetime.now(timezone.utc)))
                    if enabled and s["cron"] else s["next_run_at"])
