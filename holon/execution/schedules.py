@@ -35,7 +35,10 @@ def unstaffed_stages(conn: sqlite3.Connection, dept_id: str | None, lane: str) -
     covered: set[str] = set()
     for r in conn.execute("SELECT e.dept_id, e.roles FROM employees e WHERE e.status IN ('active','probation')"):
         own = r[0] == dept_id
-        executive_reach = exec_dept and r[0] == exec_dept[0] and (dept_id is None or True)
+        # an executive claimant reaches this work; WHICH stages it covers is decided below, by
+        # the work's own department -- no-dept work is theirs entirely, another department's
+        # verify stage only (the claim's pool branch, verbatim). It is not decided here.
+        executive_reach = bool(exec_dept and r[0] == exec_dept[0])
         if not own and not executive_reach:
             continue
         stages = {s for role in json.loads(r[1] or "[]") for s in vocab.ROLE_STAGES.get(role, ())}
