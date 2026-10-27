@@ -24,10 +24,14 @@ LANE_STAGES = {"script": (), "fast": ("execute",), "full": ("plan", "execute", "
 def unstaffed_stages(conn: sqlite3.Connection, dept_id: str | None, lane: str) -> set[str]:
     """The stages a lane's firing needs that no active employee in reach performs. Mirrors the
     claim's reach (`work.claim`'s pool branch) exactly: a claimant may pick up work in their OWN
-    department, and an executive claimant additionally reaches no-dept work (every stage) and
-    verify stages of any department — but NOT another department's plan or execute stages. One
-    predicate shared by the proposal note, the enable gate and doctor's backstop — three
-    consumers, or they would disagree."""
+    department, and an executive claimant additionally reaches no-dept work and verify stages of
+    any department — but NOT another department's plan or execute stages. In every case the
+    employee's own **roles** still gate the stages they cover, so "reach" is which work they may
+    look at, never which stages they can perform without the right role (measured 2026-10-27: a
+    `ceo` covers org `plan` and not org `verify`; hiring into the executive's `audit` slot covers
+    org `verify` — the reach was unchanged and the roles moved). One predicate shared by the
+    proposal note, the enable gate and doctor's backstop — three consumers, or they would
+    disagree."""
     need = set(LANE_STAGES.get(lane, LANE_STAGES["full"]))
     if not need:
         return set()

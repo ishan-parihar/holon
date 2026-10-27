@@ -248,7 +248,14 @@ class StaffingReach(KernelCase):
     claim's pool branch (`work.claim`): a claimant may pick up work in their OWN department, and
     an executive claimant additionally reaches no-dept work and verify stages of any department —
     but NOT another department's plan or execute stages. So a full-lane routine in an unstaffed
-    department is missing plan too, even with a CEO in executive (who reaches only verify)."""
+    department is missing plan too, even with a CEO in executive (who reaches only verify).
+
+    **Reach and roles are different things (measured 2026-10-27, and this class holds the
+    difference).** The predicate's docstring first said an executive reaches no-dept work at
+    "every stage", which reads as though executive reach waived the role requirement — it does
+    not: the employee's own roles gate the stages they cover. A `ceo` (head+planner) covers org
+    `plan` and cannot claim org `verify`; hiring into the executive's `audit` slot (a verifier)
+    covers org `verify`. The reach was identical in both instances and the roles moved."""
 
     def test_executive_reach_covers_only_what_the_claim_covers(self):
         self.k.org.create_dept("ghost", "Ghost", "A department nobody staffs")
@@ -262,6 +269,45 @@ class StaffingReach(KernelCase):
         for stage in ("execute", "plan"):
             self.assertIn(stage, note, f"{stage} is not the executive's to claim for another department")
         self.assertNotIn("verify", note, "the CEO reaches verify stages anywhere (executive reach)")
+
+    def test_executive_reach_is_not_a_role_waiver_and_the_claim_agrees(self):
+        """The 2026-10-27 measurement, as a guard: reach is which work, roles are which stages.
+
+        An executive employee's reach over no-dept (org) work is real, and the stages they cover
+        there are exactly the stages their own roles allow. Two instances, one reach: a `ceo`
+        covers org `plan` and not org `verify`; add an executive `audit` (verifier) hire and org
+        `verify` is covered while `execute` is still not. The claim gate agrees in both.
+        """
+        from holon.execution.work import Claimant
+        from holon.execution.schedules import unstaffed_stages
+        # instance 1: the fixture's own ceo (head+planner) -- reach, and the roles it carries
+        self.assertEqual({"execute", "verify"}, set(unstaffed_stages(self.k.wconn, None, "full")),
+                         "a ceo (head+planner) covers org plan; execute and verify are not theirs")
+        # instance 2: the same executive reach, a verifier hired into it
+        self.k.org.hire(name="Aud", title="audit", dept="executive", job_description=JD,
+                        slot="audit", driver="fake", reason="staffing", status="active")
+        self.assertEqual({"execute"}, set(unstaffed_stages(self.k.wconn, None, "full")),
+                         "Ada (ceo) covers org plan and Aud (audit) covers org verify: only "
+                         "execute is missing -- the reach is theirs, the roles moved")
+        # and the real claim agrees where a stage exists: the executive claims org plan,
+        # a department member does not (their reach is their own department's work)
+        exdept = self.k.org.dept("executive")["id"]
+        ada = self.k.wconn.execute("SELECT id FROM employees WHERE name='Ada'").fetchone()[0]
+        got = self.k.work.claim(Claimant(id=ada, dept_id=exdept, is_ceo=True, in_executive=True,
+                                        stages=("plan",)), stages=("plan",),
+                                 task_id=self.k.work.add_work("org plan work", "probe", dept=None,
+                                                              acceptance="x")["id"])
+        self.assertTrue(bool(got), "the ceo claims org-scoped plan work: reach plus the role")
+        # the reach is also what makes the same claim fail for a department member: the fixture's
+        # Hod is in eng, whose reach is eng's own work and never org work
+        hod = self.k.wconn.execute("SELECT id FROM employees WHERE name='Bo'").fetchone()[0]
+        engid = self.k.org.dept("eng")["id"]
+        notgot = self.k.work.claim(Claimant(id=hod, dept_id=engid, in_executive=False,
+                                           stages=("plan",)), stages=("plan",),
+                                    task_id=self.k.work.add_work("org plan two", "probe", dept=None,
+                                                                 acceptance="x")["id"])
+        self.assertFalse(bool(notgot),
+                         "a department member's reach does not cover org work: the reach, not the role")
 
     def test_a_dept_employee_covers_their_own_lanes(self):
         self.k.org.create_dept("ghost", "Ghost", "A department nobody staffs")
