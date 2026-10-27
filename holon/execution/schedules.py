@@ -106,6 +106,17 @@ def hire_command(conn: sqlite3.Connection, dept_id: str | None, missing: list[st
         # no vocabulary mapping: name the stage-free form and let the reader decide
         parts.append("--roles " + ",".join(missing))
     parts.append("--driver " + _a_configured_driver(home))
+    # `hr hire` requires four more flags a department's charter cannot derive -- the operator
+    # chooses who is hired, what they are called and why. Measured 2026-10-27 on the live
+    # instance: the printed command named only --dept/--slot/--driver, so running it verbatim
+    # on `pioneer`, `freelance-agency` and `architectural-leads` met
+    #     error: the following arguments are required: --name, --title, --jd, --reason
+    # -- the remediation class one layer up: the gate refuses, names the hire, and the hire
+    # refuses for want of the very fields the note withheld. They are named now, with the
+    # values the operator reads as "these are mine to set" -- and each is ONE shell token,
+    # because `shlex.split` strips the quotes: a value with a space inside parses as several
+    # positionals and the CLI refuses what it is handed. The guard holds both halves.
+    parts.append("--name <name> --title <title> --jd <job-description> --reason hire")
     return "holon hr hire " + " ".join(parts)
 
 
@@ -142,10 +153,18 @@ def staffing_note(conn: sqlite3.Connection, dept_id: str | None, lane: str, home
     escape, and the shared string names none."""
     slug = conn.execute("SELECT slug FROM departments WHERE id=?", (dept_id,)).fetchone()
     who = slug[0] if slug else (dept_id or "the organization")
-    missing = ", ".join(sorted(unstaffed_stages(conn, dept_id, lane)))
+    absent = sorted(unstaffed_stages(conn, dept_id, lane))
+    if not absent:
+        # Measured on the live instance 2026-10-27: rendering this note when nothing is
+        # missing prints `performs :` and `--roles ` with no value -- a command that cannot
+        # parse, the remediation class inside the message written to close it. Every current
+        # consumer guards on the predicate first, so this is a defence of a shared string with
+        # no defence of its own: one forgotten guard would print a broken hire command.
+        raise ValueError(f"{who} is fully staffed for the {lane} lane: there is no hire to name")
+    missing = ", ".join(absent)
     tail = f" ({escape})" if escape else ""
     return (f"no employee in {who} performs {missing}: the firing will wait with "
-            f"nobody to claim it (hire: `{hire_command(conn, dept_id, sorted(unstaffed_stages(conn, dept_id, lane)), home)}`){tail}")
+            f"nobody to claim it (hire: `{hire_command(conn, dept_id, absent, home)}`){tail}")
 
 KINDS = vocab.SCHEDULE_KINDS
 

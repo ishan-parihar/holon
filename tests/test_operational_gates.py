@@ -309,6 +309,31 @@ class StaffingReach(KernelCase):
         self.assertFalse(bool(notgot),
                          "a department member's reach does not cover org work: the reach, not the role")
 
+    def test_the_shared_note_never_prints_a_command_it_cannot_run(self):
+        """The shared note is called by four consumers, each behind `if unstaffed_stages(...)`.
+
+        Measured on the live instance 2026-10-27: calling it with a fully staffed department
+        (where the predicate's answer is the empty set) prints `performs :` and `--roles `
+        with no value -- a broken command, the remediation class inside the very message
+        written to close it. Every current caller guards, so this was not live; but a shared
+        string with no defence of its own is one forgotten guard away from being live, and
+        the cost is a Chair running a command that cannot parse."""
+        from holon.execution.schedules import staffing_note, unstaffed_stages
+        eng = self.k.org.dept("eng")["id"]
+        self.assertEqual(set(), set(unstaffed_stages(self.k.wconn, eng, "full")),
+                         "the fixture's eng is staffed: the guard's premise")
+        for lane in ("full", "fast", "cheap"):
+            with self.assertRaises(ValueError) as held:
+                staffing_note(self.k.wconn, eng, lane, home=self.k.home)
+            self.assertIn("fully staffed", str(held.exception),
+                          f"the note refuses to render an empty command for lane {lane}")
+        # and it still renders normally when something is actually missing (no regression)
+        self.k.org.create_dept("gap", "Gap", "A department nobody staffs")
+        note = staffing_note(self.k.wconn, self.k.org.dept("gap")["id"], "full", home=self.k.home)
+        self.assertIn("performs execute", note, "the real gap still names its stages")
+        self.assertIn("--driver", note, "the real gap still names a driver")
+        self.assertRegex(note, r"--driver \S+", "the real gap's driver is never empty")
+
     def test_a_dept_employee_covers_their_own_lanes(self):
         self.k.org.create_dept("ghost", "Ghost", "A department nobody staffs")
         self.k.org.hire(name="Gee", title="maker", dept="ghost", job_description=JD, slot="maker",
@@ -372,10 +397,35 @@ class TheNamedRemediationWorks(OperationalGates):
                 # the command as printed, its subcommand words included: a guard that drops
                 # `hr hire` measures a different command from the one the reader would type.
                 argv = ["hr", "hire"] + shlex.split(m.group(1))
-                left = [a for a in argv if "<" in a or "..." in a or a == "..."]
+                # A placeholder is honest only for a value no instance state can derive --
+                # who the operator hires, what they are called, and the job's description
+                # (2026-10-27: the note withheld all four required flags entirely, and running
+                # it verbatim met a usage dump). Everything derivable must be concrete: a
+                # placeholder for a derivable value is the operator guessing what the kernel
+                # knew. So the rule is stated, not the wording.
+                operator_chosen = {"--name", "--title", "--jd"}
+                left, extra = [], []
+                for i, a in enumerate(argv):
+                    if "<" not in a and a not in ("...", "…"):
+                        continue
+                    flag = argv[i - 1] if i else None
+                    if a.startswith("--"):
+                        value = argv[i + 1] if i + 1 < len(argv) else ""
+                        if a in operator_chosen:
+                            extra.append(f"{a} {value}")
+                        elif "<" in value or value in ("...", "…"):
+                            left.append(f"{a} {value}")
+                    elif flag in operator_chosen:
+                        extra.append(a)          # the operator-chosen flag's own value
+                    else:
+                        left.append(a)          # a placeholder nothing claims to own
                 self.assertEqual([], left,
-                                 f"{profile}: the note leaves a placeholder the operator must "
-                                 f"guess: {left} in {note!r}")
+                                 f"{profile}: a derivable flag is left as a placeholder: "
+                                 f"{left} in {note!r}")
+                self.assertTrue(extra, f"{profile}: the note names no operator-chosen flag")
+                for e in extra:
+                    self.assertNotIn(" ", e.split(" ", 1)[-1],
+                                     f"{profile}: a placeholder value must be one shell token: {e}")
                 self.assertTrue(any(a.startswith("--driver=") or a for a in argv),
                                 "the note must name a driver")
                 # and the named driver is one the instance actually configures
@@ -397,16 +447,56 @@ class TheNamedRemediationWorks(OperationalGates):
                 import re, shlex, subprocess, sys, os
                 m = re.search(r"holon hr hire ([^\n`]+)", note)
                 argv = ["hr", "hire"] + shlex.split(m.group(1))
+                # Substitute ONLY what the operator chooses (the note's own contract: these are
+                # the reader's to set), and run the rest exactly as printed. The previous
+                # version appended the required flags it knew were missing, so it measured a
+                # command the reader never types.
+                operator = {"--name": "Probe", "--title": "Worker", "--jd": "probe the note"}
+                filled = []
+                i = 0
+                while i < len(argv):
+                    a = argv[i]
+                    if a in operator:
+                        filled.append(a)
+                        i += 1
+                        if i < len(argv):
+                            filled.append(operator[a])
+                    else:
+                        filled.append(a)
+                    i += 1
+                argv = filled
                 env = dict(os.environ)
                 env["HOME"] = str(Path(self.k.home.root).parent)
                 r = subprocess.run([sys.executable, "-m", "holon", "--home", str(self.k.home.root)]
-                                   + argv + ["--name", "Probe", "--title", "Worker",
-                                             "--jd", "validate the named command",
-                                             "--reason", "validate the named command"],
-                                   capture_output=True, text=True, env=env)
+                                   + argv, capture_output=True, text=True, env=env)
                 self.assertEqual(0, r.returncode,
                                  f"the printed command must run as-is: {note!r}\n"
                                  f"stderr: {r.stderr.strip()[:300]}")
+
+    def test_the_printed_command_names_every_flag_the_cli_requires(self):
+        """Completeness, derived from the registry: the printed command omits no required flag.
+
+        Found 2026-10-27 on the live instance, by running the printed command verbatim:
+        `holon hr hire --dept pioneer --slot maker --driver claude-code` refuses with
+        "the following arguments are required: --name, --title, --jd, --reason" — on
+        pioneer, freelance-agency and architectural-leads, which is the remediation class
+        one layer up (the gate refuses, names the hire, the hire refuses for want of the
+        fields the note withheld). The set is read from the registry rather than written
+        out, so adding a required flag fails this guard the day it is added."""
+        from holon.cli import REGISTRY
+        import re, shlex
+        spec = next((c for c in REGISTRY if c.path == ("hr", "hire")), None)
+        self.assertIsNotNone(spec, "the registry carries `hr hire`")
+        required = sorted(a[-1].lstrip("-").replace("-", "_")
+                          for a, kw in spec.args if kw.get("required"))
+        for profile, slug in (("light", "cprof-l"), ("standard", "cprof-s"), ("executive", "cprof-e")):
+            with self.subTest(profile=profile):
+                note = self._note_for(profile, slug, "fast")
+                argv = ["hr", "hire"] + shlex.split(re.search(r"holon hr hire ([^\n`]+)", note).group(1))
+                present = {a.lstrip("-") for a in argv if a.startswith("--")}
+                self.assertTrue(set(required) <= present,
+                                f"{profile}: the printed command omits {sorted(set(required) - present)}"
+                                f": {argv}")
 
     def _run_named_hire(self, note: str, slug: str) -> dict:
         """Run the hire command the note names, with its placeholders filled.
@@ -418,8 +508,11 @@ class TheNamedRemediationWorks(OperationalGates):
         import shlex
         m = re.search(r"holon hr hire ([^\n`]+)", note)
         self.assertIsNotNone(m, f"the note names no hire command: {note!r}")
-        argv = shlex.split(m.group(1).replace("…", "").replace("<driver>", "fake")
-                           .replace("<slug>", slug).replace("--dept " + slug, "--dept " + slug))
+        argv = shlex.split(m.group(1).replace("…", "")
+                           .replace("<driver>", "fake")
+                           .replace("<name>", "Rex").replace("<title>", "Hire")
+                           .replace("<job-description>", JD).replace("<slug>", slug)
+                           .replace("--dept " + slug, "--dept " + slug))
         # every placeholder filled; a leftover angle bracket means the note named something
         # the guard cannot run, which is itself a defect.
         self.assertNotIn("<", " ".join(argv), f"the note names an unfillable placeholder: {argv}")
